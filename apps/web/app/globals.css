@@ -1,0 +1,113 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer components {
+  .badge {
+    @apply inline-block rounded-full px-2.5 py-0.5 text-[11px] font-semibold uppercase tracking-wide;
+  }
+  .badge-green {
+    @apply bg-[#133223] text-ok;
+  }
+  .badge-gray {
+    @apply bg-panel2 text-muted;
+  }
+  .badge-blue {
+    @apply bg-[#0d1e3d] text-accent;
+  }
+  .card {
+    @apply rounded-[10px] border border-line bg-panel shadow-card;
+  }
+  .card-h {
+    @apply border-b border-line px-4 py-3 font-semibold;
+  }
+  .btn-ghost {
+    @apply rounded-[10px] bg-panel2 px-2.5 py-1 text-[13px] hover:brightness-125;
+  }
+  .btn-ok {
+    @apply rounded-[10px] bg-ok px-2.5 py-1 text-[13px] font-medium text-black hover:brightness-110 disabled:opacity-50;
+  }
+  .btn-danger {
+    @apply rounded-[10px] bg-danger px-2.5 py-1 text-[13px] font-medium text-white hover:brightness-110 disabled:opacity-50;
+  }
+  .last-plate-chip {
+    @apply rounded-md border-2 px-3 py-1 font-mono text-sm font-bold tracking-wide;
+  }
+  .last-plate-chip.ok {
+    @apply border-ok bg-black/50 text-ok;
+  }
+  .last-plate-chip.deny {
+    @apply border-danger bg-black/50 text-danger;
+  }
+  .relay-card {
+    @apply flex items-center gap-3 rounded-[10px] border border-line bg-panel px-4 py-3;
+  }
+  .relay-card.open {
+    @apply border-ok bg-[#133223];
+  }
+  .relay-icon {
+    @apply grid h-10 w-10 shrink-0 place-items-center rounded-full border border-line text-[11px] font-bold text-muted;
+  }
+  .relay-icon.on {
+    @apply border-ok text-ok;
+  }
+  .cfg-tab {
+    @apply rounded-[10px] bg-panel2 px-3 py-1.5 text-[13px] text-muted hover:brightness-125;
+  }
+  .cfg-tab.active {
+    @apply bg-accent/25 text-white;
+  }
+  .cfg-input {
+    @apply mt-1 w-full rounded-[8px] border border-line bg-ink px-2.5 py-1.5 text-sm outline-none focus:border-accent;
+  }
+  .cfg-label {
+    @apply block text-[12px] text-muted;
+  }
+  .subsys-row {
+    @apply flex items-center gap-3 rounded-[10px] border border-line bg-panel2 px-3 py-2.5;
+  }
+  .subsys-led {
+    @apply h-2.5 w-2.5 shrink-0 rounded-full bg-muted;
+  }
+  .subsys-led.led-green {
+    @apply bg-ok;
+  }
+  .subsys-led.led-red {
+    @apply bg-danger;
+  }
+  .subsys-led.led-yellow {
+    @apply bg-warn;
+  }
+  .toggle-switch {
+    @apply relative inline-block h-[22px] w-[40px] shrink-0;
+  }
+  .toggle-switch input {
+    @apply h-0 w-0 opacity-0;
+  }
+  .toggle-slider {
+    @apply absolute inset-0 cursor-pointer rounded-full bg-[#3a4f66] transition;
+  }
+  .toggle-slider::before {
+    content: "";
+    @apply absolute left-[3px] top-[3px] h-4 w-4 rounded-full bg-white transition;
+  }
+  .toggle-switch input:checked + .toggle-slider {
+    @apply bg-ok;
+  }
+  .toggle-switch input:checked + .toggle-slider::before {
+    transform: translateX(18px);
+  }
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: radial-gradient(1200px 600px at 20% -10%, #1a3552 0%, #0b1420 56%);
+  color: #eaf2ff;
+  font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+}

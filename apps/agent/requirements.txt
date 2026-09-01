@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+httpx
+requests
+opencv-python-headless
+numpy
+fast-alpr
+onnxruntime

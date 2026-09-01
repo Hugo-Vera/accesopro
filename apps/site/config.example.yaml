@@ -1,0 +1,96 @@
+# Plantilla SIN claves. Copiar a config.yaml en la LAN y completar.
+# Nunca commitear config.yaml con RTSP reales.
+
+barreras:
+  type_in: simulated
+  type_out: simulated
+  baudrate_in: 9600
+  baudrate_out: 9600
+  ip_in: ""
+  ip_out: ""
+  ip_port_in: 80
+  ip_port_out: 80
+  ip_protocol_in: tcp
+  ip_protocol_out: tcp
+  ip_cmd_open_in: ""
+  ip_cmd_close_in: ""
+  ip_cmd_open_out: ""
+  ip_cmd_close_out: ""
+  max_open_sec_in: 0
+  max_open_sec_out: 0
+  port_in: ""
+  port_out: ""
+
+db:
+  engine: postgresql
+  host: 127.0.0.1
+  name: fastalpr
+  user: postgres
+  password: postgres
+  port: 5432
+
+modelo:
+  confianza_avg_ocr: 0.3
+  confianza_detector: 0.3
+  confianza_low_ocr: 0.15
+  ocr_device: auto
+  resolucion_detector: 384
+
+sistema:
+  auth_mode: combinado
+  auto_register: true
+  barrier_auto_open_in: true
+  barrier_auto_open_out: true
+  dedup_window_sec: 3.0
+  evidence_retention_days: 90
+  plate_filter_enabled: true
+  plate_filter_countries:
+    - AR
+    - BR
+    - UY
+    - PY
+    - CL
+  qr_source_type_in: com
+  qr_source_type_out: camera
+  qr_com_port_in: COM5
+  qr_com_port_out: ""
+  qr_camera_source_in: ""
+  qr_camera_source_out: ""
+  snapshot_enabled_in: true
+  snapshot_enabled_out: true
+  snapshot_trigger_in: patente
+  snapshot_trigger_out: patente
+  snapshot_count_in: 1
+  snapshot_count_out: 1
+  snapshot_camera_source_in: "rtsp://USER:PASS@192.168.33.23:554/cam/realmonitor?channel=2&subtype=0"
+  snapshot_camera_source_out: "rtsp://USER:PASS@192.168.33.23:554/cam/realmonitor?channel=15&subtype=0"
+  vigilador_manual_trigger: true
+  propietario_auth_visits: true
+
+video:
+  frecuencia_inferencia: 3
+  fuente_in: "rtsp://USER:PASS@192.168.33.200:554/cam/realmonitor?channel=1&subtype=0"
+  fuente_out: "rtsp://USER:PASS@192.168.33.23:554/cam/realmonitor?channel=1&subtype=0"
+  hud_overlay_enabled: true
+  hud_overlay_position: bottom-left
+  motion_detection_enabled: true
+  motion_threshold: 0.005
+  motion_cooldown_sec: 3.0
+  roi_enabled: true
+  roi_x: 0.443
+  roi_y: 0.631
+  roi_w: 0.556
+  roi_h: 0.363
+
+video_salida:
+  fuente: "rtsp://USER:PASS@192.168.33.23:554/cam/realmonitor?channel=1&subtype=0"
+  hud_overlay_enabled: true
+  hud_overlay_position: bottom-right
+  motion_detection_enabled: true
+  motion_threshold: 0.005
+  motion_cooldown_sec: 3.0
+  roi_enabled: true
+  roi_x: 0.018
+  roi_y: 0.496
+  roi_w: 0.453
+  roi_h: 0.386

@@ -1,0 +1,31 @@
+# --------------------------------------------------------
+#  AccesoSeguro - dependencias Python
+# --------------------------------------------------------
+
+# Web framework
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.0
+jinja2>=3.1.0
+python-multipart>=0.0.9
+
+# Base de datos
+sqlalchemy>=2.0.0
+psycopg2-binary>=2.9.0
+
+# Configuracion
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+
+# Autenticacion
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+
+# Vision (ALPR + QR)
+fast-alpr[onnx]
+opencv-python
+
+# Arduino / serial
+pyserial>=3.5
+
+# YAML (para persistencia de config)
+pyyaml>=6.0

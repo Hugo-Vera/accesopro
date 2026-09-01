@@ -1,0 +1,1471 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AccesoSeguro</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="stylesheet" href="/static/styles.css?v=20260520a">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js"></script>
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════════════════ LOGIN ═══ -->
+<div id="loginOverlay" class="login-overlay">
+  <div class="login-card">
+    <div class="login-logo">AS</div>
+    <h1 class="login-title">AccesoSeguro</h1>
+    <p class="login-sub">Control de Acceso Vehicular</p>
+    <form id="loginForm" onsubmit="doLogin(event)">
+      <div class="field-group">
+        <label>Usuario</label>
+        <input id="loginUser" type="text" placeholder="admin" autocomplete="username" required>
+      </div>
+      <div class="field-group">
+        <label>Contraseña</label>
+        <input id="loginPass" type="password" placeholder="••••••••" autocomplete="current-password" required>
+      </div>
+      <div id="loginError" class="login-error hidden"></div>
+      <button class="btn btn-primary btn-full" type="submit">Ingresar</button>
+    </form>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════ APP ════ -->
+<div id="app" class="app-layout hidden">
+
+  <!-- SIDEBAR -->
+  <aside class="sidebar" id="appSidebar">
+    <div class="sidebar-header">
+      <div class="sidebar-brand-mark">AL</div>
+      <div class="sidebar-brand-text">
+        <div class="sidebar-title">FastALPR</div>
+        <div class="sidebar-subtitle">Reconocimiento de patentes</div>
+      </div>
+      <button class="btn btn-ghost btn-small toggle-sidebar-btn" onclick="toggleSidebar()" style="margin-left:auto;padding:4px 8px;" title="Alternar barra lateral">Menu</button>
+    </div>
+    <nav class="sidebar-nav">
+      <a class="nav-item active" data-page="dashboard" onclick="navigate('dashboard')" id="nav-dashboard">
+        <span class="nav-icon">D</span> Dashboard
+      </a>
+      <a class="nav-item" data-page="vehiculos" onclick="navigate('vehiculos')" id="nav-vehiculos">
+        <span class="nav-icon">V</span> Vehículos
+      </a>
+      <a class="nav-item" data-page="personas" onclick="navigate('personas')" id="nav-personas">
+        <span class="nav-icon">P</span> Personas
+      </a>
+      <a class="nav-item" data-page="historial" onclick="navigate('historial')" id="nav-historial">
+        <span class="nav-icon">H</span> Historial
+      </a>
+      <a class="nav-item" data-page="detecciones" onclick="navigate('detecciones')" id="nav-detecciones">
+        <span class="nav-icon">T</span> Detecciones
+      </a>
+      <a class="nav-item" data-page="config" onclick="navigate('config')" id="nav-config">
+        <span class="nav-icon">C</span> Configuración
+      </a>
+      <a class="nav-item hidden" data-page="mi-lote" onclick="navigate('mi-lote')" id="nav-mi-lote">
+        <span class="nav-icon">M</span> Mi Lote
+      </a>
+      <a class="nav-item hidden" data-page="historial-lote" onclick="navigate('historial-lote')" id="nav-historial-lote">
+        <span class="nav-icon">L</span> Historial Lote
+      </a>
+    </nav>
+
+    <div class="sidebar-stream">
+      <div class="sidebar-stream-title">Estado ALPR</div>
+      <div class="status-box" id="statusBox">Cargando estado...</div>
+      <div class="sidebar-url-label">Cámara Principal</div>
+      <div class="sidebar-url-text" id="sourceText">-</div>
+    </div>
+
+    <div class="sidebar-footer">
+      <div id="userInfo" class="user-info"></div>
+      <div style="display:flex;gap:6px;align-items:center;">
+        <button id="themeToggleBtn" class="btn btn-ghost btn-small" onclick="toggleTheme()" title="Cambiar Tema" style="padding:4px 8px;">Tema: Claro</button>
+        <button class="btn btn-ghost btn-small" onclick="doLogout()">Salir</button>
+      </div>
+    </div>
+  </aside>
+
+  <!-- MAIN CONTENT -->
+  <main class="main-content">
+
+    <!-- ─── DASHBOARD ──────────────────────────────────────────── -->
+    <section id="page-dashboard" class="page active">
+      <div class="page-header">
+        <div style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+          <h2>Dashboard</h2>
+          <span id="streamStatusBadge" class="badge badge-green">EN VIVO</span>
+          <span id="relayStatus" class="badge badge-gray">Relé: CERRADO</span>
+        </div>
+        <div class="header-actions">
+          <div id="lastPlate" class="last-plate hidden" style="position:static; margin:0; padding:4px 12px; font-size:1.1rem;"></div>
+          <button class="btn btn-ghost btn-small" onclick="refreshVideoFeed(true)" title="Recargar feeds de video">↻ Recargar Video</button>
+        </div>
+      </div>
+
+      <!-- Fila 1: Cámaras Duales (Ingreso y Salida) -->
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;">
+        
+        <!-- Cámara Ingreso (IN) -->
+        <div class="card camera-card">
+          <div class="card-header">
+            <span style="color:var(--accent); font-weight:700; display:flex; align-items:center; gap:6px;">
+              <span style="width:8px; height:8px; border-radius:50%; background:var(--green); display:inline-block;"></span>
+              Cámara Ingreso (IN)
+            </span>
+            <span class="badge badge-blue">ALPR + QR</span>
+          </div>
+          <div class="camera-container">
+            <img id="videoFeedIn" src="/video_feed/in" alt="Stream Ingreso" onerror="this.src='/static/no-signal.svg'; this.onerror=null;">
+            <div id="loaderIn" class="camera-loader hidden"><div class="camera-loader-spinner"></div></div>
+            <div id="overlayIn" class="ws-overlay hidden"></div>
+          </div>
+        </div>
+
+        <!-- Cámara Salida (OUT) -->
+        <div class="card camera-card">
+          <div class="card-header">
+            <span style="color:var(--yellow); font-weight:700; display:flex; align-items:center; gap:6px;">
+              <span style="width:8px; height:8px; border-radius:50%; background:var(--green); display:inline-block;"></span>
+              Cámara Salida (OUT)
+            </span>
+            <span class="badge badge-yellow">ALPR + QR</span>
+          </div>
+          <div class="camera-container">
+            <img id="videoFeedOut" src="/video_feed/out" alt="Stream Salida" onerror="this.src='/static/no-signal.svg'; this.onerror=null;">
+            <div id="loaderOut" class="camera-loader hidden"><div class="camera-loader-spinner"></div></div>
+            <div id="overlayOut" class="ws-overlay hidden"></div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Fila 2: Control de Barreras Duales + KPIs del Día -->
+      <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; margin-bottom: 16px;">
+        
+        <!-- Control Barrera IN -->
+        <div class="relay-card" id="relayCardIn">
+          <div class="relay-icon" id="relayIconIn">OFF</div>
+          <div class="relay-info">
+            <strong id="relayLabelIn">Barrera IN (Ingreso): Cerrada</strong>
+            <div class="relay-timer hidden" id="relayTimerIn">Abierta: 0s</div>
+          </div>
+          <div style="display:flex; gap:6px;">
+            <button id="btnAbrirIn" class="btn btn-success btn-small" onclick="abrirBarrera('in')">Abrir</button>
+            <button id="btnCerrarIn" class="btn btn-danger btn-small" onclick="cerrarBarrera('in')">Cerrar</button>
+          </div>
+        </div>
+
+        <!-- Control Barrera OUT -->
+        <div class="relay-card" id="relayCardOut">
+          <div class="relay-icon" id="relayIconOut">OFF</div>
+          <div class="relay-info">
+            <strong id="relayLabelOut">Barrera OUT (Salida): Cerrada</strong>
+            <div class="relay-timer hidden" id="relayTimerOut">Abierta: 0s</div>
+          </div>
+          <div style="display:flex; gap:6px;">
+            <button id="btnAbrirOut" class="btn btn-success btn-small" onclick="abrirBarrera('out')">Abrir</button>
+            <button id="btnCerrarOut" class="btn btn-danger btn-small" onclick="cerrarBarrera('out')">Cerrar</button>
+          </div>
+        </div>
+
+        <!-- KPIs Resumen de Accesos Hoy -->
+        <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:8px;">
+          <div class="kpi-card kpi-green" style="padding:10px;">
+            <div class="kpi-value" id="kpiAuth" style="font-size:1.6rem;">–</div>
+            <div class="kpi-label">Autorizados</div>
+          </div>
+          <div class="kpi-card kpi-red" style="padding:10px;">
+            <div class="kpi-value" id="kpiDen" style="font-size:1.6rem;">–</div>
+            <div class="kpi-label">Denegados</div>
+          </div>
+          <div class="kpi-card kpi-blue" style="padding:10px;">
+            <div class="kpi-value" id="kpiTotal" style="font-size:1.6rem;">–</div>
+            <div class="kpi-label">Total Hoy</div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Fila 3: Métricas del Motor ALPR (IA) -->
+      <div class="card alpr-kpi-panel" style="margin-bottom: 16px;">
+        <div class="card-header">
+          <span>Rendimiento del Motor de IA y Estadísticas de Detección</span>
+        </div>
+        <div class="alpr-kpi-grid">
+          <div class="kpi-card">
+            <div class="kpi-value" id="kpiFrame">–</div>
+            <div class="kpi-label">Frame ID</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-value" id="kpiProcessed">–</div>
+            <div class="kpi-label">Procesados</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-value" id="kpiLatency">–</div>
+            <div class="kpi-label">Latencia Inferencia</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-value" id="kpiDedup">–</div>
+            <div class="kpi-label">Omitidos Dedup</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-value" id="kpiDetToday">–</div>
+            <div class="kpi-label">Detecciones Hoy</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-value" id="kpiDetLastHour">–</div>
+            <div class="kpi-label">Última Hora</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-value" id="kpiDetTotal">–</div>
+            <div class="kpi-label">Total en Memoria</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Fila 4: Eventos en Tiempo Real + Gráfico de Actividad Horaria + Simulador de Diagnóstico -->
+      <div style="display: grid; grid-template-columns: 1.2fr 1.3fr; gap: 16px;">
+        
+        <!-- Eventos Recientes -->
+        <div class="card events-card">
+          <div class="card-header">
+            <span>Eventos Recientes en Tiempo Real</span>
+            <button class="btn btn-ghost btn-small" onclick="loadEvents()">↻ Actualizar</button>
+          </div>
+          <div class="events-list" id="eventsList">
+            <div class="loading">Cargando eventos…</div>
+          </div>
+        </div>
+
+        <!-- Gráfico y Simulador -->
+        <div style="display: flex; flex-direction: column; gap: 16px;">
+          
+          <!-- Gráfico Actividad Horaria -->
+          <div class="card activity-card">
+            <div class="card-header">
+              <span>Actividad de Accesos por Hora</span>
+              <div style="display:flex; gap:6px;">
+                <button class="btn btn-ghost btn-small active" id="btnChartToday">Hoy</button>
+                <button class="btn btn-ghost btn-small" id="btnChart7days">7 Días</button>
+              </div>
+            </div>
+            <div style="padding:14px; height:200px;">
+              <canvas id="hourlyChart"></canvas>
+            </div>
+            <div style="padding:4px 14px 10px; font-size:0.78rem; color:var(--text-sub)" id="chartMsg"></div>
+          </div>
+
+          <!-- Simulador de Pruebas de Acceso -->
+          <div class="card">
+            <div class="card-header">
+              <span>Simulador de Pruebas de Acceso</span>
+            </div>
+            <div style="padding:14px;">
+              <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-bottom:10px;">
+                <input type="text" id="simPatente" class="cfg-input" placeholder="Patente (ej. AA123BB)" style="text-transform:uppercase;">
+                <input type="text" id="simDni" class="cfg-input" placeholder="DNI (ej. 35123456)">
+              </div>
+              <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                <button class="btn btn-primary btn-small" onclick="triggerSimulation('in')">Simular Ingreso (IN)</button>
+                <button class="btn btn-ghost btn-small" onclick="triggerSimulation('out')">Simular Salida (OUT)</button>
+                <button class="btn btn-ghost btn-small" onclick="simulatePassed('in')" title="Simular que el vehículo cruzó el sensor">Paso Masa (IN)</button>
+                <button class="btn btn-ghost btn-small" onclick="simulatePassed('out')" title="Simular que el vehículo cruzó el sensor">Paso Masa (OUT)</button>
+              </div>
+            </div>
+          </div>
+
+        </div>
+
+      </div>
+
+    </section>
+
+    <!-- ─── MI LOTE ────────────────────────────────────────────── -->
+    <section id="page-mi-lote" class="page hidden">
+      <div class="page-header">
+        <h2>Mi Lote - Pre-Autorizaciones</h2>
+        <div class="header-actions">
+          <span class="badge badge-blue">Lote <span id="lblLotePropietario">-</span></span>
+        </div>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 1fr 1.5fr; gap: 20px; align-items: start;">
+        <!-- Formulario de Pre-Autorización (Glassmorphic) -->
+        <div class="card" style="background: rgba(22, 37, 57, 0.4); border: 1px solid var(--border); border-radius: 12px; backdrop-filter: blur(8px); padding: 20px;">
+          <h3 style="margin-bottom: 15px; color: var(--accent); font-size: 1.15rem; font-weight: 600;">Nueva Visita Pre-Autorizada</h3>
+          <form id="formPreAutorizacion" onsubmit="savePreAutorizacion(event)" style="display:flex; flex-direction:column; gap:12px;">
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+              <div class="field-group">
+                <label style="color: var(--text-sub); font-size: 0.8rem; margin-bottom: 4px; display: block;">Patente</label>
+                <input id="paPatente" class="cfg-input" type="text" placeholder="ABC123" style="text-transform:uppercase; background: rgba(0,0,0,0.25); border-color: var(--border);">
+              </div>
+              <div class="field-group">
+                <label style="color: var(--text-sub); font-size: 0.8rem; margin-bottom: 4px; display: block;">DNI</label>
+                <input id="paDni" class="cfg-input" type="text" placeholder="12345678" style="background: rgba(0,0,0,0.25); border-color: var(--border);">
+              </div>
+            </div>
+            
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+              <div class="field-group">
+                <label style="color: var(--text-sub); font-size: 0.8rem; margin-bottom: 4px; display: block;">Nombre</label>
+                <input id="paNombre" class="cfg-input" type="text" placeholder="Juan" style="background: rgba(0,0,0,0.25); border-color: var(--border);">
+              </div>
+              <div class="field-group">
+                <label style="color: var(--text-sub); font-size: 0.8rem; margin-bottom: 4px; display: block;">Apellido</label>
+                <input id="paApellido" class="cfg-input" type="text" placeholder="Pérez" style="background: rgba(0,0,0,0.25); border-color: var(--border);">
+              </div>
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+              <div class="field-group">
+                <label style="color: var(--text-sub); font-size: 0.8rem; margin-bottom: 4px; display: block;">Fecha Desde *</label>
+                <input id="paDesde" class="cfg-input" type="date" required style="background: rgba(0,0,0,0.25); border-color: var(--border);">
+              </div>
+              <div class="field-group">
+                <label style="color: var(--text-sub); font-size: 0.8rem; margin-bottom: 4px; display: block;">Fecha Hasta *</label>
+                <input id="paHasta" class="cfg-input" type="date" required style="background: rgba(0,0,0,0.25); border-color: var(--border);">
+              </div>
+            </div>
+
+            <button class="btn btn-primary" type="submit" style="margin-top: 10px; justify-content: center; font-weight:600;">Autorizar Ingreso</button>
+          </form>
+        </div>
+
+        <!-- Tabla de Pre-Autorizaciones Activas -->
+        <div class="card">
+          <div class="card-header">
+            <span>Visitas Pre-Autorizadas Activas</span>
+          </div>
+          <div style="overflow-x: auto;">
+            <table class="data-table" id="tablePreAutorizaciones">
+              <thead>
+                <tr>
+                  <th>Nombre/Apellido</th>
+                  <th>Patente</th>
+                  <th>DNI</th>
+                  <th>Vigencia</th>
+                  <th>Acciones</th>
+                </tr>
+              </thead>
+              <tbody id="bodyPreAutorizaciones">
+                <tr><td colspan="5" class="loading">Cargando pre-autorizaciones…</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── HISTORIAL LOTE ──────────────────────────────────────── -->
+    <section id="page-historial-lote" class="page hidden">
+      <div class="page-header">
+        <h2>Historial de Accesos al Lote</h2>
+        <div class="header-actions">
+          <span class="badge badge-blue">Lote <span id="lblLotePropietarioHist">-</span></span>
+        </div>
+      </div>
+      <div class="card">
+        <div style="overflow-x: auto;">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Fecha/Hora</th>
+                <th>Sentido</th>
+                <th>Patente</th>
+                <th>DNI</th>
+                <th>Visitante</th>
+                <th>Resultado</th>
+                <th>Detalles</th>
+              </tr>
+            </thead>
+            <tbody id="bodyHistorialLote">
+              <tr><td colspan="7" class="loading">Cargando historial…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── VEHÍCULOS ──────────────────────────────────────────── -->
+    <section id="page-vehiculos" class="page hidden">
+      <div class="page-header">
+        <h2>Vehículos</h2>
+        <div class="header-actions">
+          <input type="text" id="filterVeh" placeholder="Buscar patente…" oninput="loadVehiculos()">
+          <button class="btn btn-primary" onclick="openVehicleModal()">+ Nuevo</button>
+        </div>
+      </div>
+      <div class="card">
+        <table class="data-table" id="tableVehiculos">
+          <thead>
+            <tr>
+              <th>Patente</th>
+              <th>Descripción</th>
+              <th>Propietario</th>
+              <th>Requiere DNI</th>
+              <th>Vencimiento</th>
+              <th>Estado</th>
+              <th>Acciones</th>
+            </tr>
+          </thead>
+          <tbody id="bodyVehiculos">
+            <tr><td colspan="7" class="loading">Cargando…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ─── PERSONAS ───────────────────────────────────────────── -->
+    <section id="page-personas" class="page hidden">
+      <div class="page-header">
+        <h2>Personas</h2>
+        <div class="header-actions">
+          <input type="text" id="filterPer" placeholder="Buscar nombre o DNI…" oninput="loadPersonas()">
+          <button class="btn btn-primary" onclick="openPersonaModal()">+ Nueva</button>
+        </div>
+      </div>
+      <div class="card">
+        <table class="data-table" id="tablePersonas">
+          <thead>
+            <tr>
+              <th>DNI</th>
+              <th>Apellido</th>
+              <th>Nombre</th>
+              <th>Vehículos</th>
+              <th>Estado</th>
+              <th>Acciones</th>
+            </tr>
+          </thead>
+          <tbody id="bodyPersonas">
+            <tr><td colspan="6" class="loading">Cargando…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- ─── HISTORIAL ──────────────────────────────────────────── -->
+    <section id="page-historial" class="page hidden">
+      <div class="page-header">
+        <h2>Historial de Accesos</h2>
+        <div class="header-actions">
+          <input type="text" id="filtHistPatente" placeholder="Patente…" style="width:110px">
+          <select id="filtHistResultado">
+            <option value="">Todos</option>
+            <option value="autorizado">Autorizado</option>
+            <option value="manual">Manual</option>
+            <option value="denegado_patente">Denegado patente</option>
+            <option value="denegado_dni">Denegado DNI</option>
+            <option value="denegado_ambos">Denegado ambos</option>
+          </select>
+          <input type="date" id="filtHistDesde">
+          <input type="date" id="filtHistHasta">
+          <button class="btn btn-primary" onclick="loadHistorial()">Buscar</button>
+          <button class="btn btn-ghost" onclick="exportHistorialCsv()" style="border: 1px solid var(--accent); color: var(--accent);">Exportar CSV</button>
+        </div>
+      </div>
+      <div class="card">
+        <div style="padding:8px 12px;font-size:0.85rem;color:#aaa">
+          Total: <span id="histTotal">–</span> registros |
+          Mostrando: <span id="histMostrando">–</span>
+        </div>
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>Fecha/Hora</th>
+              <th>Patente</th>
+              <th>DNI</th>
+              <th>Resultado</th>
+              <th>Motivo</th>
+              <th>Conf. OCR</th>
+            </tr>
+          </thead>
+          <tbody id="bodyHistorial">
+            <tr><td colspan="6" class="loading">Cargando…</td></tr>
+          </tbody>
+        </table>
+        <div class="pagination">
+          <button class="btn btn-ghost btn-small" id="btnHistPrev" onclick="histOffset-=200;loadHistorial()">‹ Anterior</button>
+          <button class="btn btn-ghost btn-small" id="btnHistNext" onclick="histOffset+=200;loadHistorial()">Siguiente ›</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── DETECCIONES ALPR ───────────────────────────────────────── -->
+    <section id="page-detecciones" class="page hidden">
+      <div class="page-header">
+        <h2>Detecciones ALPR</h2>
+        <div class="header-actions">
+          <select id="detFilterSentido" class="cfg-input" style="width:auto;min-width:110px;" onchange="refreshDeteccionesDB()">
+            <option value="">Todos</option>
+            <option value="in">Ingreso</option>
+            <option value="out">Salida</option>
+          </select>
+          <input type="text" id="detSearch" class="search" placeholder="Filtrar patente..." oninput="refreshDeteccionesDB()">
+          <button class="btn btn-ghost" onclick="refreshDeteccionesDB()">↻ Actualizar</button>
+        </div>
+      </div>
+      <div class="card">
+        <div class="table-wrap">
+        <table class="data-table" id="tableDetecciones">
+          <thead>
+            <tr>
+              <th>Fecha</th>
+              <th>Sentido</th>
+              <th>Patente</th>
+              <th>Placa</th>
+              <th>Cám. Lectora</th>
+              <th>Cám. Evidencia</th>
+              <th>Conf. OCR</th>
+              <th>Conf. Det.</th>
+              <th>Estado</th>
+            </tr>
+          </thead>
+          <tbody id="bodyDetecciones">
+            <tr><td colspan="9" class="loading">Cargando detecciones...</td></tr>
+          </tbody>
+        </table>
+        </div>
+        <div class="pager">
+          <button class="btn btn-ghost btn-small" id="btnDetPrev" onclick="detPageDB('prev')">‹ Anterior</button>
+          <span id="detPageInfo" style="padding:0 10px;font-size:.85rem;color:var(--text-sub)">Página 1 / 1</span>
+          <button class="btn btn-ghost btn-small" id="btnDetNext" onclick="detPageDB('next')">Siguiente ›</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── CONFIG ───────────────────────────────────────────────── -->
+    <section id="page-config" class="page hidden">
+      <div class="page-header">
+        <h2>Configuración de Sistema</h2>
+      </div>
+
+      <div class="cfg-tabs" style="display:flex;gap:10px;margin-bottom:16px;border-bottom:1px solid var(--border);padding-bottom:10px;">
+        <button class="btn btn-ghost cfg-tab active" onclick="switchCfgTab('barreras')" id="tabBarreras">Control Barreras</button>
+        <button class="btn btn-ghost cfg-tab" onclick="switchCfgTab('alpr')" id="tabALPR">ALPR (Cámaras)</button>
+        <button class="btn btn-ghost cfg-tab" onclick="switchCfgTab('evidencia')" id="tabEvi">Cámara Evidencia</button>
+        <button class="btn btn-ghost cfg-tab" onclick="switchCfgTab('dni')" id="tabDNI">Lector DNI</button>
+        <button class="btn btn-ghost cfg-tab" onclick="switchCfgTab('motor')" id="tabMotor">Motor y Lógica</button>
+        <button class="btn btn-ghost cfg-tab" onclick="switchCfgTab('almacenamiento')" id="tabAlmacenamiento">Almacenamiento</button>
+        <button class="btn btn-ghost cfg-tab" onclick="switchCfgTab('operadores')" id="tabOperadores">Gestión Operadores/Propietarios</button>
+      </div>
+
+      <!-- TAB: CONTROL BARRERAS (Granular) -->
+      <div id="cfgContent-barreras" class="cfg-tab-content">
+        <div class="card" style="margin-bottom:16px">
+          <div class="card-header"><span>Panel de Subsistemas — Control Granular</span>
+            <button class="btn btn-ghost btn-small" onclick="loadSubsystems()">Actualizar</button>
+          </div>
+          <div style="padding:16px">
+            <p class="cfg-mini muted" style="margin-bottom:16px">Activa o desactiva cada subsistema de forma independiente, sin reiniciar el servidor. Los cambios se aplican al instante.</p>
+
+            <!-- INGRESO (IN) -->
+            <h4 style="margin-bottom:12px;color:var(--accent);border-bottom:1px solid var(--border);padding-bottom:6px">Barrera de Ingreso (IN)</h4>
+            <div class="subsys-grid">
+              <div class="subsys-row" id="subsysAlprIn">
+                <div class="subsys-led" id="ledAlprIn"></div>
+                <div class="subsys-info">
+                  <div class="subsys-name">ALPR — Reconocimiento de Patentes</div>
+                  <div class="subsys-detail" id="detailAlprIn">Cargando…</div>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="toggleAlprIn" onchange="toggleSubsystem('alpr_in', this.checked)">
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+
+              <div class="subsys-row" id="subsysQrIn">
+                <div class="subsys-led" id="ledQrIn"></div>
+                <div class="subsys-info">
+                  <div class="subsys-name">Lector QR / DNI</div>
+                  <div class="subsys-detail" id="detailQrIn">Cargando…</div>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="toggleQrIn" onchange="toggleSubsystem('qr_in', this.checked)">
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+
+              <div class="subsys-row" id="subsysSnapIn">
+                <div class="subsys-led" id="ledSnapIn"></div>
+                <div class="subsys-info">
+                  <div class="subsys-name">Cámara de Evidencia</div>
+                  <div class="subsys-detail" id="detailSnapIn">Cargando…</div>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="toggleSnapIn" onchange="toggleSubsystem('snapshot_in', this.checked)">
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+            </div>
+
+            <!-- SALIDA (OUT) -->
+            <h4 style="margin:20px 0 12px;color:var(--yellow);border-bottom:1px solid var(--border);padding-bottom:6px">Barrera de Salida (OUT)</h4>
+            <div class="subsys-grid">
+              <div class="subsys-row" id="subsysAlprOut">
+                <div class="subsys-led" id="ledAlprOut"></div>
+                <div class="subsys-info">
+                  <div class="subsys-name">ALPR — Reconocimiento de Patentes</div>
+                  <div class="subsys-detail" id="detailAlprOut">Cargando…</div>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="toggleAlprOut" onchange="toggleSubsystem('alpr_out', this.checked)">
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+
+              <div class="subsys-row" id="subsysQrOut">
+                <div class="subsys-led" id="ledQrOut"></div>
+                <div class="subsys-info">
+                  <div class="subsys-name">Lector QR / DNI</div>
+                  <div class="subsys-detail" id="detailQrOut">Cargando…</div>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="toggleQrOut" onchange="toggleSubsystem('qr_out', this.checked)">
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+
+              <div class="subsys-row" id="subsysSnapOut">
+                <div class="subsys-led" id="ledSnapOut"></div>
+                <div class="subsys-info">
+                  <div class="subsys-name">Cámara de Evidencia</div>
+                  <div class="subsys-detail" id="detailSnapOut">Cargando…</div>
+                </div>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="toggleSnapOut" onchange="toggleSubsystem('snapshot_out', this.checked)">
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- CONFIGURACION HARDWARE BARRERAS DUALES -->
+        <div class="card" style="margin-bottom:16px">
+          <div class="card-header"><span>Configuración de Barreras Físicas</span></div>
+          <div style="padding:16px">
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+              
+              <!-- BARRERA DE INGRESO (IN) -->
+              <div style="border-right: 1px solid var(--border); padding-right: 20px;">
+                <h4 style="margin-bottom:12px;color:var(--accent)">Barrera de Ingreso (IN)</h4>
+                
+                <label class="cfg-label" style="margin-bottom:12px;">
+                  <span>Modo de Barrera</span>
+                  <select id="barrierTypeIn" class="cfg-input" onchange="toggleBarrierFields('in')">
+                    <option value="disabled">Desactivada</option>
+                    <option value="simulated">Simulada</option>
+                    <option value="com">Puerto COM (Arduino / Serial)</option>
+                    <option value="ip">IP Relay Controller (TCP / HTTP)</option>
+                  </select>
+                </label>
+
+                <!-- Campos de Puerto COM -->
+                <div id="barrierComFieldsIn" style="display:none; margin-bottom:12px; background:rgba(255,255,255,0.01); padding:10px; border-radius:6px;">
+                  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                    <label class="cfg-label">
+                      <span>Puerto COM</span>
+                      <select id="barrierPortIn" class="cfg-input">
+                        <option value="">Cargando puertos...</option>
+                      </select>
+                    </label>
+                    <label class="cfg-label">
+                      <span>Baudios</span>
+                      <input id="barrierBaudrateIn" class="cfg-input" type="number" value="9600" />
+                    </label>
+                  </div>
+                </div>
+
+                <!-- Campos de IP Relay -->
+                <div id="barrierIpFieldsIn" style="display:none; margin-bottom:12px; background:rgba(255,255,255,0.01); padding:10px; border-radius:6px;">
+                  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom:8px;">
+                    <label class="cfg-label">
+                      <span>Dirección IP</span>
+                      <input id="barrierIpIn" class="cfg-input" type="text" placeholder="192.168.1.100" />
+                    </label>
+                    <label class="cfg-label">
+                      <span>Puerto IP</span>
+                      <input id="barrierIpPortIn" class="cfg-input" type="number" value="80" />
+                    </label>
+                  </div>
+                  <label class="cfg-label" style="margin-bottom:8px;">
+                    <span>Protocolo IP</span>
+                    <select id="barrierIpProtocolIn" class="cfg-input">
+                      <option value="tcp">TCP Socket (Raw String)</option>
+                      <option value="http">HTTP GET Request</option>
+                    </select>
+                  </label>
+                  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                    <label class="cfg-label">
+                      <span>Comando ABRIR</span>
+                      <input id="barrierIpCmdOpenIn" class="cfg-input" type="text" placeholder="GPIO,1,1" />
+                    </label>
+                    <label class="cfg-label">
+                      <span>Comando CERRAR</span>
+                      <input id="barrierIpCmdCloseIn" class="cfg-input" type="text" placeholder="GPIO,1,0" />
+                    </label>
+                  </div>
+                </div>
+
+                <!-- Watchdog -->
+                <label class="cfg-label" style="margin-bottom:16px;">
+                  <span>Cierre Automático (Watchdog)</span>
+                  <input id="barrierMaxOpenSecIn" class="cfg-input" type="number" placeholder="0 = desactivado" value="0" />
+                  <span class="cfg-mini muted">Tiempo en segundos para auto-cerrar en caso de emergencia.</span>
+                </label>
+
+                <!-- Botones de prueba -->
+                <div style="display: flex; gap: 8px; margin-top: 12px;">
+                  <button class="btn btn-ghost" style="flex:1; border-color:var(--accent); color:var(--accent);" onclick="testBarrier('in', 'open')">Test Abrir</button>
+                  <button class="btn btn-ghost" style="flex:1; border-color:var(--text-sub); color:var(--text-sub);" onclick="testBarrier('in', 'close')">Test Cerrar</button>
+                </div>
+              </div>
+
+              <!-- BARRERA DE SALIDA (OUT) -->
+              <div>
+                <h4 style="margin-bottom:12px;color:var(--yellow)">Barrera de Salida (OUT)</h4>
+                
+                <label class="cfg-label" style="margin-bottom:12px;">
+                  <span>Modo de Barrera</span>
+                  <select id="barrierTypeOut" class="cfg-input" onchange="toggleBarrierFields('out')">
+                    <option value="disabled">Desactivada</option>
+                    <option value="simulated">Simulada</option>
+                    <option value="com">Puerto COM (Arduino / Serial)</option>
+                    <option value="ip">IP Relay Controller (TCP / HTTP)</option>
+                  </select>
+                </label>
+
+                <!-- Campos de Puerto COM -->
+                <div id="barrierComFieldsOut" style="display:none; margin-bottom:12px; background:rgba(255,255,255,0.01); padding:10px; border-radius:6px;">
+                  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                    <label class="cfg-label">
+                      <span>Puerto COM</span>
+                      <select id="barrierPortOut" class="cfg-input">
+                        <option value="">Cargando puertos...</option>
+                      </select>
+                    </label>
+                    <label class="cfg-label">
+                      <span>Baudios</span>
+                      <input id="barrierBaudrateOut" class="cfg-input" type="number" value="9600" />
+                    </label>
+                  </div>
+                </div>
+
+                <!-- Campos de IP Relay -->
+                <div id="barrierIpFieldsOut" style="display:none; margin-bottom:12px; background:rgba(255,255,255,0.01); padding:10px; border-radius:6px;">
+                  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom:8px;">
+                    <label class="cfg-label">
+                      <span>Dirección IP</span>
+                      <input id="barrierIpOut" class="cfg-input" type="text" placeholder="192.168.1.100" />
+                    </label>
+                    <label class="cfg-label">
+                      <span>Puerto IP</span>
+                      <input id="barrierIpPortOut" class="cfg-input" type="number" value="80" />
+                    </label>
+                  </div>
+                  <label class="cfg-label" style="margin-bottom:8px;">
+                    <span>Protocolo IP</span>
+                    <select id="barrierIpProtocolOut" class="cfg-input">
+                      <option value="tcp">TCP Socket (Raw String)</option>
+                      <option value="http">HTTP GET Request</option>
+                    </select>
+                  </label>
+                  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                    <label class="cfg-label">
+                      <span>Comando ABRIR</span>
+                      <input id="barrierIpCmdOpenOut" class="cfg-input" type="text" placeholder="GPIO,1,1" />
+                    </label>
+                    <label class="cfg-label">
+                      <span>Comando CERRAR</span>
+                      <input id="barrierIpCmdCloseOut" class="cfg-input" type="text" placeholder="GPIO,1,0" />
+                    </label>
+                  </div>
+                </div>
+
+                <!-- Watchdog -->
+                <label class="cfg-label" style="margin-bottom:16px;">
+                  <span>Cierre Automático (Watchdog)</span>
+                  <input id="barrierMaxOpenSecOut" class="cfg-input" type="number" placeholder="0 = desactivado" value="0" />
+                  <span class="cfg-mini muted">Tiempo en segundos para auto-cerrar en caso de emergencia.</span>
+                </label>
+
+                <!-- Botones de prueba -->
+                <div style="display: flex; gap: 8px; margin-top: 12px;">
+                  <button class="btn btn-ghost" style="flex:1; border-color:var(--yellow); color:var(--yellow);" onclick="testBarrier('out', 'open')">Test Abrir</button>
+                  <button class="btn btn-ghost" style="flex:1; border-color:var(--text-sub); color:var(--text-sub);" onclick="testBarrier('out', 'close')">Test Cerrar</button>
+                </div>
+              </div>
+
+            </div>
+
+            <!-- Guardar -->
+            <div style="margin-top:20px; display: flex; justify-content: flex-end;">
+              <button class="btn btn-primary" onclick="saveBarrierTab()">Guardar Barreras</button>
+            </div>
+
+          </div>
+        </div>
+
+      </div>
+
+      <!-- TAB: ALPR -->
+      <div id="cfgContent-alpr" class="cfg-tab-content hidden">
+        <div style="display:flex;gap:8px;margin-bottom:16px">
+          <button class="btn btn-ghost btn-small active" id="subtabALPR-in" onclick="switchCfgSubTab('alpr','in')">Ingreso (IN)</button>
+          <button class="btn btn-ghost btn-small" id="subtabALPR-out" onclick="switchCfgSubTab('alpr','out')">Salida (OUT)</button>
+        </div>
+        <div class="card" style="margin-bottom: 16px;">
+          <div class="card-header"><span id="alprTitle">ALPR - Ingreso (IN)</span></div>
+          <div style="padding:14px">
+            <div class="cfg-grid" style="grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px;">
+              <label class="cfg-label"><span>IP / Host</span><input id="alprHost" class="cfg-input" type="text" placeholder="192.168.1.100" /></label>
+              <label class="cfg-label"><span>Puerto</span><input id="alprPort" class="cfg-input" type="number" value="554" /></label>
+              <label class="cfg-label"><span>Usuario</span><input id="alprUser" class="cfg-input" type="text" placeholder="admin" /></label>
+              <label class="cfg-label"><span>Contraseña</span><input id="alprPass" class="cfg-input" type="password" /></label>
+              <label class="cfg-label"><span>Ruta / Path</span><input id="alprPath" class="cfg-input" type="text" value="/cam/realmonitor" /></label>
+              <label class="cfg-label"><span>Canal</span><input id="alprChannel" class="cfg-input" type="number" value="1" /></label>
+              <label class="cfg-label cfg-span-2">
+                <span>Fuente generada o Personalizada</span>
+                <input id="alprSource" class="cfg-input" type="text" placeholder="rtsp://... o 0" />
+              </label>
+            </div>
+            <h4 style="margin: 16px 0 8px; color: var(--accent);">Superposición de Alerta en Pantalla (HUD)</h4>
+            <div class="cfg-grid" style="grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 12px;">
+              <label class="check-line" style="font-weight: bold; margin-top: 8px;">
+                <input type="checkbox" id="hudOverlayEnabled" /> Habilitar HUD en esta cámara
+              </label>
+              <label class="cfg-label">
+                <span>Posición en Pantalla</span>
+                <select id="hudOverlayPosition" class="cfg-input">
+                  <option value="center">Centro</option>
+                  <option value="top-left">Superior Izquierda</option>
+                  <option value="top-right">Superior Derecha</option>
+                  <option value="bottom-left">Inferior Izquierda</option>
+                  <option value="bottom-right">Inferior Derecha</option>
+                </select>
+              </label>
+            </div>
+            <h4 style="margin: 16px 0 8px; color: var(--accent);">Optimización de Recursos (Ahorro de CPU)</h4>
+            <div class="cfg-grid" style="grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; margin-bottom: 12px;">
+              <label class="check-line" style="font-weight: bold; margin-top: 8px;">
+                <input type="checkbox" id="motionDetectionEnabled" /> Habilitar Ahorro de CPU Inteligente
+              </label>
+              <label class="cfg-label">
+                <span>Sensibilidad (Umbral de Movimiento)</span>
+                <select id="motionThreshold" class="cfg-input">
+                  <option value="0.002">Alta (Mucha sensibilidad)</option>
+                  <option value="0.005">Recomendada (Normal)</option>
+                  <option value="0.01">Baja (Menos sensible)</option>
+                  <option value="0.02">Muy Baja (Solo grandes cambios)</option>
+                </select>
+              </label>
+              <label class="cfg-label">
+                <span>Ventana de Escaneo Activo (segundos)</span>
+                <input id="motionCooldownSec" class="cfg-input" type="number" step="0.5" min="1.0" max="10.0" value="3.0" />
+              </label>
+            </div>
+            <p class="cfg-mini muted" style="margin-top:10px">Se guardará automáticamente en el sistema como cámara principal de este sentido.</p>
+            <div style="margin-top:12px; display: flex; justify-content: flex-end;">
+              <button class="btn btn-primary" onclick="saveAlprTab()">Guardar ALPR</button>
+            </div>
+          </div>
+        </div>
+
+        <!-- ROI Visual Drawer (Reubicado desde Motor y Lógica) -->
+        <div class="card">
+          <div class="card-header"><span>Zona de Detección (ROI - Dibujar sobre la imagen)</span></div>
+          <div style="padding:14px">
+            <p class="cfg-mini muted" style="margin-bottom:10px">Dibuje un rectángulo sobre la imagen para definir el área donde se detectan patentes. Solo esa zona será procesada por la IA.</p>
+            <div style="position:relative; display:inline-block; border:2px solid var(--border); border-radius:var(--radius); overflow:hidden; cursor:crosshair; margin-bottom:12px;" id="roiContainer">
+              <img id="roiImage" src="/video_feed/in" style="display:block; max-width:720px; width:100%;"
+                   onerror="this.src='/static/no-signal.svg'; this.onerror=null;">
+              <canvas id="roiCanvas" style="position:absolute;top:0;left:0;width:100%;height:100%;"></canvas>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center">
+              <label class="check-line"><input id="roiEnabled" type="checkbox" /> ROI habilitado</label>
+              <div style="flex:1"></div>
+              <button class="btn btn-ghost" type="button" onclick="clearRoiDraw()">Quitar ROI</button>
+              <button class="btn btn-success" type="button" onclick="saveRoiDraw()">Guardar ROI</button>
+            </div>
+            <div class="roi-hidden-inputs" style="display:none">
+              <input id="roiX" type="number"><input id="roiY" type="number"><input id="roiW" type="number"><input id="roiH" type="number">
+              <input id="roiSentido" type="hidden" value="in">
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB: Evidencia (Rediseñado en 2 Columnas Simultáneas con Previsualizaciones en Vivo) -->
+      <div id="cfgContent-evidencia" class="cfg-tab-content hidden">
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom:16px;">
+          <!-- INGRESO (IN) -->
+          <div class="card">
+            <div class="card-header"><span>Cámara Evidencia - Ingreso (IN)</span></div>
+            <div style="padding:14px">
+              <label class="check-line" style="margin-bottom:14px;font-weight:bold;">
+                <input type="checkbox" id="eviEnabledIn" /> Habilitar cámara de evidencia
+              </label>
+              
+              <div class="cfg-grid" style="grid-template-columns: 1fr 1fr; gap: 8px;">
+                <label class="cfg-label"><span>IP / Host</span><input id="eviHostIn" class="cfg-input" type="text" /></label>
+                <label class="cfg-label"><span>Puerto</span><input id="eviPortIn" class="cfg-input" type="number" value="554" /></label>
+                <label class="cfg-label"><span>Usuario</span><input id="eviUserIn" class="cfg-input" type="text" /></label>
+                <label class="cfg-label"><span>Contraseña</span><input id="eviPassIn" class="cfg-input" type="password" /></label>
+                <label class="cfg-label"><span>Ruta / Path</span><input id="eviPathIn" class="cfg-input" type="text" value="/cam/realmonitor" /></label>
+                <label class="cfg-label"><span>Canal</span><input id="eviChannelIn" class="cfg-input" type="number" value="1" /></label>
+              </div>
+              <label class="cfg-label" style="margin-top: 8px;">
+                <span>URL RTSP Resultante</span>
+                <input id="eviSourceIn" class="cfg-input" type="text" placeholder="rtsp://... o vacío para usar ALPR" />
+              </label>
+              
+              <div class="cfg-grid" style="grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px;">
+                <label class="cfg-label">
+                  <span>¿Cuándo disparar?</span>
+                  <select id="eviTriggerIn" class="cfg-input">
+                    <option value="ambos">Al leer patente o DNI</option>
+                    <option value="patente">Solo al leer patente</option>
+                    <option value="dni">Solo al leer DNI</option>
+                  </select>
+                </label>
+                <label class="cfg-label">
+                  <span>Fotos (Ráfaga)</span>
+                  <input id="eviCountIn" class="cfg-input" type="number" min="1" max="5" value="1" />
+                </label>
+              </div>
+
+              <!-- Stream en Vivo Ingreso -->
+              <div style="margin-top: 14px; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; background: #000;">
+                <img id="eviLiveFeedIn" src="/video_feed_evidence/in" style="display: block; width: 100%; aspect-ratio: 16/9; object-fit: cover;" onerror="this.src='/static/no-signal.svg'; this.onerror=null;">
+              </div>
+            </div>
+          </div>
+
+          <!-- SALIDA (OUT) -->
+          <div class="card">
+            <div class="card-header"><span>Cámara Evidencia - Salida (OUT)</span></div>
+            <div style="padding:14px">
+              <label class="check-line" style="margin-bottom:14px;font-weight:bold;">
+                <input type="checkbox" id="eviEnabledOut" /> Habilitar cámara de evidencia
+              </label>
+              
+              <div class="cfg-grid" style="grid-template-columns: 1fr 1fr; gap: 8px;">
+                <label class="cfg-label"><span>IP / Host</span><input id="eviHostOut" class="cfg-input" type="text" /></label>
+                <label class="cfg-label"><span>Puerto</span><input id="eviPortOut" class="cfg-input" type="number" value="554" /></label>
+                <label class="cfg-label"><span>Usuario</span><input id="eviUserOut" class="cfg-input" type="text" /></label>
+                <label class="cfg-label"><span>Contraseña</span><input id="eviPassOut" class="cfg-input" type="password" /></label>
+                <label class="cfg-label"><span>Ruta / Path</span><input id="eviPathOut" class="cfg-input" type="text" value="/cam/realmonitor" /></label>
+                <label class="cfg-label"><span>Canal</span><input id="eviChannelOut" class="cfg-input" type="number" value="1" /></label>
+              </div>
+              <label class="cfg-label" style="margin-top: 8px;">
+                <span>URL RTSP Resultante</span>
+                <input id="eviSourceOut" class="cfg-input" type="text" placeholder="rtsp://... o vacío para usar ALPR" />
+              </label>
+              
+              <div class="cfg-grid" style="grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 8px;">
+                <label class="cfg-label">
+                  <span>¿Cuándo disparar?</span>
+                  <select id="eviTriggerOut" class="cfg-input">
+                    <option value="ambos">Al leer patente o DNI</option>
+                    <option value="patente">Solo al leer patente</option>
+                    <option value="dni">Solo al leer DNI</option>
+                  </select>
+                </label>
+                <label class="cfg-label">
+                  <span>Fotos (Ráfaga)</span>
+                  <input id="eviCountOut" class="cfg-input" type="number" min="1" max="5" value="1" />
+                </label>
+              </div>
+
+              <!-- Stream en Vivo Salida -->
+              <div style="margin-top: 14px; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; background: #000;">
+                <img id="eviLiveFeedOut" src="/video_feed_evidence/out" style="display: block; width: 100%; aspect-ratio: 16/9; object-fit: cover;" onerror="this.src='/static/no-signal.svg'; this.onerror=null;">
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div style="display: flex; justify-content: flex-end;">
+          <button class="btn btn-primary" onclick="saveEviTab()">Guardar Evidencia</button>
+        </div>
+      </div>
+
+      <!-- TAB: Lector DNI (Separado en COM y Cámara IP, con Previsualización y Pruebas en Vivo) -->
+      <div id="cfgContent-dni" class="cfg-tab-content hidden">
+        <div style="display:flex;gap:8px;margin-bottom:16px">
+          <button class="btn btn-ghost btn-small active" id="subtabDNI-in" onclick="switchCfgSubTab('dni','in')">Ingreso (IN)</button>
+          <button class="btn btn-ghost btn-small" id="subtabDNI-out" onclick="switchCfgSubTab('dni','out')">Salida (OUT)</button>
+        </div>
+        <div class="card">
+          <div class="card-header"><span id="dniTitle">Lector QR DNI - Ingreso (IN)</span></div>
+          <div style="padding:14px">
+            <label class="cfg-label" style="margin-bottom:16px;">
+              <span>Modo de Lector QR</span>
+              <select id="dniSourceType" class="cfg-input">
+                <option value="com">Lector de Pistola (Puerto COM)</option>
+                <option value="disabled">Desactivado</option>
+              </select>
+            </label>
+
+            <!-- Elemento oculto para mantener compatibilidad con JS y evitar errores runtime -->
+            <input type="hidden" id="dniSource" value="" />
+
+            <!-- Lector de Pistola por Puerto COM -->
+            <div class="card" style="background: rgba(255, 255, 255, 0.02); border: 1px solid var(--border); border-radius: 8px; width: 100%;">
+              <div class="card-header" style="background: transparent; border-bottom: 1px solid var(--border); padding: 8px 12px; font-weight: 600;">
+                <span>Lector de Pistola por Puerto COM</span>
+              </div>
+              <div style="padding:12px;">
+                <label class="cfg-label" style="margin-bottom:12px;">
+                  <span>Puerto COM</span>
+                  <select id="dniComPort" class="cfg-input">
+                    <option value="">Cargando puertos...</option>
+                  </select>
+                </label>
+                <button class="btn btn-ghost btn-full" onclick="testComPort()" type="button" style="border: 1px solid var(--accent); color: var(--accent);">Probar Lector de Pistola</button>
+                <textarea id="dniTestResults" readonly class="cfg-input" style="font-family: monospace; font-size: 11px; height: 120px; margin-top: 12px; resize: none; background: rgba(0, 0, 0, 0.4); border-color: rgba(255, 255, 255, 0.1); width: 100%; box-sizing: border-box;" placeholder="Esperando lecturas de DNI..."></textarea>
+              </div>
+            </div>
+
+            <div style="margin-top:16px; display: flex; justify-content: flex-end;">
+              <button class="btn btn-primary" onclick="saveDniTab()">Guardar DNI</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB: Motor y Lógica (Compacto, Ordenado y sin ROI) -->
+      <div id="cfgContent-motor" class="cfg-tab-content hidden">
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;">
+          <!-- Tarjeta 1: Funcionamiento de Autorización -->
+          <div class="card">
+            <div class="card-header"><span>Funcionamiento de Autorización</span></div>
+            <div style="padding:14px">
+              <div class="cfg-grid" style="grid-template-columns: 1fr; gap: 12px;">
+                <label class="cfg-label">
+                  <span>Modo de validación</span>
+                  <select id="selectAuthMode" class="cfg-input">
+                    <option value="patente">Solo patente</option>
+                    <option value="dni">Solo QR DNI</option>
+                    <option value="ambos">Patente + QR DNI (doble factor)</option>
+                    <option value="combinado">Combinado (patente o QR DNI)</option>
+                  </select>
+                </label>
+                <label class="check-line" style="font-weight:bold; margin-top: 8px;">
+                  <input type="checkbox" id="checkAutoRegister" /> Activar registro automático (Autoregistro)
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <!-- Tarjeta 2: Rendimiento del Motor de IA -->
+          <div class="card">
+            <div class="card-header"><span>Rendimiento del Motor de IA</span></div>
+            <div style="padding:14px">
+              <div class="cfg-grid" style="grid-template-columns: 1fr 1fr; gap: 10px;">
+                <label class="cfg-label">
+                  <span>Inferencia cada N frames</span>
+                  <input id="inputInferEvery" class="cfg-input" type="number" min="1" step="1" value="8" />
+                </label>
+                <label class="cfg-label">
+                  <span>Dispositivo ONNX</span>
+                  <select id="selectOcrDevice" class="cfg-input">
+                    <option value="auto">auto</option>
+                    <option value="cpu">cpu</option>
+                    <option value="cuda">cuda (GPU)</option>
+                  </select>
+                </label>
+                <label class="cfg-label">
+                  <span>Conf. OCR mínima — <span id="lblMinOcrConf">0.00</span></span>
+                  <input id="inputMinOcrConf" class="slider-input" type="range" min="0" max="1" step="0.05" value="0" />
+                </label>
+                <label class="cfg-label">
+                  <span>Conf. detector mínima — <span id="lblMinDetConf">0.00</span></span>
+                  <input id="inputMinDetConf" class="slider-input" type="range" min="0" max="1" step="0.05" value="0" />
+                </label>
+                <label class="cfg-label cfg-span-2">
+                  <span>Ventana deduplicación (seg)</span>
+                  <input id="inputDedupWindow" class="cfg-input" type="number" min="0" step="1" value="8" />
+                </label>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tarjeta 3: Filtro de Formato de Patente -->
+        <div class="card" style="margin-bottom:16px">
+          <div class="card-header"><span>Filtro de Formato de Patente</span></div>
+          <div style="padding:14px">
+            <label class="check-line" style="margin-bottom:12px;font-weight:bold;">
+              <input type="checkbox" id="plateFilterEnabled" checked /> Activar filtro (solo aceptar patentes reales)
+            </label>
+            <p class="cfg-mini muted" style="margin-bottom:10px">Seleccione los países cuyas patentes desea reconocer. Se descartarán lecturas que no coincidan con ningún formato real.</p>
+            <div style="display:flex;flex-wrap:wrap;gap:12px;" id="countryChecks">
+              <label class="check-line"><input type="checkbox" value="AR" class="countryChk" checked /> Argentina</label>
+              <label class="check-line"><input type="checkbox" value="BR" class="countryChk" checked /> Brasil</label>
+              <label class="check-line"><input type="checkbox" value="UY" class="countryChk" checked /> Uruguay</label>
+              <label class="check-line"><input type="checkbox" value="PY" class="countryChk" checked /> Paraguay</label>
+              <label class="check-line"><input type="checkbox" value="CL" class="countryChk" checked /> Chile</label>
+              <label class="check-line"><input type="checkbox" value="CO" class="countryChk" /> Colombia</label>
+              <label class="check-line"><input type="checkbox" value="MX" class="countryChk" /> Mexico</label>
+              <label class="check-line"><input type="checkbox" value="VE" class="countryChk" /> Venezuela</label>
+              <label class="check-line"><input type="checkbox" value="US" class="countryChk" /> EE.UU.</label>
+            </div>
+          </div>
+        </div>
+        
+        <div style="display: flex; align-items: center; justify-content: space-between;">
+          <span id="runtimeMsg" class="cfg-mini muted">-</span>
+          <button id="btnSaveRuntime" class="btn btn-primary" type="button">Guardar Motor y Lógica</button>
+        </div>
+      </div>
+
+      <!-- TAB: Almacenamiento (Rediseñado en Lado a Lado Compacto) -->
+      <div id="cfgContent-almacenamiento" class="cfg-tab-content hidden">
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+          <!-- Tarjeta 1: Retención Automática -->
+          <div class="card" style="display: flex; flex-direction: column;">
+            <div class="card-header">
+              <span>Configuración de Retención Automática</span>
+            </div>
+            <div style="padding:16px; flex: 1; display: flex; flex-direction: column; justify-content: space-between;">
+              <p class="cfg-mini muted" style="margin-bottom:16px">
+                Define cuántos días se conservarán las fotos de evidencias y los recortes de patentes en el servidor.
+                Un proceso automático revisará diariamente y eliminará el contenido con una antigüedad superior al límite configurado.
+              </p>
+              <div>
+                <label class="cfg-label" style="margin-bottom: 12px;">
+                  <span>Días de retención automática</span>
+                  <input id="inputEvidenceDays" class="cfg-input" type="number" min="1" step="1" value="90" style="font-weight:bold; font-size:1.1rem; color:var(--accent); text-align:center;" />
+                </label>
+                <button class="btn btn-primary btn-full" onclick="saveEvidenceConfig()">Guardar Configuración</button>
+              </div>
+              <div style="margin-top:10px; min-height: 20px;">
+                <span id="evidenceMsg" class="cfg-mini muted">-</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Tarjeta 2: Purga Manual -->
+          <div class="card" style="display: flex; flex-direction: column;">
+            <div class="card-header">
+              <span style="color:var(--yellow)">Purga Manual de Fotos de Evidencia</span>
+            </div>
+            <div style="padding:16px; flex: 1; display: flex; flex-direction: column; justify-content: space-between;">
+              <!-- Advertencia de Peligro compacta sin emojis -->
+              <div style="background: rgba(239, 68, 68, 0.06); border: 1px solid rgba(239, 68, 68, 0.3); border-radius: 8px; padding: 12px; margin-bottom: 16px;">
+                <h4 style="color:#ef4444; margin-bottom:4px; font-weight:bold; font-size: 0.85rem;">ADVERTENCIA DE OPERACIÓN DESTRUCTIVA</h4>
+                <p class="cfg-mini" style="color:rgba(255,255,255,0.85); line-height:1.35; margin:0; font-size: 0.78rem;">
+                  Esta acción eliminará de forma física y definitiva todos los archivos de imágenes guardados en las subcarpetas del rango de fechas especificado. Las detecciones en la base de datos se conservarán.
+                </p>
+              </div>
+
+              <div>
+                <div class="cfg-grid" style="grid-template-columns: 1fr 1fr; gap:10px; margin-bottom: 12px;">
+                  <label class="cfg-label">
+                    <span>Fecha de Inicio (Desde)</span>
+                    <input id="inputPurgeDesde" class="cfg-input" type="date" />
+                  </label>
+                  <label class="cfg-label">
+                    <span>Fecha de Fin (Hasta)</span>
+                    <input id="inputPurgeHasta" class="cfg-input" type="date" />
+                  </label>
+                </div>
+                <button class="btn btn-danger btn-full" onclick="executeManualPurge()">
+                  Ejecutar Purga Manual
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- TAB: Gestión Operadores/Propietarios -->
+      <div id="cfgContent-operadores" class="cfg-tab-content hidden">
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px;">
+          <!-- Tarjeta 1: Privilegios Globales y Barreras -->
+          <div class="card">
+            <div class="card-header"><span>Privilegios del Sistema y Apertura de Barreras</span></div>
+            <div style="padding:16px">
+              <div class="cfg-grid" style="grid-template-columns: 1fr; gap: 14px;">
+                <label class="check-line" style="font-weight:bold;">
+                  <input type="checkbox" id="checkVigiladorManual" /> Permitir al Vigilador apertura manual de barreras
+                </label>
+                <label class="check-line" style="font-weight:bold;">
+                  <input type="checkbox" id="checkPropietarioAuth" /> Permitir a Propietarios pre-autorizar visitas
+                </label>
+                <div style="border-top:1px solid var(--border); margin:8px 0; padding-top:12px">
+                  <span class="cfg-mini muted" style="display:block; margin-bottom:10px">Apertura Automática de Barreras por Detección</span>
+                  <label class="check-line" style="font-weight:bold; margin-bottom:8px">
+                    <input type="checkbox" id="checkAutoOpenIn" /> Barrera de INGRESO (IN)
+                  </label>
+                  <label class="check-line" style="font-weight:bold">
+                    <input type="checkbox" id="checkAutoOpenOut" /> Barrera de SALIDA (OUT)
+                  </label>
+                </div>
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-top:8px">
+                  <span id="permsGlobalMsg" class="cfg-mini muted">-</span>
+                  <button class="btn btn-primary" onclick="saveGlobalPermissions()">Guardar Privilegios</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Tarjeta 2: Alta / Modificación de Cuentas -->
+          <div class="card">
+            <div class="card-header"><span id="formOperadorTitle">Registrar Nuevo Usuario</span></div>
+            <div style="padding:16px">
+              <input type="hidden" id="opId" value="" />
+              <div class="cfg-grid" style="grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 16px;">
+                <label class="cfg-label">
+                  <span>Usuario *</span>
+                  <input id="opUsername" class="cfg-input" type="text" placeholder="nombre_usuario" />
+                </label>
+                <label class="cfg-label">
+                  <span id="lblOpPassword">Contraseña *</span>
+                  <input id="opPassword" class="cfg-input" type="password" placeholder="••••••••" />
+                </label>
+                <label class="cfg-label">
+                  <span>Rol *</span>
+                  <select id="opRol" class="cfg-input" onchange="onOpRolChange()">
+                    <option value="viewer">viewer (Visualizador)</option>
+                    <option value="vigilador">vigilador (Guardia)</option>
+                    <option value="propietario">propietario (Residente)</option>
+                    <option value="supervisor">supervisor (Supervisor)</option>
+                    <option value="admin">admin (Administrador)</option>
+                  </select>
+                </label>
+                <label class="cfg-label">
+                  <span>Lote (solo propietario)</span>
+                  <input id="opLote" class="cfg-input" type="text" placeholder="Lote 123" disabled />
+                </label>
+              </div>
+              <label class="check-line" style="font-weight:bold; margin-bottom: 16px;">
+                <input type="checkbox" id="opActivo" checked /> Cuenta activa
+              </label>
+              <div style="display:flex; justify-content:flex-end; gap:8px;">
+                <button class="btn btn-ghost" onclick="cancelOpEdit()">Cancelar</button>
+                <button class="btn btn-primary" onclick="saveOperador()">Guardar Usuario</button>
+              </div>
+              <div style="margin-top:8px">
+                <span id="opFormMsg" class="cfg-mini muted">-</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tarjeta de Listado Completo -->
+        <div class="card">
+          <div class="card-header">
+            <span>Listado de Cuentas y Operadores</span>
+            <button class="btn btn-ghost btn-small" onclick="loadOperadores()">Actualizar</button>
+          </div>
+          <div style="padding:16px">
+            <div class="table-wrap">
+              <table class="data-table" id="tableOperadores">
+                <thead>
+                  <tr>
+                    <th>Usuario</th>
+                    <th>Rol</th>
+                    <th>Lote</th>
+                    <th>Estado</th>
+                    <th style="text-align:right">Acciones</th>
+                  </tr>
+                </thead>
+                <tbody id="tblOperadoresBody">
+                  <!-- Inyectado dinámicamente -->
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+      </div>
+
+  </main>
+</div>
+
+<!-- ═══════════════════════════════════════════════════ MODALES ═══ -->
+
+<!-- Modal Vehículo -->
+<div id="modalVehiculo" class="modal-overlay hidden" onclick="closeModal('modalVehiculo')">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <h3 id="modalVehTitle">Nuevo Vehículo</h3>
+      <button class="modal-close" onclick="closeModal('modalVehiculo')">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="vehId">
+      <div class="form-grid">
+        <div class="field-group">
+          <label>Patente *</label>
+          <input id="vehPatente" type="text" placeholder="ABC123" style="text-transform:uppercase">
+        </div>
+        <div class="field-group">
+          <label>Descripción</label>
+          <input id="vehDesc" type="text" placeholder="Toyota Hilux roja">
+        </div>
+        <div class="field-group">
+          <label>Propietario</label>
+          <input id="vehProp" type="text" placeholder="Juan García">
+        </div>
+        <div class="field-group">
+          <label>Vencimiento</label>
+          <input id="vehVenc" type="date">
+        </div>
+        <div class="field-group">
+          <label>Hora Desde</label>
+          <input id="vehHoraDesde" type="time">
+        </div>
+        <div class="field-group">
+          <label>Hora Hasta</label>
+          <input id="vehHoraHasta" type="time">
+        </div>
+        <div class="field-group field-group--checkbox">
+          <label><input type="checkbox" id="vehRequiereDni" checked> Requiere DNI QR</label>
+        </div>
+        <div class="field-group field-group--checkbox">
+          <label><input type="checkbox" id="vehActivo" checked> Activo</label>
+        </div>
+      </div>
+
+      <!-- Personas vinculadas -->
+      <div id="vehPersonasSection" class="hidden" style="margin-top:16px">
+        <h4 style="margin-bottom:8px">Personas habilitadas</h4>
+        <div id="vehPersonasList"></div>
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <select id="vehPersonaSelect" style="flex:1"></select>
+          <button class="btn btn-primary btn-small" onclick="vincularPersona()">+ Vincular</button>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modalVehiculo')">Cancelar</button>
+      <button class="btn btn-primary" onclick="saveVehiculo()">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal Persona -->
+<div id="modalPersona" class="modal-overlay hidden" onclick="closeModal('modalPersona')">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <h3 id="modalPerTitle">Nueva Persona</h3>
+      <button class="modal-close" onclick="closeModal('modalPersona')">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="perId">
+      
+      <!-- Registro Inteligente y Foto de Perfil -->
+      <div style="display:flex; gap:16px; margin-bottom:16px; align-items:center; background: rgba(255,255,255,0.03); padding:12px; border-radius:8px; border:1px solid var(--border)">
+        <div style="position:relative; width:80px; height:80px; border-radius:50%; border:2px dashed var(--border); display:flex; align-items:center; justify-content:center; overflow:hidden; background:#111; cursor:pointer;" onclick="document.getElementById('perFotoFile').click()" title="Subir foto de perfil">
+          <img id="perFotoPreview" src="" style="width:100%; height:100%; object-fit:cover; display:none;" onerror="this.style.display='none'; document.getElementById('perFotoPlaceholder').style.display='block';">
+          <span id="perFotoPlaceholder" style="font-size:2.5rem; color:var(--text-sub)">Foto</span>
+          <div style="position:absolute; bottom:0; left:0; right:0; background:rgba(0,0,0,0.65); color:#fff; font-size:0.65rem; text-align:center; padding:2px 0;">Subir</div>
+        </div>
+        <input type="file" id="perFotoFile" accept="image/*" style="display:none;" onchange="uploadPersonaPhoto(event)">
+        <input type="hidden" id="perFotoPath">
+        
+        <div style="flex:1;">
+          <h4 style="margin:0 0 4px 0; font-size:0.95rem;">Registro Inteligente</h4>
+          <button class="btn btn-ghost btn-small" type="button" onclick="autofillFromDniScanner()" style="border:1px dashed var(--accent); color:var(--accent); display:flex; align-items:center; gap:6px;">
+            Cargar desde Lector QR / DNI
+          </button>
+          <div id="dniScanFeedback" class="cfg-mini muted" style="margin-top:4px;">Carga la última lectura del DNI físico escaneado.</div>
+        </div>
+      </div>
+
+      <div class="form-grid">
+        <div class="field-group">
+          <label>DNI *</label>
+          <input id="perDni" type="text" placeholder="12345678">
+        </div>
+        <div class="field-group">
+          <label>Apellido *</label>
+          <input id="perApellido" type="text" placeholder="García">
+        </div>
+        <div class="field-group">
+          <label>Nombre *</label>
+          <input id="perNombre" type="text" placeholder="Juan">
+        </div>
+        <div class="field-group">
+          <label>Sexo</label>
+          <select id="perSexo">
+            <option value="">(No especificado)</option>
+            <option value="M">Masculino</option>
+            <option value="F">Femenino</option>
+            <option value="X">No Binario / Otro</option>
+          </select>
+        </div>
+        <div class="field-group">
+          <label>Fecha Nacimiento</label>
+          <input id="perNacimiento" type="date">
+        </div>
+        <div class="field-group">
+          <label>Trámite</label>
+          <input id="perTramite" type="text" placeholder="00123456789">
+        </div>
+        <div class="field-group">
+          <label>Hora Desde</label>
+          <input id="perHoraDesde" type="time">
+        </div>
+        <div class="field-group">
+          <label>Hora Hasta</label>
+          <input id="perHoraHasta" type="time">
+        </div>
+        
+        <div class="field-group cfg-span-2">
+          <label>Patentes Autorizadas (separadas por comas)</label>
+          <input id="perPatentes" type="text" placeholder="AAA111, BBB222 (se crearán o vincularán automáticamente)">
+        </div>
+
+        <div class="field-group field-group--checkbox cfg-span-2">
+          <label><input type="checkbox" id="perActivo" checked> Activo</label>
+        </div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modalPersona')">Cancelar</button>
+      <button class="btn btn-primary" onclick="savePersona()">Guardar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal confirmación -->
+<div id="modalConfirm" class="modal-overlay hidden" onclick="closeModal('modalConfirm')">
+  <div class="modal modal-small" onclick="event.stopPropagation()">
+    <div class="modal-header">
+      <h3 id="confirmTitle">Confirmar</h3>
+      <button class="modal-close" onclick="closeModal('modalConfirm')">✕</button>
+    </div>
+    <div class="modal-body">
+      <p id="confirmMsg"></p>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal('modalConfirm')">Cancelar</button>
+      <button class="btn btn-danger" id="confirmBtn">Confirmar</button>
+    </div>
+  </div>
+</div>
+<!-- ═══════════════════════════════ FLOATING QR WIDGET ═══ -->
+<div id="qrFloatingWidget" class="qr-floating-widget hidden">
+  <div class="qr-float-header" id="qrFloatHeader">
+    <span>Escáner QR DNI</span>
+    <button class="qr-float-close" onclick="toggleQrWidget(false)" title="Cerrar">✕</button>
+  </div>
+  <div class="qr-float-body">
+    <img id="videoFeedQr" src="/video_feed_qr" alt="Stream QR DNI"
+         style="width:100%;display:block;border-radius:0 0 8px 8px;"
+         onerror="this.src='/static/no-signal.svg'; this.onerror=null;">
+    <div id="overlayDni" class="ws-overlay hidden"></div>
+  </div>
+</div>
+<button id="qrFloatToggle" class="qr-float-toggle-btn" onclick="toggleQrWidget()" title="Abrir Escáner QR">QR</button>
+
+<div id="toastContainer" style="position: fixed; top: 20px; right: 20px; z-index: 10000; display: flex; flex-direction: column; gap: 10px; pointer-events: none;"></div>
+
+<script src="/static/app.js?v=20260520a"></script>
+</body>
+</html>
+

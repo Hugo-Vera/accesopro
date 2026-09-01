@@ -1,0 +1,43 @@
+# Entorno virtual de Python
+config.yaml
+nssm.exe
+.venv/
+venv/
+env/
+ENV/
+
+# Archivos compilados y caches de Python
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Logs del sistema y servicios
+logs/
+*.log
+test_start.log
+
+# Almacenamiento local de fotos, evidencias y bases de datos locales
+evidencia/
+fotos_personas/
+detecciones/
+*.db
+*.db-shm
+*.db-wal
+acceso_seguro/data/
+
+# Archivos de respaldo y temporales
+*.bak
+*.provisional.bak
+*.tmp
+*.swp
+*~
+
+# IDEs y configuración del sistema operativo
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+Desktop.ini

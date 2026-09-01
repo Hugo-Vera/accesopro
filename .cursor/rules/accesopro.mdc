@@ -1,0 +1,12 @@
+---
+description: AccesoPro — producto, módulos y mercado Argentina
+alwaysApply: true
+---
+
+Leer `AGENTS.md` antes de tocar auth, módulos, actuadores, plano o alarmas.
+
+- Mercado: barrios cerrados en Argentina. Sin vínculo con Interplus.
+- Módulos: catálogo en `packages/catalog`. `core` siempre on. El dashboard no muestra lo no contratado.
+- Actuador = relé con nombre configurable (barrera / portón / puerta). Driver Dahua o IP.
+- `fire` es supervisión de un panel existente, no un sistema contra incendio certificado.
+- UI en español rioplatense.

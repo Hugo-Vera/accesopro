@@ -1,0 +1,19 @@
+{
+  "name": "accesopro",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Acceso y seguridad para barrios cerrados",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspaces --if-present",
+    "dev:api": "npm run dev -w @accesopro/api",
+    "dev:web": "npm run dev -w @accesopro/web",
+    "db:seed": "npm run seed -w @accesopro/api"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
