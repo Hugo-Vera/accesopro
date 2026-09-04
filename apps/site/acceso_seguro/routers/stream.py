@@ -85,7 +85,7 @@ async def video_feed(sentido: str):
                     + frame
                     + b"\r\n"
                 )
-            await asyncio.sleep(0.06)  # ~16 fps (más fluido)
+            await asyncio.sleep(0.12)  # ~8 fps preview (el productor ya throttlea el JPEG)
 
     return StreamingResponse(
         _generate(),

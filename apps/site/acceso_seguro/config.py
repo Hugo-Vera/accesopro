@@ -173,9 +173,15 @@ def _apply_legacy_yaml_defaults() -> None:
         if src_in:
             settings.camera_source_in = src_in
             
-        src_out = str(video.get("fuente_out") or video_salida.get("fuente") or "").strip()
-        if src_out:
-            settings.camera_source_out = src_out
+        # Camara OUT: permitir vacio explicito (no arrancar worker)
+        if "fuente_out" in video:
+            settings.camera_source_out = str(video.get("fuente_out") or "").strip()
+        elif "fuente" in video_salida:
+            settings.camera_source_out = str(video_salida.get("fuente") or "").strip()
+        else:
+            src_out = str(video.get("fuente_out") or video_salida.get("fuente") or "").strip()
+            if src_out:
+                settings.camera_source_out = src_out
         if "frecuencia_inferencia" in video:
             settings.inference_every_n = max(1, int(video.get("frecuencia_inferencia") or settings.inference_every_n))
 

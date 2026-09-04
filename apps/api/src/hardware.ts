@@ -7,6 +7,8 @@ import { actuators, cameras, commands, dahuaDevices, events, plates } from "./db
 import { enqueue, fireActuator, waitCommand } from "./actuatorExec.js";
 import { processEngineAccessEvents } from "./engineBridge.js";
 import { agentOnline, nid, normalizePlate, scopedSite, scopedSiteWithModule } from "./scope.js";
+import { denyUnlessCapability } from "./grants.js";
+import { tenantFeatureEnabled } from "./features.js";
 import { engineDetections, engineGet, engineHealth, engineOps, enginePost, enginePut, engineRelay, maskSecrets, safeMediaPath, siteFetch } from "./siteEngine.js";
 
 export { fireActuator } from "./actuatorExec.js";
@@ -32,13 +34,35 @@ hardware.get("/status", async (c) => {
     .where(and(eq(events.siteId, scoped.site.id), eq(events.type, "plate"), gte(events.createdAt, start)))
     .get();
   const engine = await engineHealth();
+  let evidenceIn = false;
+  let evidenceOut = false;
+  if (engine.online) {
+    try {
+      const sub = (await engineGet("/api/subsystems")) as {
+        snapshot_enabled_in?: boolean;
+        snapshot_enabled_out?: boolean;
+      };
+      evidenceIn = Boolean(sub.snapshot_enabled_in);
+      evidenceOut = Boolean(sub.snapshot_enabled_out);
+    } catch {
+      /* motor sin subsystems */
+    }
+  }
   return c.json({
     agentOnline: agentOnline(scoped.site.lastSeenAt),
     engineOnline: engine.online,
-    engineUrl: process.env.SITE_ENGINE_URL ?? "http://192.168.33.13:5051",
+    engineUrl: process.env.SITE_ENGINE_URL ?? "http://127.0.0.1:5051",
     lastSeenAt: scoped.site.lastSeenAt,
     eventsToday: Number(today?.n ?? 0),
     platesToday: Number(platesToday?.n ?? 0),
+    cameraIn: engine.online
+      ? { running: Boolean(engine.in?.running), host: engine.in?.cameraHost ?? "", configured: Boolean(engine.in?.configured) }
+      : null,
+    cameraOut: engine.online
+      ? { running: Boolean(engine.out?.running), host: engine.out?.cameraHost ?? "", configured: Boolean(engine.out?.configured) }
+      : null,
+    evidenceIn,
+    evidenceOut,
   });
 });
 
@@ -49,7 +73,7 @@ hardware.get("/alpr/live", async (c) => {
   if (!engine.online) {
     return c.json({
       engineOnline: false,
-      engineUrl: process.env.SITE_ENGINE_URL ?? "http://192.168.33.13:5051",
+      engineUrl: process.env.SITE_ENGINE_URL ?? "http://127.0.0.1:5051",
       detections: [],
       in: null,
       out: null,
@@ -60,7 +84,7 @@ hardware.get("/alpr/live", async (c) => {
     const detections = await engineDetections(40);
     return c.json({
       engineOnline: true,
-      engineUrl: process.env.SITE_ENGINE_URL ?? "http://192.168.33.13:5051",
+      engineUrl: process.env.SITE_ENGINE_URL ?? "http://127.0.0.1:5051",
       in: engine.in,
       out: engine.out,
       detections: detections.items,
@@ -70,7 +94,7 @@ hardware.get("/alpr/live", async (c) => {
     return c.json(
       {
         engineOnline: true,
-        engineUrl: process.env.SITE_ENGINE_URL ?? "http://192.168.33.13:5051",
+        engineUrl: process.env.SITE_ENGINE_URL ?? "http://127.0.0.1:5051",
         detections: [],
         error: err instanceof Error ? err.message : "No se pudieron leer detecciones",
       },
@@ -106,7 +130,7 @@ hardware.get("/alpr/ops", async (c) => {
     }
     return c.json({
       engineOnline: ops.health.online,
-      engineUrl: process.env.SITE_ENGINE_URL ?? "http://192.168.33.13:5051",
+      engineUrl: process.env.SITE_ENGINE_URL ?? "http://127.0.0.1:5051",
       in: ops.health.online ? ops.health.in : null,
       out: ops.health.online ? ops.health.out : null,
       stats: ops.stats,
@@ -116,7 +140,7 @@ hardware.get("/alpr/ops", async (c) => {
   } catch {
     return c.json({
       engineOnline: false,
-      engineUrl: process.env.SITE_ENGINE_URL ?? "http://192.168.33.13:5051",
+      engineUrl: process.env.SITE_ENGINE_URL ?? "http://127.0.0.1:5051",
       in: null,
       out: null,
       stats: null,
@@ -127,6 +151,8 @@ hardware.get("/alpr/ops", async (c) => {
 });
 
 hardware.post("/alpr/relay/:action", async (c) => {
+  const denied = await denyUnlessCapability(c.get("user"), "ops.relay");
+  if (denied) return denied;
   const scoped = await scopedSite(c);
   if ("error" in scoped) return scoped.error;
   const action = c.req.param("action");
@@ -168,6 +194,8 @@ function enginePath(raw: string | undefined) {
 }
 
 hardware.get("/alpr/engine", async (c) => {
+  const denied = await denyUnlessCapability(c.get("user"), "core.config");
+  if (denied) return denied;
   const scoped = await scopedSite(c);
   if ("error" in scoped) return scoped.error;
   const parsed = enginePath(c.req.query("p"));
@@ -181,6 +209,8 @@ hardware.get("/alpr/engine", async (c) => {
 });
 
 hardware.post("/alpr/engine", async (c) => {
+  const denied = await denyUnlessCapability(c.get("user"), "core.config");
+  if (denied) return denied;
   const scoped = await scopedSite(c);
   if ("error" in scoped) return scoped.error;
   const parsed = enginePath(c.req.query("p"));
@@ -195,6 +225,8 @@ hardware.post("/alpr/engine", async (c) => {
 });
 
 hardware.put("/alpr/engine", async (c) => {
+  const denied = await denyUnlessCapability(c.get("user"), "core.config");
+  if (denied) return denied;
   const scoped = await scopedSite(c);
   if ("error" in scoped) return scoped.error;
   const parsed = enginePath(c.req.query("p"));
@@ -220,7 +252,9 @@ hardware.get("/dahua", async (c) => {
 });
 
 hardware.post("/dahua", async (c) => {
-  const scoped = await scopedSite(c);
+  const denied = await denyUnlessCapability(c.get("user"), "core.config");
+  if (denied) return denied;
+  const scoped = await scopedSiteWithModule(c, "dahua_access");
   if ("error" in scoped) return scoped.error;
   const body = await c.req.json<{
     name?: string;
@@ -264,8 +298,55 @@ hardware.post("/dahua", async (c) => {
   return c.json({ ok: true, id: deviceId, actuatorId });
 });
 
+hardware.patch("/dahua/:id", async (c) => {
+  const denied = await denyUnlessCapability(c.get("user"), "core.config");
+  if (denied) return denied;
+  const scoped = await scopedSiteWithModule(c, "dahua_access");
+  if ("error" in scoped) return scoped.error;
+  const id = c.req.param("id");
+  if (!id) return c.json({ error: "Falta id" }, 400);
+  const row = await db
+    .select()
+    .from(dahuaDevices)
+    .where(and(eq(dahuaDevices.id, id), eq(dahuaDevices.siteId, scoped.site.id)))
+    .get();
+  if (!row) return c.json({ error: "Equipo no encontrado" }, 404);
+  const body = await c.req.json<{
+    name?: string;
+    host?: string;
+    port?: number;
+    username?: string;
+    password?: string;
+    actuatorName?: string;
+    kind?: string;
+  }>();
+  const next = {
+    name: body.name?.trim() || row.name,
+    host: body.host?.trim() || row.host,
+    port: body.port ?? row.port,
+    username: body.username?.trim() || row.username,
+    password: body.password?.trim() ? body.password : row.password,
+  };
+  await db.update(dahuaDevices).set(next).where(eq(dahuaDevices.id, id));
+  if (body.actuatorName?.trim() || body.kind) {
+    const act = await db.select().from(actuators).where(eq(actuators.dahuaDeviceId, id)).get();
+    if (act) {
+      await db
+        .update(actuators)
+        .set({
+          name: body.actuatorName?.trim() || act.name,
+          kind: body.kind || act.kind,
+        })
+        .where(eq(actuators.id, act.id));
+    }
+  }
+  return c.json({ ok: true, id });
+});
+
 hardware.delete("/dahua/:id", async (c) => {
-  const scoped = await scopedSite(c);
+  const denied = await denyUnlessCapability(c.get("user"), "core.config");
+  if (denied) return denied;
+  const scoped = await scopedSiteWithModule(c, "dahua_access");
   if ("error" in scoped) return scoped.error;
   const id = c.req.param("id");
   await db.delete(actuators).where(eq(actuators.dahuaDeviceId, id));
@@ -274,7 +355,7 @@ hardware.delete("/dahua/:id", async (c) => {
 });
 
 hardware.post("/dahua/:id/probe", async (c) => {
-  const scoped = await scopedSite(c);
+  const scoped = await scopedSiteWithModule(c, "dahua_access");
   if ("error" in scoped) return scoped.error;
   if (!agentOnline(scoped.site.lastSeenAt)) {
     return c.json({ error: "El agent del sitio no está en línea. Arrancalo en la LAN." }, 503);
@@ -284,13 +365,264 @@ hardware.post("/dahua/:id/probe", async (c) => {
   return c.json(done);
 });
 
+hardware.post("/dahua/:id/test", async (c) => {
+  const scoped = await scopedSiteWithModule(c, "dahua_access");
+  if ("error" in scoped) return scoped.error;
+  const id = c.req.param("id");
+  if (!id) return c.json({ error: "Falta id" }, 400);
+  const body = await c.req.json<{ action?: string; channel?: number }>().catch(() => ({}));
+  const action = body.action ?? "probe";
+  if (action === "open") {
+    const u = c.get("user");
+    const deniedOpen = await denyUnlessCapability(u, "dahua.open");
+    if (deniedOpen) {
+      const deniedRelay = await denyUnlessCapability(u, "ops.relay");
+      if (deniedRelay) return deniedOpen;
+    }
+  }
+  if (!agentOnline(scoped.site.lastSeenAt)) {
+    return c.json({ error: "El agent del sitio no está en línea. Arrancalo en la LAN." }, 503);
+  }
+  const row = await db
+    .select()
+    .from(dahuaDevices)
+    .where(and(eq(dahuaDevices.id, id), eq(dahuaDevices.siteId, scoped.site.id)))
+    .get();
+  if (!row) return c.json({ error: "Equipo no encontrado" }, 404);
+  const channel = Number(body.channel) || 1;
+  const map: Record<string, string> = {
+    probe: "probe_dahua",
+    door_status: "dahua_door_status",
+    open: "dahua_open",
+    snapshot: "dahua_snapshot",
+  };
+  const agentAction = map[action];
+  if (!agentAction) return c.json({ error: "Acción de prueba desconocida" }, 400);
+  const cmd = await enqueue(scoped.site.id, agentAction, { deviceId: id, channel });
+  const done = await waitCommand(cmd, action === "snapshot" ? 40 : 25);
+  return c.json(done);
+});
+
+hardware.get("/dahua/:id/snapshot", async (c) => {
+  const denied = await denyUnlessCapability(c.get("user"), "dahua.live");
+  if (denied) return denied;
+  const scoped = await scopedSiteWithModule(c, "dahua_access");
+  if ("error" in scoped) return scoped.error;
+  const id = c.req.param("id");
+  if (!id) return c.json({ error: "Falta id" }, 400);
+  if (!(await tenantFeatureEnabled(scoped.site.tenantId, "dahua.live"))) {
+    return c.json({ error: "Pack Live apagado en este barrio" }, 403);
+  }
+  if (!agentOnline(scoped.site.lastSeenAt)) {
+    return c.json({ error: "El agent del sitio no está en línea. Arrancalo en la LAN." }, 503);
+  }
+  const row = await db
+    .select()
+    .from(dahuaDevices)
+    .where(and(eq(dahuaDevices.id, id), eq(dahuaDevices.siteId, scoped.site.id)))
+    .get();
+  if (!row) return c.json({ error: "Equipo no encontrado" }, 404);
+
+  const channel = Number(c.req.query("channel")) || 1;
+  const agentBase = (process.env.SITE_AGENT_URL ?? "http://127.0.0.1:8790").replace(/\/$/, "");
+  const agentToken = process.env.SITE_AGENT_TOKEN ?? "accesopro-demo-agent";
+  try {
+    const res = await fetch(`${agentBase}/dahua/${id}/snapshot?channel=${channel}`, {
+      headers: { Authorization: `Bearer ${agentToken}` },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (res.ok) {
+      const buf = Buffer.from(await res.arrayBuffer());
+      return new Response(buf, {
+        status: 200,
+        headers: {
+          "Content-Type": res.headers.get("Content-Type") || "image/jpeg",
+          "Cache-Control": "no-store",
+        },
+      });
+    }
+  } catch {
+    // cae al comando en cola
+  }
+
+  const cmd = await enqueue(scoped.site.id, "dahua_snapshot", { deviceId: id, channel });
+  const done = await waitCommand(cmd, 40);
+  const result = done.result as { imageBase64?: string; contentType?: string; error?: string } | null;
+  if (!done.ok || !result?.imageBase64) {
+    return c.json({ error: done.error || result?.error || "Sin imagen" }, 502);
+  }
+  const buf = Buffer.from(result.imageBase64, "base64");
+  return new Response(buf, {
+    status: 200,
+    headers: {
+      "Content-Type": result.contentType || "image/jpeg",
+      "Cache-Control": "no-store",
+    },
+  });
+});
+
+hardware.get("/dahua/:id/live", async (c) => {
+  const denied = await denyUnlessCapability(c.get("user"), "dahua.live");
+  if (denied) return denied;
+  const scoped = await scopedSiteWithModule(c, "dahua_access");
+  if ("error" in scoped) return scoped.error;
+  const id = c.req.param("id");
+  if (!id) return c.json({ error: "Falta id" }, 400);
+  if (!(await tenantFeatureEnabled(scoped.site.tenantId, "dahua.live"))) {
+    return c.json({ error: "Pack Live apagado en este barrio" }, 403);
+  }
+  if (!agentOnline(scoped.site.lastSeenAt)) {
+    return c.json({ error: "El agent del sitio no está en línea. Arrancalo en la LAN." }, 503);
+  }
+  const row = await db
+    .select()
+    .from(dahuaDevices)
+    .where(and(eq(dahuaDevices.id, id), eq(dahuaDevices.siteId, scoped.site.id)))
+    .get();
+  if (!row) return c.json({ error: "Equipo no encontrado" }, 404);
+
+  const channel = Number(c.req.query("channel")) || 1;
+  const subtype = c.req.query("subtype") === "0" ? 0 : 1;
+  const agentBase = (process.env.SITE_AGENT_URL ?? "http://127.0.0.1:8790").replace(/\/$/, "");
+  const agentToken = process.env.SITE_AGENT_TOKEN ?? "accesopro-demo-agent";
+  try {
+    const res = await fetch(
+      `${agentBase}/dahua/${id}/live?channel=${channel}&subtype=${subtype}`,
+      {
+        headers: { Authorization: `Bearer ${agentToken}` },
+      },
+    );
+    if (!res.ok || !res.body) {
+      const detail = await res.text().catch(() => "");
+      return c.json({ error: detail || "El agent no pudo abrir el live RTSP" }, 502);
+    }
+    return new Response(res.body, {
+      status: 200,
+      headers: {
+        "Content-Type": res.headers.get("Content-Type") || "multipart/x-mixed-replace; boundary=frame",
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        "Connection": "close",
+        "X-Accel-Buffering": "no",
+      },
+    });
+  } catch (err) {
+    return c.json(
+      { error: err instanceof Error ? err.message : "No se pudo conectar al agent para live" },
+      502,
+    );
+  }
+});
+
+hardware.get("/dahua/:id/persons", async (c) => {
+  const denied = await denyUnlessCapability(c.get("user"), "dahua.persons");
+  if (denied) return denied;
+  const scoped = await scopedSiteWithModule(c, "dahua_access");
+  if ("error" in scoped) return scoped.error;
+  const id = c.req.param("id");
+  if (!id) return c.json({ error: "Falta id" }, 400);
+  if (!(await tenantFeatureEnabled(scoped.site.tenantId, "dahua.persons"))) {
+    return c.json({ error: "Pack Personas apagado en este barrio" }, 403);
+  }
+  if (!agentOnline(scoped.site.lastSeenAt)) {
+    return c.json({ error: "El agent del sitio no está en línea." }, 503);
+  }
+  const row = await db
+    .select()
+    .from(dahuaDevices)
+    .where(and(eq(dahuaDevices.id, id), eq(dahuaDevices.siteId, scoped.site.id)))
+    .get();
+  if (!row) return c.json({ error: "Equipo no encontrado" }, 404);
+  const cmd = await enqueue(scoped.site.id, "dahua_person_list", { deviceId: id });
+  const done = await waitCommand(cmd, 30);
+  if (!done.ok) return c.json({ error: done.error || "No se pudo listar" }, 502);
+  return c.json(done.result ?? { ok: true, persons: [] });
+});
+
+hardware.post("/dahua/:id/persons", async (c) => {
+  const denied = await denyUnlessCapability(c.get("user"), "dahua.persons");
+  if (denied) return denied;
+  const scoped = await scopedSiteWithModule(c, "dahua_access");
+  if ("error" in scoped) return scoped.error;
+  const id = c.req.param("id");
+  if (!id) return c.json({ error: "Falta id" }, 400);
+  if (!(await tenantFeatureEnabled(scoped.site.tenantId, "dahua.persons"))) {
+    return c.json({ error: "Pack Personas apagado en este barrio" }, 403);
+  }
+  if (!agentOnline(scoped.site.lastSeenAt)) {
+    return c.json({ error: "El agent del sitio no está en línea." }, 503);
+  }
+  const row = await db
+    .select()
+    .from(dahuaDevices)
+    .where(and(eq(dahuaDevices.id, id), eq(dahuaDevices.siteId, scoped.site.id)))
+    .get();
+  if (!row) return c.json({ error: "Equipo no encontrado" }, 404);
+  const body = await c.req.json<{
+    name?: string;
+    userId?: string;
+    cardNo?: string;
+    password?: string;
+    photoBase64?: string;
+  }>();
+  const name = body.name?.trim();
+  if (!name) return c.json({ error: "Falta el nombre" }, 400);
+  const userId = (body.userId?.trim() || `u${Date.now().toString().slice(-8)}`).slice(0, 16);
+  const cardNo = (body.cardNo?.trim() || userId).slice(0, 20);
+  if (!body.photoBase64) return c.json({ error: "Falta la foto de la cara (JPG)" }, 400);
+  const cmd = await enqueue(scoped.site.id, "dahua_person_enroll", {
+    deviceId: id,
+    userId,
+    name,
+    cardNo,
+    password: body.password?.trim() || undefined,
+    photoBase64: body.photoBase64,
+  });
+  const done = await waitCommand(cmd, 50);
+  if (!done.ok) {
+    const result = done.result as { error?: string } | null;
+    return c.json({ error: done.error || result?.error || "No se pudo enrolar" }, 502);
+  }
+  return c.json(done.result);
+});
+
+hardware.delete("/dahua/:id/persons/:userId", async (c) => {
+  const denied = await denyUnlessCapability(c.get("user"), "dahua.persons");
+  if (denied) return denied;
+  const scoped = await scopedSiteWithModule(c, "dahua_access");
+  if ("error" in scoped) return scoped.error;
+  const id = c.req.param("id");
+  const userId = c.req.param("userId");
+  if (!id || !userId) return c.json({ error: "Falta id" }, 400);
+  if (!(await tenantFeatureEnabled(scoped.site.tenantId, "dahua.persons"))) {
+    return c.json({ error: "Pack Personas apagado en este barrio" }, 403);
+  }
+  if (!agentOnline(scoped.site.lastSeenAt)) {
+    return c.json({ error: "El agent del sitio no está en línea." }, 503);
+  }
+  const cardNo = c.req.query("cardNo") || undefined;
+  const recNo = c.req.query("recNo") || undefined;
+  const cmd = await enqueue(scoped.site.id, "dahua_person_delete", {
+    deviceId: id,
+    userId,
+    cardNo,
+    recNo,
+  });
+  const done = await waitCommand(cmd, 30);
+  if (!done.ok) return c.json({ error: done.error || "No se pudo borrar" }, 502);
+  return c.json(done.result ?? { ok: true });
+});
+
 hardware.post("/actuators/:id/open", async (c) => {
+  const denied = await denyUnlessCapability(c.get("user"), "ops.relay");
+  if (denied) return denied;
   const scoped = await scopedSiteWithModule(c, "actuators");
   if ("error" in scoped) return scoped.error;
   return c.json(await fireActuator(scoped.site, c.req.param("id"), "open"));
 });
 
 hardware.post("/actuators/:id/close", async (c) => {
+  const denied = await denyUnlessCapability(c.get("user"), "ops.relay");
+  if (denied) return denied;
   const scoped = await scopedSiteWithModule(c, "actuators");
   if ("error" in scoped) return scoped.error;
   return c.json(await fireActuator(scoped.site, c.req.param("id"), "close"));
@@ -303,7 +635,7 @@ hardware.get("/actuators", async (c) => {
   let relay: { open_in?: boolean; open_out?: boolean; simulated?: boolean } | null = null;
   try {
     const res = await siteFetch("/api/relay/status");
-    if (res.ok) relay = (await res.json()) as typeof relay;
+    if (res.ok) relay = (await res.json()) as { open_in?: boolean; open_out?: boolean; simulated?: boolean };
   } catch {
     relay = null;
   }
@@ -327,6 +659,8 @@ hardware.get("/actuators", async (c) => {
 });
 
 hardware.post("/actuators", async (c) => {
+  const denied = await denyUnlessCapability(c.get("user"), "core.config");
+  if (denied) return denied;
   const scoped = await scopedSiteWithModule(c, "actuators");
   if ("error" in scoped) return scoped.error;
   const parsed = parseActuatorBody(await c.req.json().catch(() => ({})));
@@ -344,6 +678,8 @@ hardware.post("/actuators", async (c) => {
 });
 
 hardware.patch("/actuators/:id", async (c) => {
+  const denied = await denyUnlessCapability(c.get("user"), "core.config");
+  if (denied) return denied;
   const scoped = await scopedSiteWithModule(c, "actuators");
   if ("error" in scoped) return scoped.error;
   const row = await db
@@ -364,6 +700,8 @@ hardware.patch("/actuators/:id", async (c) => {
 });
 
 hardware.delete("/actuators/:id", async (c) => {
+  const denied = await denyUnlessCapability(c.get("user"), "core.config");
+  if (denied) return denied;
   const scoped = await scopedSiteWithModule(c, "actuators");
   if ("error" in scoped) return scoped.error;
   const id = c.req.param("id");

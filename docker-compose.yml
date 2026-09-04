@@ -1,19 +1,93 @@
+# AccesoPro — stack Docker
+# Core:  docker compose up -d --build
+# +ALPR: docker compose --profile alpr up -d --build
+# +Dahua: docker compose --profile dahua up -d --build
+# Todo:  docker compose --profile alpr --profile dahua up -d --build
+
 services:
   postgres:
     image: postgres:16-alpine
     environment:
-      POSTGRES_USER: accesopro
-      POSTGRES_PASSWORD: accesopro
-      POSTGRES_DB: accesopro
-    ports:
-      - "5432:5432"
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: fastalpr
     volumes:
       - pgdata:/var/lib/postgresql/data
-
-  redis:
-    image: redis:7-alpine
     ports:
-      - "6379:6379"
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d fastalpr"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    restart: unless-stopped
+
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    ports:
+      - "8787:8787"
+    environment:
+      PORT: "8787"
+      JWT_SECRET: ${JWT_SECRET:-cambiar-en-produccion-docker}
+      WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:3000}
+      SITE_ENGINE_URL: ${SITE_ENGINE_URL:-http://site:5051}
+      SITE_ENGINE_USER: ${SITE_ENGINE_USER:-admin}
+      SITE_ENGINE_PASSWORD: ${SITE_ENGINE_PASSWORD:-admin}
+      ACCESOPRO_BRIDGE_KEY: ${ACCESOPRO_BRIDGE_KEY:-accesopro-bridge}
+      ENGINE_BRIDGE_POLL_MS: ${ENGINE_BRIDGE_POLL_MS:-5000}
+    volumes:
+      - api_data:/app/apps/api/data
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8787}
+    ports:
+      - "3000:3000"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+  site:
+    profiles: [alpr]
+    build:
+      context: .
+      dockerfile: apps/site/Dockerfile
+    ports:
+      - "5051:5051"
+    environment:
+      ACCESOPRO_API_URL: http://api:8787
+      ACCESOPRO_BRIDGE_KEY: ${ACCESOPRO_BRIDGE_KEY:-accesopro-bridge}
+    volumes:
+      - ./deploy/site.config.docker.yaml:/app/config.yaml:ro
+      - site_evidencia:/app/evidencia
+    depends_on:
+      postgres:
+        condition: service_healthy
+      api:
+        condition: service_started
+    restart: unless-stopped
+
+  agent:
+    profiles: [dahua]
+    build:
+      context: .
+      dockerfile: apps/agent/Dockerfile
+    ports:
+      - "8790:8790"
+    environment:
+      ACCESOPRO_API_URL: http://api:8787
+      SITE_AGENT_TOKEN: ${SITE_AGENT_TOKEN:-accesopro-demo-agent}
+    depends_on:
+      - api
+    restart: unless-stopped
 
 volumes:
   pgdata:
+  api_data:
+  site_evidencia:

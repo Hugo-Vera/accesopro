@@ -13,11 +13,35 @@ No es un sistema contra incendio certificado. El módulo `fire` supervisa un con
 
 ## Cuentas
 
-- **Plataforma:** tenants y catálogo de módulos.
-- **Admin del barrio:** plano, actuadores, equipos, personas.
-- **Guardia / portería:** plano + cola de alarmas.
-- **Vecino:** QR de visitas; SOS si `panic` está on.
+- **Plataforma:** tenants, planes comerciales y catálogo de módulos.
+- **Admin del barrio:** plano, actuadores, equipos, personas (dentro del plan contratado).
+- **Guardia / portería:** plano + live + relés (plantilla `guard`); el admin puede quitar/agregar grants.
+- **Vecino:** QR de visitas; portal `/portal` (autorizaciones, servicios, historial); SOS si `panic` está on.
 - **Visita:** solo su QR.
+
+## Planes (Fase 1)
+
+Catálogo en `packages/catalog` (`PLAN_CATALOG`): **Esencial**, **Acceso Pro**, **Seguridad total**.
+El dueño de plataforma asigna el plan al barrio (`PUT /api/tenants/:id/subscription`).
+Los módulos habilitables = intersección plan ∩ toggles. Sin plan no se pueden tildar módulos.
+
+## Permisos granulares (Fase 2)
+
+Catálogo `CAPABILITY_CATALOG` + tabla `user_grants`.
+Regla: plan del barrio ∩ plantilla/rol ∩ grants del usuario.
+Plantilla guardia: ops + ALPR + eventos/abrir Dahua (sin `core.config` ni `tenant.grants`).
+API: `GET/POST /api/users`, `PUT /api/users/:id/grants`. UI: `/dashboard/usuarios`.
+Demo guardia: `guardia@lasacacias.local` / `AccesoPro!2026`.
+
+## Feature packs (funciones dentro de un módulo)
+
+Además del módulo contratado, el admin tilda **funciones** (`FEATURE_PACK_CATALOG` → `tenant_features`).
+Ej. `dahua_access` se parte en: equipos, eventos, abrir, personas, QR, periodos, evidencia, live.
+Cada pack tiene dashboard + capability. Regla completa:
+
+`plan ∩ módulo ∩ feature pack ∩ grant del usuario`
+
+API: `GET/PATCH /api/tenants/:id/features`. UI: Configuración → Módulos (bloque «Funciones del equipo»).
 
 ## Arquitectura híbrida
 
@@ -37,7 +61,7 @@ Plano del predio = core. Pines arrastrables. Pánico y fuego aparecen cuando el 
 
 Monorepo: `apps/web` (Next.js), `apps/api` (Hono), `apps/agent` (Dahua CGI), `apps/site` (AccesoSeguro / FastALPR). Postgres lo usa el sitio ALPR.
 
-Mapa detallado: `docs/ARCHITECTURE.md`. Estado por módulo: `docs/MODULES.md`.
+Mapa detallado: `docs/ARCHITECTURE.md`. Estado por módulo: `docs/MODULES.md`. Base de datos: `docs/DATABASE.md`. Pendientes: `docs/PENDING.md` (intercom FreePBX local, personas/credenciales, QR).
 
 ## Convenciones
 
@@ -60,6 +84,6 @@ $env:SITE_AGENT_TOKEN="accesopro-demo-agent"
 uvicorn app.main:app --port 8790
 ```
 
-Demo: `admin@accesopro.local` / `AccesoPro!2026` (plataforma) y `admin@lasacacias.local` / `AccesoPro!2026` (barrio).
+Demo: `admin@accesopro.local` / `AccesoPro!2026` (plataforma), `admin@lasacacias.local` / `AccesoPro!2026` (barrio), `guardia@lasacacias.local` / `AccesoPro!2026` (portería), `vecino@lasacacias.local` / `AccesoPro!2026` (propietario demo, portal).
 
-El barrio demo tiene tildados `actuators`, `dahua_access` y `alpr`. ALPR de verdad vive en AccesoSeguro (`apps/site`, :5051). El dashboard lee detecciones vía `SITE_ENGINE_URL` (por defecto `http://192.168.33.13:5051`). Dahua facial va por `apps/agent`.
+El barrio demo tiene plan **Acceso Pro** (`actuators`, `dahua_access`, `alpr`, `visitors`). ALPR vive en AccesoSeguro (`apps/site`, :5051). El dashboard lee el motor vía `SITE_ENGINE_URL` (por defecto `http://127.0.0.1:5051` en la misma máquina). Dahua facial va por `apps/agent`.

@@ -1,19 +1,19 @@
 "use client";
 
 import { ModuleGate } from "@/components/PageHeader";
-import { ModulePlaceholder } from "@/components/modules/ModulePlaceholder";
 
 export default function VisitasPage() {
   return (
     <ModuleGate module="visitors">
-      <ModulePlaceholder
-        moduleKey="visitors"
-        nextSteps={[
-          "Generar QR firmado con vigencia y actuador destino",
-          "App vecino / link de visita",
-          "Validar en portería y disparar actuador",
-        ]}
-      />
+      <div className="card p-6 text-sm">
+        <p className="font-semibold">Visitas y propietarios</p>
+        <p className="mt-2 text-muted">
+          Los vecinos entran en <a className="text-accent" href="/portal">/portal</a> para autorizar empleados, generar QR y ver historial.
+        </p>
+        <p className="mt-2 text-muted">
+          La administración gestiona lotes y logins en <a className="text-accent" href="/dashboard/propiedades">Propiedades</a>.
+        </p>
+      </div>
     </ModuleGate>
   );
 }

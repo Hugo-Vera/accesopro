@@ -4,9 +4,11 @@ import { useEffect, useState } from "react";
 import { api, withTenant } from "@/lib/api";
 import { useDash } from "@/components/DashboardProvider";
 import { PageHeader } from "@/components/PageHeader";
+import { EquipmentPanel } from "@/components/EquipmentPanel";
 
 type Tab =
   | "modulos"
+  | "equipos"
   | "barreras"
   | "alpr"
   | "evidencia"
@@ -29,15 +31,8 @@ type Subsys = {
 type Op = { id: number; username: string; rol: string; lote?: string | null; activo: boolean };
 type Port = { port: string; desc?: string };
 
-const TABS: { id: Tab; label: string }[] = [
-  { id: "barreras", label: "Control Barreras" },
-  { id: "alpr", label: "ALPR (Cámaras)" },
-  { id: "evidencia", label: "Cámara Evidencia" },
-  { id: "dni", label: "Lector DNI" },
-  { id: "motor", label: "Motor y Lógica" },
-  { id: "almacenamiento", label: "Almacenamiento" },
-  { id: "operadores", label: "Gestión Operadores/Propietarios" },
-  { id: "modulos", label: "Módulos AccesoPro" },
+const BASE_TABS: { id: Tab; label: string }[] = [
+  { id: "modulos", label: "Módulos" },
 ];
 
 const COUNTRIES = [
@@ -53,8 +48,18 @@ const COUNTRIES = [
 ];
 
 export function ConfigPage() {
-  const { tenantId, modules, isPlatform, toggleModule, status } = useDash();
-  const [tab, setTab] = useState<Tab>("barreras");
+  const { tenantId, modules, plan, plans, features, isPlatform, toggleModule, toggleFeature, assignPlan, status, can, enabled } =
+    useDash();
+  const canToggleFeatures = isPlatform || can("core.config");
+  const showEquipos = enabled("dahua_access");
+  const TABS = showEquipos
+    ? [...BASE_TABS, { id: "equipos" as const, label: "Equipos" }]
+    : BASE_TABS;
+  const [tab, setTab] = useState<Tab>("modulos");
+
+  useEffect(() => {
+    if (tab === "equipos" && !showEquipos) setTab("modulos");
+  }, [tab, showEquipos]);
   const [cfg, setCfg] = useState<Cfg>({});
   const [sub, setSub] = useState<Subsys | null>(null);
   const [ops, setOps] = useState<Op[]>([]);
@@ -68,7 +73,7 @@ export function ConfigPage() {
   const [purgeDesde, setPurgeDesde] = useState("");
   const [purgeHasta, setPurgeHasta] = useState("");
   const [opForm, setOpForm] = useState({ id: 0, username: "", password: "", rol: "vigilador", lote: "", activo: true });
-  const engineUrl = (status.engineUrl ?? "http://192.168.33.13:5051").replace(/\/$/, "");
+  const engineUrl = (status.engineUrl ?? "http://127.0.0.1:5051").replace(/\/$/, "");
 
   function engine<T>(p: string, init?: RequestInit) {
     return api<T>(withTenant(`/api/alpr/engine?p=${encodeURIComponent(p)}`, tenantId), init);
@@ -97,7 +102,7 @@ export function ConfigPage() {
   }
 
   useEffect(() => {
-    reload().catch((err) => setMsg(err instanceof Error ? err.message : "No se pudo leer el motor"));
+    // Motor LAN (AccesoSeguro) pausado: no se consulta desde configuración.
   }, [tenantId]);
 
   async function savePartial(patch: Cfg) {
@@ -171,12 +176,19 @@ export function ConfigPage() {
     else setCamOut({ ...next, full: next.pass ? buildRtsp(next) : next.full });
   }
 
+  const outConfigured = Boolean(camOut.host) || Boolean(sub?.alpr_out?.running);
+  const eviInOn = Boolean(sub?.snapshot_enabled_in ?? bool(cfg, "snapshot_enabled_in"));
+  const eviOutOn = Boolean(sub?.snapshot_enabled_out ?? bool(cfg, "snapshot_enabled_out"));
+
   return (
     <div>
-      <PageHeader title="Configuración de sistema" subtitle="Misma estructura que AccesoSeguro. Los cambios van al motor de LAN." />
+      <PageHeader
+        title="Configuración"
+        subtitle="Plan, módulos y equipos del barrio. Lo que no está habilitado no se muestra en el dashboard."
+      />
       {msg ? <p className="mb-3 text-sm text-accent">{msg}</p> : null}
 
-      <div className="mb-4 flex flex-wrap gap-2 border-b border-line pb-2.5">
+      <div className="mb-4 flex flex-wrap gap-1 border-b border-line pb-2">
         {TABS.map((t) => (
           <button
             key={t.id}
@@ -189,104 +201,226 @@ export function ConfigPage() {
         ))}
       </div>
 
+      {tab === "equipos" && showEquipos ? (
+        <section className="card p-5">
+          <EquipmentPanel />
+        </section>
+      ) : null}
+
       {tab === "modulos" ? (
         <section className="card p-5">
           <p className="mb-4 text-sm text-muted">
             {isPlatform
-              ? "Lo que tildes es lo que el barrio ve en el menú. El núcleo no se apaga."
-              : "Solo se muestran los módulos contratados."}
+              ? "El plan define el techo. Después tildás qué módulos del plan usa este barrio."
+              : "Solo se muestran los módulos incluidos en el plan contratado."}
           </p>
+
+          {isPlatform ? (
+            <div className="mb-5 rounded-md border border-line bg-ink/50 p-4">
+              <p className="cfg-label mb-2">Plan del barrio</p>
+              <div className="flex flex-wrap items-end gap-3">
+                <select
+                  className="cfg-input mt-0 max-w-md"
+                  value={plan?.id ?? ""}
+                  onChange={(e) => {
+                    if (e.target.value) assignPlan(e.target.value).catch(() => null);
+                  }}
+                >
+                  <option value="" disabled>
+                    Elegí un plan…
+                  </option>
+                  {plans.map((p) => (
+                    <option key={p.id} value={p.id}>
+                      {p.name}
+                    </option>
+                  ))}
+                </select>
+                {plan ? (
+                  <p className="text-[12px] text-muted">
+                    {plan.summary} · hasta {plan.limits.maxGuards} guardias · {plan.limits.maxProperties} lotes
+                  </p>
+                ) : (
+                  <p className="text-[12px] text-warn">Sin plan — asigná uno para habilitar módulos.</p>
+                )}
+              </div>
+              <div className="mt-3 grid gap-2 sm:grid-cols-3">
+                {plans.map((p) => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    className={`rounded-md border px-3 py-2 text-left text-[12px] ${
+                      plan?.id === p.id ? "border-accent bg-accent/10" : "border-line hover:border-[#3a3a3a]"
+                    }`}
+                    onClick={() => assignPlan(p.id).catch(() => null)}
+                  >
+                    <span className="block font-medium text-[#e6e6e6]">{p.name}</span>
+                    <span className="text-muted">{p.moduleKeys.join(", ") || "solo núcleo"}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : plan ? (
+            <p className="mb-4 rounded-md border border-line bg-ink/40 px-3 py-2 text-sm">
+              Plan: <span className="font-medium">{plan.name}</span>
+              <span className="text-muted"> — {plan.summary}</span>
+            </p>
+          ) : null}
+
           <ul className="divide-y divide-line">
             {modules
               .filter((m) => isPlatform || m.enabled)
-              .map((m) => (
-                <li key={m.key} className="flex items-start justify-between gap-4 py-3">
-                  <div>
-                    <p className="font-medium">{m.name}</p>
-                    <p className="text-sm text-muted">{m.summary}</p>
-                  </div>
-                  {isPlatform ? (
-                    <label className="flex items-center gap-2 text-sm">
-                      <input
-                        type="checkbox"
-                        checked={m.enabled}
-                        disabled={m.alwaysOn}
-                        onChange={(e) => toggleModule(m.key, e.target.checked)}
-                      />
-                      {m.alwaysOn ? "Siempre" : m.enabled ? "On" : "Off"}
-                    </label>
-                  ) : (
-                    <span className="text-accent text-sm">On</span>
-                  )}
-                </li>
-              ))}
+              .filter((m) => m.key !== "alpr")
+              .map((m) => {
+                const locked = isPlatform && !m.alwaysOn && m.inPlan === false;
+                return (
+                  <li
+                    key={m.key}
+                    className={`flex items-start justify-between gap-4 py-3 ${locked ? "opacity-45" : ""}`}
+                  >
+                    <div>
+                      <p className="font-medium">
+                        {m.name}
+                        {locked ? <span className="ml-2 text-[11px] font-normal text-muted">fuera del plan</span> : null}
+                      </p>
+                      <p className="text-sm text-muted">{m.summary}</p>
+                    </div>
+                    {isPlatform ? (
+                      <label className="flex items-center gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          checked={m.enabled}
+                          disabled={m.alwaysOn || locked}
+                          onChange={(e) => toggleModule(m.key, e.target.checked)}
+                        />
+                        {m.alwaysOn ? "Siempre" : m.enabled ? "On" : "Off"}
+                      </label>
+                    ) : (
+                      <span className="text-sm text-accent">On</span>
+                    )}
+                  </li>
+                );
+              })}
           </ul>
+
+          {features.some((f) => f.parentOn) ? (
+            <div className="mt-6 border-t border-line pt-4">
+              <p className="mb-2 text-[12px] font-semibold uppercase tracking-wider text-muted">
+                Funciones del equipo (feature packs)
+              </p>
+              <p className="mb-3 text-sm text-muted">
+                El admin del barrio tilda qué usa del lector (eventos, personas, QR…). Después otorga el permiso a cada
+                usuario.
+              </p>
+              <ul className="divide-y divide-line">
+                {features
+                  .filter((f) => f.parentOn)
+                  .map((f) => (
+                    <li key={f.key} className="flex items-start justify-between gap-4 py-3">
+                      <div>
+                        <p className="font-medium">
+                          {f.name}
+                          <span className="ml-2 text-[11px] font-normal text-muted">{f.key}</span>
+                        </p>
+                        <p className="text-sm text-muted">{f.summary}</p>
+                      </div>
+                      <label className="flex items-center gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          checked={f.enabled}
+                          disabled={!canToggleFeatures}
+                          onChange={(e) => toggleFeature(f.key, e.target.checked)}
+                        />
+                        {f.enabled ? "On" : "Off"}
+                      </label>
+                    </li>
+                  ))}
+              </ul>
+            </div>
+          ) : null}
         </section>
       ) : null}
 
       {tab === "barreras" ? (
         <div className="space-y-4">
-          <section className="card">
-            <div className="card-h flex items-center justify-between">
-              <span>Panel de subsistemas</span>
-              <button type="button" className="btn-ghost" onClick={() => reload()}>
-                Actualizar
-              </button>
-            </div>
-            <div className="space-y-4 p-4">
-              <p className="text-xs text-muted">Activá o apagá cada pieza sin reiniciar el servidor.</p>
-              <h4 className="border-b border-line pb-1 font-semibold text-accent">Barrera de ingreso (IN)</h4>
-              <SubRow
-                led={sub?.alpr_in?.running}
-                name="ALPR — Reconocimiento de patentes"
-                detail={sub?.alpr_in?.running ? `Activo — ${sub.alpr_in.source}` : sub?.alpr_in?.last_error || "Detenido"}
-                checked={!!sub?.alpr_in?.running}
-                onToggle={(v) => toggleSub("alpr_in", v)}
-              />
-              <SubRow
-                led={sub?.qr_in?.running}
-                name="Lector QR / DNI"
-                detail={sub?.qr_in?.running ? `Tipo: ${sub.qr_in.type}` : sub?.qr_in?.last_error || "Detenido"}
-                checked={!!sub?.qr_in?.running}
-                onToggle={(v) => toggleSub("qr_in", v)}
-              />
-              <SubRow
-                led={!!sub?.snapshot_enabled_in}
-                name="Cámara de evidencia"
-                detail={sub?.snapshot_enabled_in ? "Habilitada" : "Deshabilitada"}
-                checked={!!sub?.snapshot_enabled_in}
-                onToggle={(v) => toggleSub("snapshot_in", v)}
-              />
-              <h4 className="border-b border-line pb-1 pt-2 font-semibold text-warn">Barrera de salida (OUT)</h4>
-              <SubRow
-                led={sub?.alpr_out?.running}
-                name="ALPR — Reconocimiento de patentes"
-                detail={sub?.alpr_out?.running ? `Activo — ${sub.alpr_out.source}` : sub?.alpr_out?.last_error || "Detenido"}
-                checked={!!sub?.alpr_out?.running}
-                onToggle={(v) => toggleSub("alpr_out", v)}
-              />
-              <SubRow
-                led={sub?.qr_out?.running}
-                name="Lector QR / DNI"
-                detail={sub?.qr_out?.running ? `Tipo: ${sub.qr_out.type}` : "Detenido"}
-                checked={!!sub?.qr_out?.running}
-                onToggle={(v) => toggleSub("qr_out", v)}
-              />
-              <SubRow
-                led={!!sub?.snapshot_enabled_out}
-                name="Cámara de evidencia"
-                detail={sub?.snapshot_enabled_out ? "Habilitada" : "Deshabilitada"}
-                checked={!!sub?.snapshot_enabled_out}
-                onToggle={(v) => toggleSub("snapshot_out", v)}
-              />
-            </div>
-          </section>
+          <div className="flex items-center justify-between gap-3">
+            <p className="text-[12px] text-muted">
+              Activá solo lo que el predio usa. OUT vacío = no aparece en el dashboard.
+            </p>
+            <button type="button" className="btn-ghost" onClick={() => reload()}>
+              Actualizar
+            </button>
+          </div>
+
+          <div className="grid gap-4 lg:grid-cols-2">
+            <LanePanel
+              title="Ingreso · IN"
+              accent="in"
+              rows={[
+                {
+                  led: sub?.alpr_in?.running,
+                  name: "ALPR patentes",
+                  detail: sub?.alpr_in?.running
+                    ? `Activo · ${shortSrc(sub.alpr_in.source)}`
+                    : sub?.alpr_in?.last_error || "Detenido",
+                  checked: !!sub?.alpr_in?.running,
+                  onToggle: (v) => toggleSub("alpr_in", v),
+                },
+                {
+                  led: sub?.qr_in?.running,
+                  name: "Lector QR / DNI",
+                  detail: sub?.qr_in?.running ? `Tipo: ${sub.qr_in.type}` : sub?.qr_in?.last_error || "Detenido",
+                  checked: !!sub?.qr_in?.running,
+                  onToggle: (v) => toggleSub("qr_in", v),
+                },
+                {
+                  led: eviInOn,
+                  name: "Cámara evidencia",
+                  detail: eviInOn ? "Habilitada · se muestra en registro" : "Off · no se muestra en registro",
+                  checked: eviInOn,
+                  onToggle: (v) => toggleSub("snapshot_in", v),
+                },
+              ]}
+            />
+            <LanePanel
+              title="Salida · OUT"
+              accent="out"
+              hint={!outConfigured ? "Sin cámara ALPR: el live OUT no se muestra en el dashboard." : undefined}
+              rows={[
+                {
+                  led: sub?.alpr_out?.running,
+                  name: "ALPR patentes",
+                  detail: sub?.alpr_out?.running
+                    ? `Activo · ${shortSrc(sub.alpr_out.source)}`
+                    : outConfigured
+                      ? sub?.alpr_out?.last_error || "Detenido"
+                      : "Sin cámara — configurá en Cámaras ALPR",
+                  checked: !!sub?.alpr_out?.running,
+                  onToggle: (v) => toggleSub("alpr_out", v),
+                  disabled: !outConfigured && !sub?.alpr_out?.running,
+                },
+                {
+                  led: sub?.qr_out?.running,
+                  name: "Lector QR / DNI",
+                  detail: sub?.qr_out?.running ? `Tipo: ${sub.qr_out.type}` : "Detenido",
+                  checked: !!sub?.qr_out?.running,
+                  onToggle: (v) => toggleSub("qr_out", v),
+                },
+                {
+                  led: eviOutOn,
+                  name: "Cámara evidencia",
+                  detail: eviOutOn ? "Habilitada · se muestra en registro" : "Off · no se muestra en registro",
+                  checked: eviOutOn,
+                  onToggle: (v) => toggleSub("snapshot_out", v),
+                },
+              ]}
+            />
+          </div>
 
           <section className="card">
-            <div className="card-h">Configuración de barreras físicas</div>
+            <div className="card-h">Barreras físicas / relé</div>
             <div className="grid gap-5 p-4 lg:grid-cols-2">
               <BarrierForm
-                title="Barrera de ingreso (IN)"
+                title="Ingreso (IN)"
                 accent="in"
                 cfg={cfg}
                 suffix="in"
@@ -295,7 +429,7 @@ export function ConfigPage() {
                 onTest={(a) => testBarrier("in", a)}
               />
               <BarrierForm
-                title="Barrera de salida (OUT)"
+                title="Salida (OUT)"
                 accent="out"
                 cfg={cfg}
                 suffix="out"
@@ -304,8 +438,8 @@ export function ConfigPage() {
                 onTest={(a) => testBarrier("out", a)}
               />
             </div>
-            <div className="flex justify-end border-t border-line p-4">
-              <button type="button" disabled={busy} className="rounded-[10px] bg-accent px-4 py-2 text-sm text-white" onClick={() => savePartial(pickBarrier(cfg))}>
+            <div className="flex justify-end border-t border-line p-3">
+              <button type="button" disabled={busy} className="btn-primary" onClick={() => savePartial(pickBarrier(cfg))}>
                 Guardar barreras
               </button>
             </div>
@@ -315,13 +449,21 @@ export function ConfigPage() {
 
       {tab === "alpr" ? (
         <div className="space-y-4">
-          <div className="flex gap-2">
+          {status.engineOnline === false ? (
+            <p className="rounded-md border border-warn/30 bg-warn/10 px-4 py-3 text-sm text-warn">
+              Motor ALPR offline ({engineUrl}). Levantá AccesoSeguro en el puerto 5051 para guardar cámaras.
+            </p>
+          ) : null}
+          <div className="flex flex-wrap items-center gap-2">
             <button type="button" className={`cfg-tab ${alprSide === "in" ? "active" : ""}`} onClick={() => setAlprSide("in")}>
               Ingreso (IN)
             </button>
             <button type="button" className={`cfg-tab ${alprSide === "out" ? "active" : ""}`} onClick={() => setAlprSide("out")}>
               Salida (OUT)
             </button>
+            {alprSide === "out" && !outConfigured ? (
+              <span className="text-[12px] text-muted">Completá IP/host para habilitar el live OUT en el dashboard.</span>
+            ) : null}
           </div>
           <section className="card">
             <div className="card-h">ALPR — {alprSide === "in" ? "Ingreso (IN)" : "Salida (OUT)"}</div>
@@ -389,38 +531,36 @@ export function ConfigPage() {
                 onChange={(v) => setCfg({ ...cfg, [alprSide === "in" ? "motion_cooldown_sec_in" : "motion_cooldown_sec_out"]: Number(v) })}
               />
             </div>
-            <div className="flex justify-end border-t border-line p-4">
-              <button
-                type="button"
-                disabled={busy}
-                className="rounded-[10px] bg-accent px-4 py-2 text-sm text-white"
-                onClick={() => saveAlpr()}
-              >
+            <div className="flex justify-end border-t border-line p-3">
+              <button type="button" disabled={busy} className="btn-primary" onClick={() => saveAlpr()}>
                 Guardar ALPR
               </button>
             </div>
           </section>
-          <section className="card p-4">
-            <p className="text-sm text-muted">
-              El recuadro ROI se dibuja sobre el live de AccesoSeguro. Acá queda el live de referencia.
-            </p>
-            <img
-              className="mt-3 w-full max-w-3xl rounded-[10px] border border-line bg-black"
-              src={`${engineUrl}/video_feed/${alprSide}`}
-              alt="ROI"
-            />
-          </section>
+          {alpr.host || alprSide === "in" ? (
+            <section className="card p-4">
+              <p className="text-sm text-muted">Live de referencia (ROI se ajusta en AccesoSeguro).</p>
+              <img
+                className="mt-3 w-full max-w-3xl rounded-md border border-line bg-black"
+                src={`${engineUrl}/video_feed/${alprSide}`}
+                alt="ROI"
+              />
+            </section>
+          ) : null}
         </div>
       ) : null}
 
       {tab === "evidencia" ? (
         <div className="space-y-4">
+          <p className="text-[12px] text-muted">
+            Si está off, el registro de detecciones no muestra la columna Evidencia.
+          </p>
           <div className="grid gap-4 lg:grid-cols-2">
             <EvidenceCard side="in" cfg={cfg} setCfg={setCfg} engineUrl={engineUrl} />
             <EvidenceCard side="out" cfg={cfg} setCfg={setCfg} engineUrl={engineUrl} />
           </div>
           <div className="flex justify-end">
-            <button type="button" disabled={busy} className="rounded-[10px] bg-accent px-4 py-2 text-sm text-white" onClick={() => savePartial(pickEvi(cfg))}>
+            <button type="button" disabled={busy} className="btn-primary" onClick={() => savePartial(pickEvi(cfg))}>
               Guardar evidencia
             </button>
           </div>
@@ -465,7 +605,7 @@ export function ConfigPage() {
               </select>
             </label>
             <div className="mt-4 flex justify-end">
-              <button type="button" disabled={busy} className="rounded-[10px] bg-accent px-4 py-2 text-sm text-white" onClick={() => savePartial(pickDni(cfg))}>
+              <button type="button" disabled={busy} className="btn-primary" onClick={() => savePartial(pickDni(cfg))}>
                 Guardar DNI
               </button>
             </div>
@@ -543,7 +683,7 @@ export function ConfigPage() {
             </div>
           </section>
           <div className="flex justify-end">
-            <button type="button" disabled={busy} className="rounded-[10px] bg-accent px-4 py-2 text-sm text-white" onClick={() => savePartial(pickMotor(cfg))}>
+            <button type="button" disabled={busy} className="btn-primary" onClick={() => savePartial(pickMotor(cfg))}>
               Guardar motor y lógica
             </button>
           </div>
@@ -562,7 +702,7 @@ export function ConfigPage() {
             />
             <button
               type="button"
-              className="mt-4 w-full rounded-[10px] bg-accent py-2 text-sm text-white"
+              className="btn-primary mt-4 w-full"
               onClick={() =>
                 engine("/api/config/evidence", {
                   method: "POST",
@@ -642,7 +782,7 @@ export function ConfigPage() {
                 </label>
               </div>
               <div className="mt-4 flex justify-end">
-                <button type="button" className="rounded-[10px] bg-accent px-4 py-2 text-sm text-white" onClick={() => savePartial(pickPerms(cfg))}>
+                <button type="button" className="btn-primary" onClick={() => savePartial(pickPerms(cfg))}>
                   Guardar privilegios
                 </button>
               </div>
@@ -679,7 +819,7 @@ export function ConfigPage() {
                 </button>
                 <button
                   type="button"
-                  className="rounded-[10px] bg-accent px-4 py-2 text-sm text-white"
+                  className="btn-primary"
                   onClick={async () => {
                     try {
                       if (opForm.id) {
@@ -771,28 +911,70 @@ export function ConfigPage() {
   );
 }
 
+function shortSrc(src?: string) {
+  if (!src) return "";
+  const m = src.match(/@([^/:]+)/) || src.match(/\/\/([^/:]+)/);
+  return m?.[1] ?? src.slice(0, 28);
+}
+
+function LanePanel({
+  title,
+  accent,
+  hint,
+  rows,
+}: {
+  title: string;
+  accent: "in" | "out";
+  hint?: string;
+  rows: { led?: boolean; name: string; detail: string; checked: boolean; onToggle: (v: boolean) => void; disabled?: boolean }[];
+}) {
+  return (
+    <section className="lane-card">
+      <div className={`lane-card-h ${accent === "in" ? "text-accent" : "text-warn"}`}>
+        <span>{title}</span>
+      </div>
+      <div className="space-y-2 p-3">
+        {hint ? <p className="text-[11px] text-muted">{hint}</p> : null}
+        {rows.map((r) => (
+          <SubRow
+            key={r.name}
+            led={r.led}
+            name={r.name}
+            detail={r.detail}
+            checked={r.checked}
+            onToggle={r.onToggle}
+            disabled={r.disabled}
+          />
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function SubRow({
   led,
   name,
   detail,
   checked,
   onToggle,
+  disabled,
 }: {
   led?: boolean;
   name: string;
   detail: string;
   checked: boolean;
   onToggle: (v: boolean) => void;
+  disabled?: boolean;
 }) {
   return (
-    <div className="subsys-row">
+    <div className={`subsys-row ${disabled ? "opacity-55" : ""}`}>
       <span className={`subsys-led ${led ? "led-green" : "led-red"}`} />
       <div className="min-w-0 flex-1">
-        <p className="text-sm font-semibold">{name}</p>
-        <p className="truncate text-xs text-muted">{detail}</p>
+        <p className="text-[13px] font-medium leading-tight">{name}</p>
+        <p className="truncate text-[11px] text-muted">{detail}</p>
       </div>
-      <label className="toggle-switch">
-        <input type="checkbox" checked={checked} onChange={(e) => onToggle(e.target.checked)} />
+      <label className={`toggle-switch ${disabled ? "pointer-events-none" : ""}`}>
+        <input type="checkbox" checked={checked} disabled={disabled} onChange={(e) => onToggle(e.target.checked)} />
         <span className="toggle-slider" />
       </label>
     </div>
@@ -914,35 +1096,42 @@ function EvidenceCard({
 }) {
   const key = `snapshot_camera_source_${side}`;
   const rtsp = parseRtsp(str(cfg, key));
+  const enabled = bool(cfg, `snapshot_enabled_${side}`);
   return (
     <section className="card">
-      <div className="card-h">Cámara evidencia — {side === "in" ? "Ingreso" : "Salida"}</div>
+      <div className="card-h">Evidencia — {side === "in" ? "Ingreso" : "Salida"}</div>
       <div className="space-y-3 p-4">
-        <label className="flex items-center gap-2 text-sm font-semibold">
+        <label className="flex items-center gap-2 text-sm font-medium">
           <input
             type="checkbox"
-            checked={bool(cfg, `snapshot_enabled_${side}`)}
+            checked={enabled}
             onChange={(e) => setCfg({ ...cfg, [`snapshot_enabled_${side}`]: e.target.checked })}
           />
-          Habilitar
+          Habilitar (mostrar en registro)
         </label>
-        <div className="grid grid-cols-2 gap-2">
-          <Field label="Host" value={rtsp.host} onChange={(v) => setRtsp(cfg, setCfg, side, { ...rtsp, host: v }, "snapshot")} />
-          <Field label="Canal" value={rtsp.channel} onChange={(v) => setRtsp(cfg, setCfg, side, { ...rtsp, channel: v }, "snapshot")} />
-        </div>
-        <label className="cfg-label">
-          Disparo
-          <select
-            className="cfg-input"
-            value={str(cfg, `snapshot_trigger_${side}`, "patente")}
-            onChange={(e) => setCfg({ ...cfg, [`snapshot_trigger_${side}`]: e.target.value })}
-          >
-            <option value="ambos">Patente o DNI</option>
-            <option value="patente">Solo patente</option>
-            <option value="dni">Solo DNI</option>
-          </select>
-        </label>
-        <img className="aspect-video w-full rounded-[8px] bg-black object-cover" src={`${engineUrl}/video_feed_evidence/${side}`} alt="" />
+        {enabled ? (
+          <>
+            <div className="grid grid-cols-2 gap-2">
+              <Field label="Host" value={rtsp.host} onChange={(v) => setRtsp(cfg, setCfg, side, { ...rtsp, host: v }, "snapshot")} />
+              <Field label="Canal" value={rtsp.channel} onChange={(v) => setRtsp(cfg, setCfg, side, { ...rtsp, channel: v }, "snapshot")} />
+            </div>
+            <label className="cfg-label">
+              Disparo
+              <select
+                className="cfg-input"
+                value={str(cfg, `snapshot_trigger_${side}`, "patente")}
+                onChange={(e) => setCfg({ ...cfg, [`snapshot_trigger_${side}`]: e.target.value })}
+              >
+                <option value="ambos">Patente o DNI</option>
+                <option value="patente">Solo patente</option>
+                <option value="dni">Solo DNI</option>
+              </select>
+            </label>
+            <img className="aspect-video w-full rounded-md bg-black object-cover" src={`${engineUrl}/video_feed_evidence/${side}`} alt="" />
+          </>
+        ) : (
+          <p className="text-[12px] text-muted">Deshabilitada: no se captura ni se muestra en el detalle de detecciones.</p>
+        )}
       </div>
     </section>
   );

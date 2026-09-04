@@ -184,10 +184,42 @@ class QRService:
 
     # ── Workers ────────────────────────────────────────────────────────────
 
+    def _process_visit_qr(self, payload: str) -> None:
+        import os
+        import urllib.request
+        import json
+
+        api = (os.environ.get("ACCESOPRO_API_URL") or "http://127.0.0.1:8787").rstrip("/")
+        token = payload[len("ACCESOPRO:V1:"):].strip()
+        body = json.dumps({"raw": payload, "sentido": self.sentido}).encode()
+        req = urllib.request.Request(
+            f"{api}/api/visit-passes/scan",
+            data=body,
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=5) as res:
+                data = json.loads(res.read().decode())
+            if data.get("ok"):
+                logger.info(
+                    f"[QR {self.sentido.upper()}] Visita OK — {data.get('guestName')} lote {data.get('lotNumber')}"
+                )
+            else:
+                logger.warning(f"[QR {self.sentido.upper()}] Visita denegada: {data.get('error')}")
+        except Exception as exc:
+            logger.error(f"[QR {self.sentido.upper()}] No se pudo validar QR AccesoPro: {exc}")
+
     def _process_qr_data(self, data: str) -> None:
-        if not data or "@" not in data:
+        line = (data or "").strip()
+        if not line:
             return
-        dni_data = DNIData.from_qr_string(data)
+        if line.startswith("ACCESOPRO:V1:"):
+            self._process_visit_qr(line)
+            return
+        if "@" not in line:
+            return
+        dni_data = DNIData.from_qr_string(line)
         if dni_data and dni_data.dni:
             now = time.time()
             if dni_data.dni != self._last_dni or (now - self._last_ts) > self._dedup_sec:
@@ -215,14 +247,14 @@ class QRService:
 
         import serial
         current_thread = threading.current_thread()
-        retry_delay = 1.0
-        max_retry_delay = 10.0
+        retry_delay = 2.0
+        max_retry_delay = 60.0  # COM ausente: no spamear el puerto cada pocos segundos
 
         while self._running and self._active_thread_com is current_thread:
             try:
                 ser = serial.Serial(port, baudrate=9600, timeout=1.0)
                 self.last_error = ""
-                retry_delay = 1.0  # Reiniciar delay al conectar
+                retry_delay = 2.0
                 logger.info(f"[QR {self.sentido.upper()}] Escuchando COM port: {port}")
                 
                 buffer = ""
@@ -238,14 +270,13 @@ class QRService:
                                 if line:
                                     self._process_qr_data(line)
                             buffer = lines[-1]
-                    time.sleep(0.05)
+                    time.sleep(0.08)
                 ser.close()
                 logger.info(f"[QR {self.sentido.upper()}] COM port {port} cerrado.")
             except Exception as exc:
                 self.last_error = f"Error en COM {port}: {exc}"
                 logger.error(f"[QR {self.sentido.upper()}] {self.last_error}. Reintentando en {retry_delay:.1f}s...")
                 
-                # Esperar retry_delay segundos antes de reintentar
                 steps = int(retry_delay * 10)
                 for _ in range(steps):
                     if not self._running or self._active_thread_com is not current_thread:

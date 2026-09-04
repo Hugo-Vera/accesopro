@@ -4,18 +4,23 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        ink: "#0b1420",
-        panel: "#162539",
-        panel2: "#132236",
-        line: "#294362",
-        accent: "#2fa4ff",
-        ok: "#22c55e",
-        warn: "#eab308",
-        danger: "#ef4444",
-        muted: "#9fb3c9",
+        /* Paleta AccesoPro — tomada del panel ops de referencia */
+        ink: "#0B1A28",
+        panel: "#152433",
+        panel2: "#1A2C3D",
+        line: "#2A4054",
+        accent: "#1A9FBF",
+        ok: "#3DCF7A",
+        warn: "#E8B84A",
+        danger: "#D94A4A",
+        muted: "#7A93A8",
       },
       boxShadow: {
-        card: "0 8px 26px rgba(0,0,0,.38)",
+        card: "0 0 0 1px rgba(26,159,191,.08), 0 8px 24px rgba(0,12,24,.5)",
+      },
+      fontFamily: {
+        sans: ["var(--font-ap-sans)", "ui-sans-serif", "system-ui", "sans-serif"],
+        mono: ["var(--font-ap-mono)", "ui-monospace", "SFMono-Regular", "monospace"],
       },
     },
   },

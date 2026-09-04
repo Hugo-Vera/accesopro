@@ -18,7 +18,25 @@ let cachedToken: string | null = null;
 let cachedAt = 0;
 
 export function engineBaseUrl() {
-  return (process.env.SITE_ENGINE_URL ?? "http://192.168.33.13:5051").replace(/\/$/, "");
+  return (process.env.SITE_ENGINE_URL ?? "http://127.0.0.1:5051").replace(/\/$/, "");
+}
+
+function engineConnectError(err: unknown): Error {
+  const raw = err instanceof Error ? err.message : String(err);
+  if (/fetch failed|ECONNREFUSED|No es posible conectar|connection refused/i.test(raw)) {
+    return new Error(
+      `Motor ALPR offline (${engineBaseUrl()}). Levantá AccesoSeguro en apps/site (PostgreSQL + python run.py).`,
+    );
+  }
+  return err instanceof Error ? err : new Error(raw);
+}
+
+async function engineFetch(url: string, init?: RequestInit): Promise<Response> {
+  try {
+    return await fetch(url, init);
+  } catch (err) {
+    throw engineConnectError(err);
+  }
 }
 
 function engineUser() {
@@ -30,7 +48,7 @@ function enginePassword() {
 }
 
 async function login(): Promise<string> {
-  const res = await fetch(`${engineBaseUrl()}/api/auth/token`, {
+  const res = await engineFetch(`${engineBaseUrl()}/api/auth/token`, {
     method: "POST",
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
@@ -60,7 +78,7 @@ export async function siteFetch(path: string, init?: RequestInit): Promise<Respo
   const headers = new Headers(init?.headers);
   headers.set("Authorization", `Bearer ${await bearer()}`);
   const url = path.startsWith("http") ? path : `${engineBaseUrl()}${path}`;
-  const res = await fetch(url, {
+  const res = await engineFetch(url, {
     ...init,
     headers,
     signal: init?.signal ?? AbortSignal.timeout(FETCH_MS),
@@ -68,7 +86,7 @@ export async function siteFetch(path: string, init?: RequestInit): Promise<Respo
   if (res.status !== 401) return res;
   cachedToken = null;
   headers.set("Authorization", `Bearer ${await login()}`);
-  return fetch(url, {
+  return engineFetch(url, {
     ...init,
     headers,
     signal: init?.signal ?? AbortSignal.timeout(FETCH_MS),
@@ -78,6 +96,11 @@ export async function siteFetch(path: string, init?: RequestInit): Promise<Respo
 function publicCam(raw: unknown) {
   if (!raw || typeof raw !== "object") return null;
   const cam = raw as Record<string, unknown>;
+  const source = typeof cam.source === "string" ? cam.source : "";
+  const host = hostFromSource(source);
+  const configured =
+    Boolean(cam.running) ||
+    (Boolean(host) && !/no configurada|USER:PASS/i.test(source));
   return {
     running: Boolean(cam.running),
     detections_total: cam.detections_total ?? 0,
@@ -88,14 +111,25 @@ function publicCam(raw: unknown) {
     processed_frames: Number(cam.processed_frames ?? 0),
     last_inference_ms: Number(cam.last_inference_ms ?? 0),
     dedup_skipped: Number(cam.dedup_skipped ?? 0),
-    cameraHost: hostFromSource(cam.source),
+    cameraHost: host,
+    configured,
   };
 }
 
 function hostFromSource(raw: unknown): string {
   if (typeof raw !== "string" || !raw) return "";
+  if (/no configurada/i.test(raw)) return "";
   const m = raw.match(/@([^/:]+)/) || raw.match(/\/\/([^/:]+)/);
   return m?.[1] ?? "";
+}
+
+export function laneStatus(cam: ReturnType<typeof publicCam> | null | undefined) {
+  if (!cam) return { running: false, host: "", configured: false };
+  return {
+    running: Boolean(cam.running),
+    host: cam.cameraHost || "",
+    configured: Boolean(cam.configured),
+  };
 }
 
 export async function engineOps() {
@@ -135,6 +169,26 @@ async function engineWrite(method: "POST" | "PUT", path: string, body: unknown) 
       /* texto plano */
     }
     throw new Error(msg);
+  }
+  const ct = res.headers.get("content-type") ?? "";
+  if (ct.includes("json")) return res.json() as Promise<unknown>;
+  return { ok: true };
+}
+
+export async function engineBridgePost(path: string, body: unknown) {
+  const key = process.env.ACCESOPRO_BRIDGE_KEY ?? "accesopro-bridge";
+  const res = await siteFetch(path, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-AccesoPro-Key": key,
+    },
+    body: JSON.stringify(body ?? {}),
+    signal: AbortSignal.timeout(20000),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(text || `Motor LAN ${res.status}`);
   }
   const ct = res.headers.get("content-type") ?? "";
   if (ct.includes("json")) return res.json() as Promise<unknown>;

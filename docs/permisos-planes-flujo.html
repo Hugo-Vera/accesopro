@@ -1,0 +1,187 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <title>AccesoPro — Planes y permisos</title>
+  <style>
+    @page { size: A4; margin: 14mm; }
+    * { box-sizing: border-box; }
+    body {
+      font-family: "Segoe UI", system-ui, sans-serif;
+      font-size: 10.5pt;
+      line-height: 1.35;
+      color: #111;
+      margin: 0;
+    }
+    h1 { font-size: 18pt; margin: 0 0 4pt; }
+    h2 { font-size: 13pt; margin: 16pt 0 6pt; border-bottom: 1px solid #333; padding-bottom: 3pt; }
+    h3 { font-size: 11pt; margin: 10pt 0 4pt; }
+    p, li { margin: 0 0 4pt; }
+    .muted { color: #444; font-size: 9.5pt; }
+    .box {
+      border: 1px solid #333;
+      padding: 8pt 10pt;
+      margin: 6pt 0;
+      page-break-inside: avoid;
+    }
+    .warn { background: #fff8e6; border-color: #a67c00; }
+    .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8pt; }
+    .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8pt; }
+    table { width: 100%; border-collapse: collapse; font-size: 9pt; margin: 6pt 0 10pt; }
+    th, td { border: 1px solid #555; padding: 4pt 5pt; text-align: left; vertical-align: top; }
+    th { background: #eee; }
+    .flow {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 0;
+      margin: 10pt 0;
+      page-break-inside: avoid;
+    }
+    .node {
+      border: 1.5px solid #111;
+      border-radius: 4pt;
+      padding: 6pt 12pt;
+      min-width: 160pt;
+      text-align: center;
+      background: #f7f7f7;
+    }
+    .node strong { display: block; font-size: 10pt; }
+    .node span { font-size: 8.5pt; color: #444; }
+    .arrow { font-size: 14pt; line-height: 1; color: #333; margin: 1pt 0; }
+    .row-flow {
+      display: flex;
+      justify-content: center;
+      gap: 18pt;
+      flex-wrap: wrap;
+      margin-top: 4pt;
+    }
+    .footer { margin-top: 14pt; font-size: 8.5pt; color: #555; }
+    @media print {
+      .noprint { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <p class="muted noprint">Abrí este archivo e imprimí → Guardar como PDF (Ctrl+P).</p>
+
+  <h1>AccesoPro — modelo de planes y permisos</h1>
+  <p class="muted">Documento para imprimir · Cascada Dueño → Barrio → Guardia / Propietario</p>
+
+  <div class="box warn">
+    <strong>Brecha hoy:</strong> hay módulos por tenant y roles fijos
+    (<code>platform_admin</code>, <code>tenant_admin</code>, <code>resident</code>).
+    Faltan planes comerciales y permisos granulares para guardia/propietario.
+  </div>
+
+  <h2>1. Diagrama de flujo</h2>
+  <div class="flow">
+    <div class="node"><strong>Dueño AccesoPro</strong><span>Plataforma · planes</span></div>
+    <div class="arrow">↓</div>
+    <div class="node"><strong>Plan contratado</strong><span>Módulos + cupos + caps</span></div>
+    <div class="arrow">↓</div>
+    <div class="node"><strong>Admin barrio</strong><span>Tenant · registro predio</span></div>
+    <div class="arrow">↓</div>
+    <div class="row-flow">
+      <div>
+        <div class="node"><strong>Guardia</strong><span>Monitoreo + grants</span></div>
+        <div class="arrow" style="text-align:center">↓</div>
+        <div class="node"><strong>Dashboard ops</strong><span>Plano · alarmas · live</span></div>
+      </div>
+      <div>
+        <div class="node"><strong>Propietario</strong><span>Lote · portal</span></div>
+        <div class="arrow" style="text-align:center">↓</div>
+        <div class="node"><strong>Portal vecino</strong><span>QR · servicios</span></div>
+      </div>
+      <div>
+        <div class="node"><strong>Dashboard admin</strong><span>Config · grants</span></div>
+      </div>
+    </div>
+  </div>
+
+  <h2>2. Tres capas (no mezclar)</h2>
+  <div class="grid3">
+    <div class="box">
+      <h3>A · Plan (Dueño)</h3>
+      <p>Qué módulos y cupos compra el barrio. Solo el dueño de plataforma tilda el plan.</p>
+    </div>
+    <div class="box">
+      <h3>B · Módulo (Barrio)</h3>
+      <p>Catálogo actual (<code>alpr</code>, <code>visitors</code>…). El menú solo muestra lo contratado. El admin no supera el plan.</p>
+    </div>
+    <div class="box">
+      <h3>C · Permiso granular</h3>
+      <p>Qué puede hacer cada usuario. Ej: guardia ve live pero no edita actuadores hasta que le den <code>ops.relay</code>.</p>
+    </div>
+  </div>
+
+  <h2>3. Actores y dashboards</h2>
+  <table>
+    <thead>
+      <tr><th>Actor</th><th>Quién lo crea</th><th>Dashboard</th><th>Puede otorgar</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>Dueño plataforma</td><td>—</td><td>Multi-tenant + planes</td><td>Plan/módulos a cada barrio</td></tr>
+      <tr><td>Admin barrio</td><td>Dueño / alta tenant</td><td>Ops + admin</td><td>Permisos a guardia y propietarios</td></tr>
+      <tr><td>Guardia</td><td>Admin barrio</td><td>Ops (plano, alarmas, live)</td><td>Nadie (salvo grant especial)</td></tr>
+      <tr><td>Propietario</td><td>Admin (lote)</td><td>Portal /portal</td><td>Servicios/empleados si tiene grant</td></tr>
+      <tr><td>Visita</td><td>Propietario (QR)</td><td>Solo su QR</td><td>Nadie</td></tr>
+    </tbody>
+  </table>
+
+  <h2>4. Catálogo de permisos granulares</h2>
+  <table>
+    <thead>
+      <tr><th>Grupo</th><th>Clave</th><th>Quién</th><th>Qué desbloquea</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>General</td><td>core.users.read / write</td><td>Admin / Guardia+</td><td>Ver / editar usuarios</td></tr>
+      <tr><td>General</td><td>core.config</td><td>Admin / Guardia+</td><td>Config motor / actuadores</td></tr>
+      <tr><td>Monitoreo</td><td>ops.dashboard · plano · alarms</td><td>Guardia / Admin</td><td>Live, plano, cola alarmas</td></tr>
+      <tr><td>Monitoreo</td><td>ops.relay</td><td>Guardia+</td><td>Abrir/cerrar actuadores</td></tr>
+      <tr><td>Acceso</td><td>access.alpr · dahua · visitors · dni_enroll</td><td>Según grant</td><td>Detecciones, facial, visitas, alta DNI</td></tr>
+      <tr><td>Personal</td><td>staff.employees · schedules</td><td>Propietario+ / Admin</td><td>Empleados y cronogramas</td></tr>
+      <tr><td>Admin barrio</td><td>tenant.grants</td><td>Admin</td><td>Otorgar permisos a otros</td></tr>
+      <tr><td>Plataforma</td><td>platform.plans · tenants</td><td>Dueño</td><td>Planes y alta de barrios</td></tr>
+    </tbody>
+  </table>
+
+  <h2>5. Planes comerciales</h2>
+  <div class="grid3">
+    <div class="box">
+      <h3>Esencial</h3>
+      <p>core + actuators. Barreras y plano. 1 admin, 2 guardias. Sin ALPR ni portal visitas.</p>
+    </div>
+    <div class="box">
+      <h3>Acceso Pro (recomendado)</h3>
+      <p>+ alpr + visitors + dahua. Demo Las Acacias. Portal propietario, QR, hasta 5 guardias.</p>
+    </div>
+    <div class="box">
+      <h3>Seguridad total</h3>
+      <p>+ panic + fire + attendance. Cronogramas, alta DNI, grants completos.</p>
+    </div>
+  </div>
+
+  <h2>6. Regla ¿puede?</h2>
+  <ol>
+    <li>¿El plan del tenant incluye el módulo? Si no → menú y API niegan.</li>
+    <li>¿El rol base entra al dashboard correcto? (plataforma / ops / portal)</li>
+    <li>¿Tiene el capability en <code>user_grants</code>? Si no → UI oculta + API 403.</li>
+  </ol>
+  <p class="muted">Nunca confiar solo en ocultar el menú: mismo check en API.</p>
+
+  <h2>7. Roadmap</h2>
+  <table>
+    <thead><tr><th>Fase</th><th>Entrega</th><th>Listo cuando</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>Planes + suscripción</td><td>Dueño asigna plan; módulos = plan ∩ toggles</td></tr>
+      <tr><td>2</td><td>Rol guard + plantillas</td><td>Guardia con dashboard ops</td></tr>
+      <tr><td>3</td><td>UI user_grants</td><td>Admin otorga ops.relay / staff.*</td></tr>
+      <tr><td>4</td><td>Portal con grants</td><td>Sin staff.employees → no ve altas</td></tr>
+      <tr><td>5</td><td>Dueño edita caps del plan</td><td>Plan Esencial no ofrece panic</td></tr>
+    </tbody>
+  </table>
+
+  <p class="footer">AccesoPro · documento de producto · generado para lectura e impresión</p>
+</body>
+</html>

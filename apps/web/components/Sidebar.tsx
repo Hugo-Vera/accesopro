@@ -4,67 +4,115 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useDash } from "@/components/DashboardProvider";
 
-type Item = { href: string; label: string; icon: string; module?: string };
+type Item = {
+  href: string;
+  label: string;
+  module?: string;
+  feature?: string;
+  capability?: string;
+  adminOnly?: boolean;
+};
 type Section = { title: string; items: Item[] };
 
 const SECTIONS: Section[] = [
   {
-    title: "Operación",
+    title: "Panel",
     items: [
-      { href: "/dashboard", label: "Dashboard", icon: "D" },
-      { href: "/dashboard/plano", label: "Plano", icon: "M" },
-      { href: "/dashboard/diagnostico", label: "Diagnóstico", icon: "i" },
+      { href: "/dashboard", label: "Inicio", capability: "ops.dashboard" },
+      { href: "/dashboard/plano", label: "Plano", capability: "ops.plano" },
     ],
   },
   {
     title: "Acceso",
     items: [
-      { href: "/dashboard/alpr", label: "Detecciones", icon: "T", module: "alpr" },
-      { href: "/dashboard/dahua", label: "Acceso Dahua", icon: "A", module: "dahua_access" },
-      { href: "/dashboard/actuadores", label: "Actuadores", icon: "R", module: "actuators" },
-      { href: "/dashboard/visitas", label: "Visitas", icon: "V", module: "visitors" },
-      { href: "/dashboard/alta-dni", label: "Alta DNI", icon: "ID", module: "dni_enroll" },
-    ],
-  },
-  {
-    title: "Seguridad",
-    items: [
-      { href: "/dashboard/panico", label: "Pánico", icon: "!", module: "panic" },
-      { href: "/dashboard/fuego", label: "Fuego", icon: "F", module: "fire" },
+      {
+        href: "/dashboard/dahua",
+        label: "Equipos",
+        module: "dahua_access",
+        feature: "dahua.devices",
+        capability: "access.dahua",
+      },
+      {
+        href: "/dashboard/dahua/eventos",
+        label: "Eventos",
+        module: "dahua_access",
+        feature: "dahua.events",
+        capability: "dahua.events",
+      },
+      {
+        href: "/dashboard/dahua/personas",
+        label: "Personas",
+        module: "dahua_access",
+        feature: "dahua.persons",
+        capability: "dahua.persons",
+      },
+      {
+        href: "/dashboard/dahua/qr",
+        label: "QR del lector",
+        module: "dahua_access",
+        feature: "dahua.qr",
+        capability: "dahua.qr",
+      },
+      {
+        href: "/dashboard/dahua/periodos",
+        label: "Periodos",
+        module: "dahua_access",
+        feature: "dahua.schedules",
+        capability: "dahua.schedules",
+      },
+      {
+        href: "/dashboard/dahua/evidencia",
+        label: "Evidencia",
+        module: "dahua_access",
+        feature: "dahua.evidence",
+        capability: "dahua.evidence",
+      },
+      {
+        href: "/dashboard/dahua/live",
+        label: "Live lector",
+        module: "dahua_access",
+        feature: "dahua.live",
+        capability: "dahua.live",
+      },
+      { href: "/dashboard/actuadores", label: "Actuadores", module: "actuators", capability: "ops.relay" },
+      { href: "/dashboard/visitas", label: "Visitas", module: "visitors", capability: "access.visitors.manage" },
     ],
   },
   {
     title: "Administración",
     items: [
-      { href: "/dashboard/fichadas", label: "Fichadas", icon: "H", module: "attendance" },
-      { href: "/dashboard/modulos", label: "Configuración", icon: "C" },
+      { href: "/dashboard/propiedades", label: "Propiedades", module: "visitors", capability: "access.visitors.manage", adminOnly: true },
+      { href: "/dashboard/usuarios", label: "Usuarios y permisos", capability: "core.users.read", adminOnly: true },
+      { href: "/dashboard/modulos", label: "Configuración", capability: "core.config", adminOnly: true },
+      { href: "/dashboard/diagnostico", label: "Diagnóstico", capability: "ops.dashboard", adminOnly: true },
     ],
   },
 ];
 
 export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
-  const { user, tenants, tenantId, isPlatform, status, setTenant, logout, enabled } = useDash();
+  const { user, tenantName, isPlatform, isAdmin, status, logout, enabled, featureOn, can } = useDash();
 
   return (
-    <aside className="flex h-full w-[230px] shrink-0 flex-col border-r border-line bg-gradient-to-b from-[#162539f5] to-[#101d2df5]">
-      <div className="flex items-start gap-2.5 border-b border-line px-4 pb-3.5 pt-5">
-        <div className="mt-0.5 grid h-7 w-7 place-items-center rounded-full border border-accent/45 bg-accent/20 text-[11px] font-bold">
-          AP
-        </div>
-        <div>
-          <p className="text-[1.35rem] font-bold leading-none">AccesoPro</p>
-          <p className="mt-1 text-[13px] text-muted">Acceso y seguridad</p>
-        </div>
+    <aside className="flex h-full w-[248px] shrink-0 flex-col border-r border-line bg-[var(--ap-ink)]">
+      <div className="border-b border-line px-5 pb-4 pt-6">
+        <p className="text-[1.35rem] font-semibold leading-none tracking-tight text-[var(--ap-accent-bright)]">AccesoPro</p>
+        <p className="mt-2 truncate text-[12px] text-muted">{tenantName ?? "Panel"}</p>
       </div>
 
-      <nav className="flex flex-1 flex-col gap-3 overflow-auto p-2">
+      <nav className="flex flex-1 flex-col gap-5 overflow-auto px-3 py-4">
         {SECTIONS.map((section) => {
-          const items = section.items.filter((item) => !item.module || enabled(item.module));
+          const items = section.items.filter(
+            (item) =>
+              (!item.adminOnly || isAdmin || isPlatform) &&
+              (!item.module || enabled(item.module)) &&
+              (!item.feature || featureOn(item.feature)) &&
+              (!item.capability || can(item.capability)),
+          );
           if (!items.length) return null;
           return (
             <div key={section.title}>
-              <p className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-wider text-muted/80">
+              <p className="px-2 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted/80">
                 {section.title}
               </p>
               <div className="flex flex-col gap-0.5">
@@ -76,13 +124,12 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
                       key={item.href}
                       href={item.href}
                       onClick={onNavigate}
-                      className={`flex items-center gap-2.5 rounded-[10px] px-3 py-2.5 text-[15px] ${
+                      className={`rounded-md px-2.5 py-2 text-[13px] transition-colors ${
                         active
-                          ? "border border-accent/40 bg-accent/30 text-white"
-                          : "text-muted hover:bg-accent/15 hover:text-[#eaf2ff]"
+                          ? "border-l-2 border-accent bg-accent/10 text-[var(--ap-text)]"
+                          : "border-l-2 border-transparent text-muted hover:bg-panel2/60 hover:text-[var(--ap-text-dim)]"
                       }`}
                     >
-                      <span className="w-5 shrink-0 text-center text-[10px] font-bold">{item.icon}</span>
                       {item.label}
                     </Link>
                   );
@@ -93,36 +140,15 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
         })}
       </nav>
 
-      <div className="border-t border-line px-4 py-3">
-        <p className="mb-2 text-[11px] font-semibold uppercase tracking-wider text-muted">Estado ALPR</p>
-        <div className="mb-2 rounded-[10px] border border-line bg-panel2 px-2 py-1.5 text-[12px] leading-snug text-muted">
-          {status.engineOnline ? "Motor en línea · IN/OUT vivos" : "Motor offline"}
-          <br />
-          Dahua {status.agentOnline ? "en línea" : "offline"}
-        </div>
-        <p className="text-[11px] font-semibold uppercase tracking-wide text-muted">Cámara principal</p>
-        <p className="break-all text-[12px] text-muted">192.168.33.200 · LAN</p>
-      </div>
-
-      <div className="flex items-center justify-between gap-2 border-t border-line px-4 py-3.5">
-        <div className="min-w-0">
-          {isPlatform && tenants.length > 0 ? (
-            <select
-              className="w-full rounded-md border border-line bg-ink px-1 py-0.5 text-[12px]"
-              value={tenantId ?? ""}
-              onChange={(e) => setTenant(e.target.value)}
-            >
-              {tenants.map((t) => (
-                <option key={t.id} value={t.id}>
-                  {t.name}
-                </option>
-              ))}
-            </select>
-          ) : (
-            <p className="truncate text-[12px] text-muted">{user?.name}</p>
-          )}
-        </div>
-        <button type="button" className="btn-ghost" onClick={logout}>
+      <div className="border-t border-line px-4 py-4">
+        <p className="text-[11px] text-muted">
+          Dahua{" "}
+          <span className={status.agentOnline ? "text-ok" : "text-danger"}>
+            {status.agentOnline ? "en línea" : "offline"}
+          </span>
+        </p>
+        <p className="mt-2 truncate text-[12px] text-[#d0d0d0]">{user?.name}</p>
+        <button type="button" className="btn-ghost mt-3 w-full" onClick={logout}>
           Salir
         </button>
       </div>

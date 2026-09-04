@@ -1,9 +1,10 @@
 import { and, eq } from "drizzle-orm";
 import type { Context } from "hono";
 import { db } from "./db/client.js";
-import { sites, tenantModules } from "./db/schema.js";
+import { sites } from "./db/schema.js";
 import type { AuthUser } from "./auth.js";
 import { moduleByKey } from "@accesopro/catalog";
+import { tenantModuleAllowed } from "./plans.js";
 
 export function nid(): string {
   return crypto.randomUUID();
@@ -48,13 +49,9 @@ export async function scopedSiteWithModule(
   if ("error" in scoped) return scoped;
   const def = moduleByKey(moduleKey);
   if (def?.alwaysOn) return scoped;
-  const row = await db
-    .select()
-    .from(tenantModules)
-    .where(and(eq(tenantModules.tenantId, scoped.tenantId), eq(tenantModules.moduleKey, moduleKey)))
-    .get();
-  if (!row?.enabled) {
-    return { error: c.json({ error: "Este módulo no está contratado" }, 403) as Response };
+  const ok = await tenantModuleAllowed(scoped.tenantId, moduleKey);
+  if (!ok) {
+    return { error: c.json({ error: "Este módulo no está en el plan o no está habilitado" }, 403) as Response };
   }
   return scoped;
 }

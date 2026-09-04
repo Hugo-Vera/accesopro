@@ -46,7 +46,7 @@ Rutas agrupadas con **route groups** de Next.js (los paréntesis no cambian la U
 | `(admin)` | `/dashboard/fichadas` | Asistencia Dahua (stub) |
 | `(admin)` | `/dashboard/modulos` | Config AccesoSeguro + módulos AccesoPro |
 
-Componentes principales: `OpsDashboard`, `ActuatorsPanel`, `ConfigPage`, `DahuaPanel`, `DebugPanel`.
+Componentes principales: `HomeDashboard` (ops dinámico según packs), `ActuatorsPanel`, `ConfigPage`, `EquipmentPanel`, `DebugPanel`.
 
 ## `apps/api` — capas
 

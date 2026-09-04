@@ -16,6 +16,7 @@ from fastapi.templating import Jinja2Templates
 from .config import settings
 from .database import init_db
 from .routers import auth, vehiculos, personas, accesos, relay, stream, propietario
+from .routers.accesopro_bridge import router as accesopro_bridge_router
 from .routers.config_api import router as config_router
 from .services.alpr import get_alpr
 from .services.qr import get_qr
@@ -56,6 +57,7 @@ app.include_router(relay.router)
 app.include_router(stream.router)
 app.include_router(config_router)
 app.include_router(propietario.router)
+app.include_router(accesopro_bridge_router)
 
 
 @app.on_event("startup")

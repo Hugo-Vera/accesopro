@@ -1,4 +1,5 @@
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8787";
+// Vacío = mismo origen (Next rewrites a la API). Ideal para LAN / ZeroTier.
+const API = (process.env.NEXT_PUBLIC_API_URL ?? "").replace(/\/$/, "");
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API}${path}`, {

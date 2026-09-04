@@ -49,6 +49,27 @@ def mark_source_online(source: str | int) -> None:
             del _offline_sources[source]
 
 
+def is_usable_camera_source(source: str | int | None) -> bool:
+    """False para vacio, webcam sin indice util, o plantillas tipo USER:PASS."""
+    if source is None:
+        return False
+    if isinstance(source, int):
+        return source >= 0
+    text = str(source).strip()
+    if not text:
+        return False
+    if text.isdigit():
+        return True
+    upper = text.upper()
+    if "USER:PASS@" in upper or "@USER:PASS" in upper:
+        return False
+    if "TU_USUARIO" in upper or "YOUR_PASSWORD" in upper or "CHANGE_ME" in upper:
+        return False
+    if text.startswith(("rtsp://", "rtsps://", "http://", "https://")):
+        return "@" in text or "//" in text
+    return True
+
+
 def safe_video_capture(source: str | int, timeout_ms: int = 2500, bypass_cooldown: bool = False) -> cv2.VideoCapture:
     """
     Inicializa cv2.VideoCapture de manera segura evitando bloqueos del GIL y colisiones de hilos.
@@ -121,12 +142,8 @@ class ALPRService:
 
     def __init__(self, sentido: str = "in") -> None:
         self.sentido = sentido
-        self.alpr = ALPR(
-            detector_model=settings.detector_model,
-            ocr_model=settings.ocr_model,
-            ocr_device=settings.ocr_device,
-            detector_conf_thresh=settings.min_detector_conf,
-        )
+        # Lazy: no cargar YOLO/OCR hasta que haya fuente usable (ahorra CPU/RAM en OUT vacio)
+        self.alpr: ALPR | None = None
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._active_thread: threading.Thread | None = None
@@ -175,8 +192,21 @@ class ALPRService:
         self._lock = threading.Lock()
         self._last_raw_frame: np.ndarray | None = None
         self._last_frame_time: float = 0.0
+        self._stream_every_n: int = 3  # JPEG del preview: no en cada frame
+        self._raw_copy_every_n: int = 5  # copia para evidencia: cada N frames
         self._set_status_frame("Iniciando servicio de camara...")
         self._start()
+
+    def _ensure_alpr(self) -> ALPR:
+        if self.alpr is None:
+            logger.info(f"[ALPR] Cargando modelos ({self.sentido}) — device={settings.ocr_device}")
+            self.alpr = ALPR(
+                detector_model=settings.detector_model,
+                ocr_model=settings.ocr_model,
+                ocr_device=settings.ocr_device,
+                detector_conf_thresh=self._min_detector_conf,
+            )
+        return self.alpr
 
     # ── API publica ────────────────────────────────────────────────────────
     def register_on_detection(self, cb: Callable[[dict[str, Any]], None]) -> None:
@@ -272,9 +302,10 @@ class ALPRService:
 
     def _start(self) -> None:
         source = self._get_source()
-        if not source:
-            self.last_error = "camera_source no configurada"
-            logger.warning("[ALPR] %s", self.last_error)
+        if not is_usable_camera_source(source):
+            self.running = False
+            self.last_error = "camera_source no configurada o es plantilla (USER:PASS)"
+            logger.warning("[ALPR %s] %s — worker en idle (0 CPU de captura)", self.sentido.upper(), self.last_error)
             self._set_status_frame("Camara no configurada. Configurala en la pestaña Configuracion.")
             return
         self._stop.clear()
@@ -293,33 +324,52 @@ class ALPRService:
         last_no_signal_update = 0.0
         current_thread = threading.current_thread()
         
-        retry_delay = 1.0  # Inicia en 1.0 segundo
-        max_retry_delay = 8.0  # Límite máximo de 8 segundos para evitar esperas excesivas cuando la cámara ya está disponible
+        retry_delay = 2.0
+        max_retry_delay = 30.0  # Fuentes caídas: no martillar FFmpeg cada pocos segundos
         
         while not self._stop.is_set() and self._active_thread is current_thread:
+            if not is_usable_camera_source(source):
+                self.last_error = "camera_source no usable"
+                self._set_status_frame("Camara no configurada.")
+                break
+
+            if is_source_offline(cap_src):
+                logger.warning(
+                    f"[ALPR] Fuente offline en cooldown. Reintento en {retry_delay:.0f}s ({self.sentido})"
+                )
+                self._set_status_frame("Camara offline. Esperando antes de reintentar...")
+                steps = int(retry_delay * 10)
+                for _ in range(steps):
+                    if self._stop.is_set() or self._active_thread is not current_thread:
+                        break
+                    time.sleep(0.1)
+                retry_delay = min(retry_delay * 1.5, max_retry_delay)
+                continue
+
             logger.info(f"[ALPR] Conectando a fuente de cámara: {source}")
-            cap = safe_video_capture(cap_src, timeout_ms=2500, bypass_cooldown=True)
+            # Respetar circuit breaker (sin bypass): evita tormenta de connects FFmpeg
+            cap = safe_video_capture(cap_src, timeout_ms=2500, bypass_cooldown=False)
             cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
 
             if not cap.isOpened():
                 self.last_error = f"No se pudo abrir: {source}"
+                mark_source_offline(cap_src, cooldown_sec=max(30.0, retry_delay))
                 logger.error(f"[ALPR] {self.last_error}. Reintentando en {retry_delay:.1f} segundos...")
                 self._set_status_frame("No se pudo abrir la camara. Reintentando...")
                 cap.release()
                 
-                # Esperar retry_delay segundos con stop checks antes de reintentar
                 steps = int(retry_delay * 10)
                 for _ in range(steps):
                     if self._stop.is_set() or self._active_thread is not current_thread:
                         break
                     time.sleep(0.1)
                 
-                # Incrementar exponencialmente y limitar al máximo establecido
                 retry_delay = min(retry_delay * 2, max_retry_delay)
                 continue
 
             # Reiniciar delay al conectar con éxito
-            retry_delay = 1.0
+            retry_delay = 2.0
+            mark_source_online(cap_src)
             logger.info(f"[ALPR] Conexión establecida con éxito: {source}")
             
             try:
@@ -333,16 +383,18 @@ class ALPRService:
                             last_no_signal_update = now_t
                         break
 
-                    with self._lock:
-                        self._last_raw_frame = frame.copy()
-                        self._last_frame_time = time.time()
+                    # Copia cruda solo cada N frames (evidencia / snapshot mismo stream)
+                    if local_id % self._raw_copy_every_n == 0:
+                        with self._lock:
+                            self._last_raw_frame = frame.copy()
+                            self._last_frame_time = time.time()
 
                     self.frame_id = local_id
+                    fh, fw = frame.shape[:2]
 
                     # === DETECCION DE MOVIMIENTO (AHORRO DE CPU) ===
                     alpr_active = True
                     if self.motion_detection_enabled:
-                        fh, fw = frame.shape[:2]
                         if self.roi_enabled and self.roi_w > 0 and self.roi_h > 0:
                             rx = max(0, int(self.roi_x * fw))
                             ry = max(0, int(self.roi_y * fh))
@@ -354,10 +406,10 @@ class ALPRService:
 
                         m_h, m_w = motion_zone.shape[:2]
                         if m_w > 0 and m_h > 0:
-                            target_w = 160
+                            target_w = 96 if not (time.time() < self._motion_cooldown_until) else 128
                             target_h = int(m_h * (target_w / m_w))
                             if target_h <= 0:
-                                target_h = 120
+                                target_h = 72
                             small_zone = cv2.resize(motion_zone, (target_w, target_h), interpolation=cv2.INTER_AREA)
                             gray_zone = cv2.cvtColor(small_zone, cv2.COLOR_BGR2GRAY)
                             gray_zone = cv2.GaussianBlur(gray_zone, (5, 5), 0)
@@ -365,7 +417,7 @@ class ALPRService:
                             if self._prev_roi_gray is not None and self._prev_roi_gray.shape == gray_zone.shape:
                                 frame_diff = cv2.absdiff(self._prev_roi_gray, gray_zone)
                                 _, thresh = cv2.threshold(frame_diff, 20, 255, cv2.THRESH_BINARY)
-                                changed_pixels = np.sum(thresh == 255)
+                                changed_pixels = int(cv2.countNonZero(thresh))
                                 total_pixels = thresh.size
                                 change_ratio = changed_pixels / total_pixels
                                 if change_ratio >= self.motion_threshold:
@@ -374,60 +426,50 @@ class ALPRService:
 
                         alpr_active = time.time() < self._motion_cooldown_until
 
-                    # ── SIEMPRE actualizar stream ANTES de inferencia ──
-                    # Esto evita el efecto "rebobinar" cuando la inferencia bloquea el hilo.
-                    disp_h, disp_w = frame.shape[:2]
-                    if disp_w > 960 and disp_h > 0:
-                        scale = 960 / disp_w
-                        new_h = max(1, int(disp_h * scale))
-                        stream_frame = cv2.resize(frame, (960, new_h))
-                    else:
-                        stream_frame = frame.copy()
-
-                    # --- Dibujar badge de ALPR en stream normal ---
-                    badge_txt = "ALPR: ESCANEANDO" if alpr_active else "ALPR: STANDBY"
-                    badge_col = (76, 209, 55) if alpr_active else (149, 175, 192) # BGR: Verde esmeralda, Gris
-                    overlay = stream_frame.copy()
-                    (tw, th), _ = cv2.getTextSize(badge_txt, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
-                    cv2.rectangle(overlay, (15, 15), (25 + tw, 35 + th), (20, 20, 28), -1)
-                    cv2.addWeighted(overlay, 0.75, stream_frame, 0.25, 0, stream_frame)
-                    cv2.rectangle(stream_frame, (15, 15), (25 + tw, 35 + th), badge_col, 1, cv2.LINE_AA)
-                    cv2.putText(stream_frame, badge_txt, (20, 20 + th), cv2.FONT_HERSHEY_SIMPLEX, 0.45, badge_col, 1, cv2.LINE_AA)
-
-                    _, enc_j = cv2.imencode(".jpg", stream_frame, [cv2.IMWRITE_JPEG_QUALITY, 50])
-                    if enc_j is not None:
-                        self.latest_jpeg = enc_j.tobytes()
+                    # Preview MJPEG: cada N frames (más espaciado en standby)
+                    stream_n = self._stream_every_n if alpr_active else max(self._stream_every_n * 2, 6)
+                    if local_id % stream_n == 0:
+                        stream_w = 640 if not alpr_active else 800
+                        if fw > stream_w and fh > 0:
+                            scale = stream_w / fw
+                            stream_frame = cv2.resize(frame, (stream_w, max(1, int(fh * scale))), interpolation=cv2.INTER_AREA)
+                        else:
+                            stream_frame = frame
+                        badge_txt = "ALPR: ESCANEANDO" if alpr_active else "ALPR: STANDBY"
+                        badge_col = (76, 209, 55) if alpr_active else (149, 175, 192)
+                        (tw, th), _ = cv2.getTextSize(badge_txt, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
+                        cv2.rectangle(stream_frame, (15, 15), (25 + tw, 35 + th), (20, 20, 28), -1)
+                        cv2.rectangle(stream_frame, (15, 15), (25 + tw, 35 + th), badge_col, 1, cv2.LINE_AA)
+                        cv2.putText(stream_frame, badge_txt, (20, 20 + th), cv2.FONT_HERSHEY_SIMPLEX, 0.45, badge_col, 1, cv2.LINE_AA)
+                        _, enc_j = cv2.imencode(".jpg", stream_frame, [cv2.IMWRITE_JPEG_QUALITY, 42])
+                        if enc_j is not None:
+                            self.latest_jpeg = enc_j.tobytes()
 
                     if local_id % self._inference_every_n == 0:
                         t0 = time.perf_counter()
+                        badge_txt = "ALPR: ESCANEANDO" if alpr_active else "ALPR: STANDBY"
+                        badge_col = (76, 209, 55) if alpr_active else (149, 175, 192)
                         if not alpr_active:
-                            # Standby: saltar inferencia
+                            # Standby: saltar inferencia y no re-dibujar frame completo
                             results = []
                             self.last_inference_ms = 0.0
-                            display = frame.copy()
-                            # Dibujar ROI en standby en gris
-                            if self.roi_enabled and self.roi_w > 0 and self.roi_h > 0:
-                                rx = max(0, int(self.roi_x * fw))
-                                ry = max(0, int(self.roi_y * fh))
-                                rw = max(1, int(self.roi_w * fw))
-                                rh = max(1, int(self.roi_h * fh))
-                                cv2.rectangle(display, (rx, ry), (rx + rw, ry + rh), (149, 175, 192), 1)
+                            display = None
                         else:
                             # ROI crop o completo
-                            fh, fw = frame.shape[:2]
                             roi_offset_x = 0
                             roi_offset_y = 0
+                            engine = self._ensure_alpr()
                             if self.roi_enabled and self.roi_w > 0 and self.roi_h > 0:
                                 rx = max(0, int(self.roi_x * fw))
                                 ry = max(0, int(self.roi_y * fh))
                                 rw = max(1, int(self.roi_w * fw))
                                 rh = max(1, int(self.roi_h * fh))
                                 roi_crop = frame[ry:ry + rh, rx:rx + rw]
-                                results = self.alpr.predict(roi_crop)
+                                results = engine.predict(roi_crop)
                                 roi_offset_x = rx
                                 roi_offset_y = ry
                             else:
-                                results = self.alpr.predict(frame)
+                                results = engine.predict(frame)
                             self.last_inference_ms = round((time.perf_counter() - t0) * 1000, 2)
                             self.processed_frames += 1
                             display = frame.copy()
@@ -575,23 +617,21 @@ class ALPRService:
                                 self._confirmed_cooldown[plate] = time.time()
 
                         # Actualizar stream con frame anotado (con bounding boxes)
-                        disp_h2, disp_w2 = display.shape[:2]
-                        if disp_w2 > 960 and disp_h2 > 0:
-                            scale2 = 960 / disp_w2
-                            new_h2 = max(1, int(disp_h2 * scale2))
-                            display = cv2.resize(display, (960, new_h2))
+                        if display is not None:
+                            disp_h2, disp_w2 = display.shape[:2]
+                            if disp_w2 > 800 and disp_h2 > 0:
+                                scale2 = 800 / disp_w2
+                                new_h2 = max(1, int(disp_h2 * scale2))
+                                display = cv2.resize(display, (800, new_h2), interpolation=cv2.INTER_AREA)
 
-                        # --- Dibujar badge de ALPR en frame anotado ---
-                        overlay = display.copy()
-                        (tw, th), _ = cv2.getTextSize(badge_txt, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
-                        cv2.rectangle(overlay, (15, 15), (25 + tw, 35 + th), (20, 20, 28), -1)
-                        cv2.addWeighted(overlay, 0.75, display, 0.25, 0, display)
-                        cv2.rectangle(display, (15, 15), (25 + tw, 35 + th), badge_col, 1, cv2.LINE_AA)
-                        cv2.putText(display, badge_txt, (20, 20 + th), cv2.FONT_HERSHEY_SIMPLEX, 0.45, badge_col, 1, cv2.LINE_AA)
+                            (tw, th), _ = cv2.getTextSize(badge_txt, cv2.FONT_HERSHEY_SIMPLEX, 0.45, 1)
+                            cv2.rectangle(display, (15, 15), (25 + tw, 35 + th), (20, 20, 28), -1)
+                            cv2.rectangle(display, (15, 15), (25 + tw, 35 + th), badge_col, 1, cv2.LINE_AA)
+                            cv2.putText(display, badge_txt, (20, 20 + th), cv2.FONT_HERSHEY_SIMPLEX, 0.45, badge_col, 1, cv2.LINE_AA)
 
-                        _, enc_a = cv2.imencode(".jpg", display, [cv2.IMWRITE_JPEG_QUALITY, 50])
-                        if enc_a is not None:
-                            self.latest_jpeg = enc_a.tobytes()
+                            _, enc_a = cv2.imencode(".jpg", display, [cv2.IMWRITE_JPEG_QUALITY, 42])
+                            if enc_a is not None:
+                                self.latest_jpeg = enc_a.tobytes()
 
                     local_id += 1
             except Exception as exc:
@@ -606,12 +646,12 @@ class ALPRService:
 
     def _set_status_frame(self, message: str) -> None:
         """Genera un JPEG de estado para evitar pantalla negra en el stream."""
-        img = np.zeros((720, 1280, 3), dtype=np.uint8)
+        img = np.zeros((360, 640, 3), dtype=np.uint8)
         img[:] = (18, 20, 28)
-        cv2.putText(img, "AccesoSeguro", (40, 80), cv2.FONT_HERSHEY_SIMPLEX, 1.4, (110, 130, 255), 3, cv2.LINE_AA)
-        cv2.putText(img, message[:110], (40, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.82, (230, 230, 230), 2, cv2.LINE_AA)
-        cv2.putText(img, dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), (40, 690), cv2.FONT_HERSHEY_SIMPLEX, 0.75, (170, 170, 170), 1, cv2.LINE_AA)
-        ok, enc = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 85])
+        cv2.putText(img, "AccesoSeguro", (24, 48), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (110, 130, 255), 2, cv2.LINE_AA)
+        cv2.putText(img, message[:90], (24, 100), cv2.FONT_HERSHEY_SIMPLEX, 0.55, (230, 230, 230), 1, cv2.LINE_AA)
+        cv2.putText(img, dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S"), (24, 330), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (170, 170, 170), 1, cv2.LINE_AA)
+        ok, enc = cv2.imencode(".jpg", img, [cv2.IMWRITE_JPEG_QUALITY, 70])
         if ok and enc is not None:
             self.latest_jpeg = enc.tobytes()
 

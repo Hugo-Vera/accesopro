@@ -20,7 +20,8 @@ export default function LoginPage() {
         method: "POST",
         body: JSON.stringify({ email, password }),
       });
-      router.push("/dashboard");
+      const me = await api<{ user: { role: string } | null }>("/auth/me");
+      router.push(me.user?.role === "resident" ? "/portal" : "/dashboard");
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo entrar");
     } finally {
@@ -29,12 +30,12 @@ export default function LoginPage() {
   }
 
   return (
-    <main className="grid min-h-screen place-items-center px-4">
-      <div className="w-full max-w-[380px] rounded-[14px] border border-line bg-panel px-9 py-10 text-center shadow-card">
-        <div className="mx-auto mb-2 grid h-11 w-11 place-items-center rounded-full border border-accent/45 bg-accent/20 text-sm font-bold">
+    <main className="grid min-h-screen place-items-center bg-ink px-4">
+      <div className="w-full max-w-[380px] rounded-lg border border-line bg-panel px-9 py-10 text-center shadow-card">
+        <div className="mx-auto mb-2 grid h-11 w-11 place-items-center rounded-md border border-line bg-panel2 text-sm font-bold text-[#e6e6e6]">
           AP
         </div>
-        <h1 className="text-2xl font-bold">AccesoPro</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">AccesoPro</h1>
         <p className="mb-6 mt-1 text-muted">Control de acceso del barrio</p>
         <form onSubmit={onSubmit} className="space-y-4 text-left">
           <label className="block text-sm">

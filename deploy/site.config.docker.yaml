@@ -1,0 +1,54 @@
+# Config motor LAN para Docker — editar RTSP antes de levantar con --profile alpr
+
+barreras:
+  type_in: simulated
+  type_out: simulated
+  baudrate_in: 9600
+  baudrate_out: 9600
+  ip_in: ""
+  ip_out: ""
+  ip_port_in: 80
+  ip_port_out: 80
+  ip_protocol_in: tcp
+  ip_protocol_out: tcp
+  ip_cmd_open_in: ""
+  ip_cmd_close_in: ""
+  ip_cmd_open_out: ""
+  ip_cmd_close_out: ""
+  max_open_sec_in: 0
+  max_open_sec_out: 0
+  port_in: ""
+  port_out: ""
+
+db:
+  engine: postgresql
+  host: postgres
+  name: fastalpr
+  user: postgres
+  password: postgres
+  port: 5432
+
+modelo:
+  confianza_avg_ocr: 0.3
+  confianza_detector: 0.3
+  confianza_low_ocr: 0.15
+  ocr_device: cpu
+  resolucion_detector: 384
+
+sistema:
+  auth_mode: combinado
+  require_dni_qr: false
+  propietario_auth_visits: true
+  barrier_auto_open_in: true
+  barrier_auto_open_out: true
+  allow_exit_without_entry: false
+
+video:
+  frecuencia_inferencia: 3
+  fuente_in: ""
+  fuente_out: ""
+  hud_overlay_enabled: false
+  motion_detection_enabled: false
+
+video_salida:
+  fuente: ""

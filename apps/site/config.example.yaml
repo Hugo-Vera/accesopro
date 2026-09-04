@@ -51,31 +51,34 @@ sistema:
     - PY
     - CL
   qr_source_type_in: com
-  qr_source_type_out: camera
+  qr_source_type_out: disabled
   qr_com_port_in: COM5
   qr_com_port_out: ""
   qr_camera_source_in: ""
   qr_camera_source_out: ""
-  snapshot_enabled_in: true
-  snapshot_enabled_out: true
+  # Evidencia: desactivada hasta tener RTSP real (evita connects inutiles)
+  snapshot_enabled_in: false
+  snapshot_enabled_out: false
   snapshot_trigger_in: patente
   snapshot_trigger_out: patente
   snapshot_count_in: 1
   snapshot_count_out: 1
-  snapshot_camera_source_in: "rtsp://USER:PASS@192.168.33.23:554/cam/realmonitor?channel=2&subtype=0"
-  snapshot_camera_source_out: "rtsp://USER:PASS@192.168.33.23:554/cam/realmonitor?channel=15&subtype=0"
+  snapshot_camera_source_in: ""
+  snapshot_camera_source_out: ""
   vigilador_manual_trigger: true
   propietario_auth_visits: true
 
 video:
-  frecuencia_inferencia: 3
+  # Inferencia cada N frames (5 ~ buen equilibrio; 3 mas CPU; 8 mas ahorro)
+  frecuencia_inferencia: 5
   fuente_in: "rtsp://USER:PASS@192.168.33.200:554/cam/realmonitor?channel=1&subtype=0"
-  fuente_out: "rtsp://USER:PASS@192.168.33.23:554/cam/realmonitor?channel=1&subtype=0"
+  # Dejar vacio si no hay camara OUT (no arranca worker / no carga modelo)
+  fuente_out: ""
   hud_overlay_enabled: true
   hud_overlay_position: bottom-left
   motion_detection_enabled: true
-  motion_threshold: 0.005
-  motion_cooldown_sec: 3.0
+  motion_threshold: 0.008
+  motion_cooldown_sec: 2.5
   roi_enabled: true
   roi_x: 0.443
   roi_y: 0.631
@@ -83,12 +86,12 @@ video:
   roi_h: 0.363
 
 video_salida:
-  fuente: "rtsp://USER:PASS@192.168.33.23:554/cam/realmonitor?channel=1&subtype=0"
+  fuente: ""
   hud_overlay_enabled: true
   hud_overlay_position: bottom-right
   motion_detection_enabled: true
-  motion_threshold: 0.005
-  motion_cooldown_sec: 3.0
+  motion_threshold: 0.008
+  motion_cooldown_sec: 2.5
   roi_enabled: true
   roi_x: 0.018
   roi_y: 0.496

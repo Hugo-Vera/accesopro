@@ -17,15 +17,21 @@ export async function enqueue(siteId: string, action: string, payload: unknown) 
   return id;
 }
 
-export async function waitCommand(id: string) {
-  for (let i = 0; i < 20; i++) {
+export async function waitCommand(id: string, attempts = 20) {
+  for (let i = 0; i < attempts; i++) {
     await sleep(400);
     const row = await db.select().from(commands).where(eq(commands.id, id)).get();
     if (!row || row.status === "pending") continue;
+    const result = row.result ? (JSON.parse(row.result) as unknown) : null;
+    const err =
+      row.status === "error" && result && typeof result === "object" && "error" in result
+        ? String((result as { error?: unknown }).error ?? "")
+        : undefined;
     return {
       ok: row.status === "done",
       status: row.status,
-      result: row.result ? (JSON.parse(row.result) as unknown) : null,
+      result,
+      error: err || undefined,
     };
   }
   return { ok: false, status: "timeout", error: "El agent no respondió a tiempo" };

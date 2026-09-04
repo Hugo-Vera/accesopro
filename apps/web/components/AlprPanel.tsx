@@ -2,8 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { api, withTenant } from "@/lib/api";
+import { useDash } from "@/components/DashboardProvider";
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8787";
+const API = (process.env.NEXT_PUBLIC_API_URL ?? "").replace(/\/$/, "");
 
 type Detection = {
   id: number;
@@ -23,6 +24,8 @@ type CamStatus = {
   running?: boolean;
   source?: string;
   detections_total?: number;
+  configured?: boolean;
+  cameraHost?: string;
 };
 
 type Live = {
@@ -36,6 +39,7 @@ type Live = {
 };
 
 export function AlprPanel({ tenantId }: { tenantId: string }) {
+  const { status } = useDash();
   const [live, setLive] = useState<Live | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<Detection | null>(null);
@@ -61,7 +65,13 @@ export function AlprPanel({ tenantId }: { tenantId: string }) {
     };
   }, [tenantId]);
 
-  const engineUrl = live?.engineUrl ?? "http://192.168.33.13:5051";
+  const engineUrl = live?.engineUrl ?? "http://127.0.0.1:5051";
+  const outOn = Boolean(live?.out?.configured || live?.out?.running || status.cameraOut?.configured);
+  const evidenceOn = Boolean(status.evidenceIn || status.evidenceOut);
+  const evidenceForOpen =
+    open &&
+    ((open.sentido === "out" && status.evidenceOut) || (open.sentido !== "out" && status.evidenceIn)) &&
+    Boolean(open.evidence);
 
   return (
     <section className="space-y-5">
@@ -69,13 +79,14 @@ export function AlprPanel({ tenantId }: { tenantId: string }) {
         <div className="flex flex-wrap gap-2 text-xs">
           <Badge ok={live?.engineOnline} label={live?.engineOnline ? "Motor en línea" : "Motor offline"} />
           <Badge ok={live?.in?.running} label={`Ingreso ${live?.in?.running ? "vivo" : "sin señal"}`} />
-          <Badge ok={live?.out?.running} label={`Salida ${live?.out?.running ? "viva" : "sin señal"}`} />
+          {outOn ? <Badge ok={live?.out?.running} label={`Salida ${live?.out?.running ? "viva" : "sin señal"}`} /> : null}
+          {evidenceOn ? <Badge ok label="Evidencia on" /> : null}
         </div>
         <a
           href={engineUrl}
           target="_blank"
           rel="noreferrer"
-          className="rounded-lg border border-line px-3 py-1.5 text-sm text-slate-300 hover:border-accent"
+          className="rounded-md border border-line px-3 py-1.5 text-sm text-muted hover:border-[#3a3a3a] hover:text-[#e6e6e6]"
         >
           Abrir AccesoSeguro
         </a>
@@ -83,75 +94,84 @@ export function AlprPanel({ tenantId }: { tenantId: string }) {
 
       {error ? <p className="text-sm text-danger">{error}</p> : null}
 
-      <div className="rounded-2xl border border-line bg-panel p-6">
-        <h2 className="text-sm font-medium text-slate-300">Últimas lecturas</h2>
+      <p className="text-[12px] text-muted">
+        Live del motor AccesoSeguro ({live?.in?.cameraHost || "LAN"}). Si ves «Entrada Libertad», es esa cámara RTSP, no
+        AccesoPro.
+      </p>
+      {live?.engineOnline && live?.in?.configured !== false ? (
+        <img
+          src={`${engineUrl}/video_feed/in`}
+          alt="Live ALPR ingreso"
+          className="aspect-video max-h-64 w-full rounded-md border border-line bg-black object-contain"
+        />
+      ) : null}
+
+      <div className="card p-5">
+        <h2 className="text-sm font-medium text-[#e6e6e6]">Últimas lecturas</h2>
         {!live?.detections.length ? (
-          <p className="mt-2 text-sm text-slate-500">
+          <p className="mt-2 text-sm text-muted">
             {live?.engineOnline ? "Todavía no hay detecciones." : "En espera del motor en :5051."}
           </p>
         ) : (
           <ul className="mt-3 grid gap-3 sm:grid-cols-2">
-            {live.detections.map((d) => (
-              <li key={d.id}>
-                <button
-                  type="button"
-                  className="flex w-full items-center gap-3 rounded-xl border border-line bg-ink p-2 text-left hover:border-accent"
-                  onClick={() => setOpen(d)}
-                >
-                  <SiteImage
-                    path={d.thumb}
-                    tenantId={tenantId}
-                    className="h-14 w-24 shrink-0 rounded-md object-cover bg-slate-800"
-                  />
-                  <span className="min-w-0">
-                    <span className="block font-mono text-sm">{d.patente || "—"}</span>
-                    <span className="block text-xs text-slate-500">
-                      {d.sentido === "out" ? "salida" : "ingreso"}
-                      {d.ocrConf != null ? ` · ${Math.round(d.ocrConf * 100)}%` : ""}
-                      {d.autorizado === true ? " · autorizado" : d.autorizado === false ? " · no autorizado" : ""}
+            {live.detections
+              .filter((d) => outOn || d.sentido !== "out")
+              .map((d) => (
+                <li key={d.id}>
+                  <button
+                    type="button"
+                    className="flex w-full items-center gap-3 rounded-md border border-line bg-ink p-2 text-left hover:border-[#3a3a3a]"
+                    onClick={() => setOpen(d)}
+                  >
+                    <SiteImage path={d.thumb} tenantId={tenantId} className="h-14 w-24 shrink-0 rounded-md bg-panel2 object-cover" />
+                    <span className="min-w-0">
+                      <span className="block font-mono text-sm">{d.patente || "—"}</span>
+                      <span className="block text-xs text-muted">
+                        {d.sentido === "out" ? "salida" : "ingreso"}
+                        {d.ocrConf != null ? ` · ${Math.round(d.ocrConf * 100)}%` : ""}
+                        {d.autorizado === true ? " · autorizado" : d.autorizado === false ? " · no autorizado" : ""}
+                      </span>
+                      <span className="block truncate text-xs text-muted">{formatWhen(d.fecha)}</span>
                     </span>
-                    <span className="block truncate text-xs text-slate-500">{formatWhen(d.fecha)}</span>
-                  </span>
-                </button>
-              </li>
-            ))}
+                  </button>
+                </li>
+              ))}
           </ul>
         )}
       </div>
 
       {open ? (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
-          onClick={() => setOpen(null)}
-        >
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4" onClick={() => setOpen(null)}>
           <div
-            className="max-h-[90vh] w-full max-w-4xl overflow-auto rounded-2xl border border-line bg-panel p-4"
+            className="max-h-[90vh] w-full max-w-4xl overflow-auto rounded-lg border border-line bg-panel p-4"
             onClick={(e) => e.stopPropagation()}
           >
             <div className="mb-3 flex items-center justify-between gap-3">
               <p className="font-mono text-lg">
                 {open.patente}{" "}
-                <span className="text-sm font-sans text-slate-400">
+                <span className="font-sans text-sm text-muted">
                   {open.sentido === "out" ? "salida" : "ingreso"} · {formatWhen(open.fecha)}
                 </span>
               </p>
-              <button className="text-slate-400" type="button" onClick={() => setOpen(null)}>
+              <button className="btn-ghost" type="button" onClick={() => setOpen(null)}>
                 Cerrar
               </button>
             </div>
-            <div className="grid gap-3 md:grid-cols-3">
+            <div className={`grid gap-3 ${evidenceForOpen ? "md:grid-cols-3" : "md:grid-cols-2"}`}>
               <figure>
-                <figcaption className="mb-1 text-xs text-slate-400">Patente</figcaption>
-                <SiteImage path={open.thumb} tenantId={tenantId} className="w-full rounded-lg bg-slate-800" />
+                <figcaption className="mb-1 text-xs text-muted">Patente</figcaption>
+                <SiteImage path={open.thumb} tenantId={tenantId} className="w-full rounded-md bg-ink" />
               </figure>
               <figure>
-                <figcaption className="mb-1 text-xs text-slate-400">Escena</figcaption>
-                <SiteImage path={open.scene} tenantId={tenantId} className="w-full rounded-lg bg-slate-800" />
+                <figcaption className="mb-1 text-xs text-muted">Escena</figcaption>
+                <SiteImage path={open.scene} tenantId={tenantId} className="w-full rounded-md bg-ink" />
               </figure>
-              <figure>
-                <figcaption className="mb-1 text-xs text-slate-400">Evidencia</figcaption>
-                <SiteImage path={open.evidence} tenantId={tenantId} className="w-full rounded-lg bg-slate-800" />
-              </figure>
+              {evidenceForOpen ? (
+                <figure>
+                  <figcaption className="mb-1 text-xs text-muted">Evidencia</figcaption>
+                  <SiteImage path={open.evidence} tenantId={tenantId} className="w-full rounded-md bg-ink" />
+                </figure>
+              ) : null}
             </div>
           </div>
         </div>
@@ -162,13 +182,7 @@ export function AlprPanel({ tenantId }: { tenantId: string }) {
 
 function Badge({ ok, label }: { ok?: boolean; label: string }) {
   return (
-    <span
-      className={`rounded-full border px-2 py-1 ${
-        ok ? "border-accent/40 text-accent" : "border-line text-slate-500"
-      }`}
-    >
-      {label}
-    </span>
+    <span className={`rounded-md border px-2 py-1 ${ok ? "border-ok/30 text-ok" : "border-line text-muted"}`}>{label}</span>
   );
 }
 

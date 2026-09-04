@@ -531,6 +531,8 @@ class AccessController:
         self, db: Session, acceso: Acceso, vehiculo: Vehiculo | None, persona: Persona | None, sentido: str, now: dt.datetime
     ) -> None:
         """Crea o cierra la estadia segun el sentido."""
+        if persona and persona.notas and "propietario" in persona.notas.lower():
+            return
         if sentido == "in":
             # Crear nueva estadia
             estadia = Estadia(

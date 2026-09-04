@@ -47,7 +47,7 @@ Postgres y Redis (opcionales, no hace falta para el demo):
 docker compose up -d
 ```
 
-Copiá `.env.example` a `.env` y ajustá `SITE_ENGINE_URL` si el motor no está en `192.168.33.13:5051`.
+Copiá `.env.example` a `.env`. Despliegue: [`docs/DEPLOY_SITE.md`](docs/DEPLOY_SITE.md) (FTP) · [`docs/DOCKER.md`](docs/DOCKER.md) (Docker).
 
 ## Sectores
 

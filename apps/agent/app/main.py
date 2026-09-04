@@ -7,10 +7,12 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 import httpx
-from fastapi import FastAPI
+from fastapi import FastAPI, Header, HTTPException, Query
+from fastapi.responses import Response, StreamingResponse
 
 from .alpr import AlprWorker
 from .dahua import DahuaClient
+from .live import iter_mjpeg
 
 API = os.environ.get("ACCESOPRO_API_URL", "http://localhost:8787").rstrip("/")
 TOKEN = os.environ.get("SITE_AGENT_TOKEN", "accesopro-demo-agent")
@@ -131,6 +133,74 @@ def _run_command(cmd: dict[str, Any]) -> dict[str, Any]:
         if not dev:
             return {"ok": False, "error": "Equipo no encontrado"}
         return _client(dev).probe()
+    if action == "dahua_door_status":
+        dev = _device(payload.get("deviceId"))
+        if not dev:
+            return {"ok": False, "error": "Equipo no encontrado"}
+        return _client(dev).door_status(int(payload.get("channel") or 1))
+    if action == "dahua_open":
+        dev = _device(payload.get("deviceId"))
+        if not dev:
+            return {"ok": False, "error": "Equipo no encontrado"}
+        text = _client(dev).open_door(int(payload.get("channel") or 1))
+        return {"ok": True, "response": text[:300]}
+    if action == "dahua_snapshot":
+        dev = _device(payload.get("deviceId"))
+        if not dev:
+            return {"ok": False, "error": "Equipo no encontrado"}
+        return _client(dev).snapshot(int(payload.get("channel") or 1))
+    if action == "dahua_person_list":
+        dev = _device(payload.get("deviceId"))
+        if not dev:
+            return {"ok": False, "error": "Equipo no encontrado"}
+        return _client(dev).list_persons(int(payload.get("count") or 200))
+    if action == "dahua_person_enroll":
+        dev = _device(payload.get("deviceId"))
+        if not dev:
+            return {"ok": False, "error": "Equipo no encontrado"}
+        client = _client(dev)
+        user_id = str(payload.get("userId") or "").strip()
+        name = str(payload.get("name") or "").strip() or user_id
+        card_no = str(payload.get("cardNo") or "").strip() or user_id
+        password = payload.get("password")
+        photo = payload.get("photoBase64")
+        if not user_id:
+            return {"ok": False, "error": "Falta userId"}
+        created = client.upsert_person(
+            user_id=user_id,
+            name=name,
+            card_no=card_no,
+            password=str(password) if password else None,
+        )
+        if not created.get("ok"):
+            return created
+        face = None
+        if photo:
+            face = client.add_face_photo(user_id, name, str(photo))
+            if not face.get("ok"):
+                return {
+                    "ok": False,
+                    "error": f"Usuario creado pero la cara falló: {face.get('error')}",
+                    "person": created,
+                    "face": face,
+                }
+        # QR de acceso = CardNo (el ASI lo lee si QR unlock está on)
+        return {
+            "ok": True,
+            "person": created,
+            "face": face,
+            "qrPayload": card_no,
+            "hint": "El QR contiene el CardNo. En el ASI debe estar habilitada la lectura de QR.",
+        }
+    if action == "dahua_person_delete":
+        dev = _device(payload.get("deviceId"))
+        if not dev:
+            return {"ok": False, "error": "Equipo no encontrado"}
+        return _client(dev).remove_person(
+            user_id=payload.get("userId"),
+            rec_no=payload.get("recNo"),
+            card_no=payload.get("cardNo"),
+        )
     return {"ok": False, "error": f"Acción desconocida: {action}"}
 
 
@@ -184,3 +254,83 @@ def health():
         "cameras": len(_config.get("cameras") or []),
         "dahua": len(_config.get("dahua") or []),
     }
+
+
+def _authorize(authorization: str | None, token: str | None) -> None:
+    expected = TOKEN
+    got = None
+    if authorization and authorization.lower().startswith("bearer "):
+        got = authorization.split(" ", 1)[1].strip()
+    elif token:
+        got = token.strip()
+    if not got or got != expected:
+        raise HTTPException(status_code=401, detail="Token inválido")
+
+
+@app.get("/dahua/{device_id}/snapshot")
+def dahua_snapshot(
+    device_id: str,
+    channel: int = 1,
+    authorization: str | None = Header(default=None),
+    token: str | None = Query(default=None),
+):
+    """JPEG directo del lector (para live de portería vía API)."""
+    _authorize(authorization, token)
+    if not _config.get("dahua"):
+        try:
+            _config.update(api_get("/agent/config"))
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=503, detail=f"Sin config: {exc}") from exc
+    dev = _device(device_id)
+    if not dev:
+        raise HTTPException(status_code=404, detail="Equipo no encontrado")
+    try:
+        raw, ctype = _client(dev).snapshot_jpeg(int(channel) or 1)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return Response(content=raw, media_type=ctype, headers={"Cache-Control": "no-store"})
+
+
+def _ensure_dahua_config() -> None:
+    if _config.get("dahua"):
+        return
+    try:
+        _config.update(api_get("/agent/config"))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=503, detail=f"Sin config: {exc}") from exc
+
+
+@app.get("/dahua/{device_id}/live")
+def dahua_live(
+    device_id: str,
+    channel: int = 1,
+    subtype: int = 1,
+    authorization: str | None = Header(default=None),
+    token: str | None = Query(default=None),
+):
+    """MJPEG fluido desde RTSP (subtype 1 = stream extra)."""
+    _authorize(authorization, token)
+    _ensure_dahua_config()
+    dev = _device(device_id)
+    if not dev:
+        raise HTTPException(status_code=404, detail="Equipo no encontrado")
+    sub = 0 if int(subtype) == 0 else 1
+    ch = int(channel) or 1
+
+    def gen():
+        try:
+            yield from iter_mjpeg(dev, channel=ch, subtype=sub)
+        except Exception as exc:  # noqa: BLE001
+            # Un frame JPEG de error no rompe el multipart; el cliente reintenta.
+            print(f"Live RTSP error: {exc}")
+
+    return StreamingResponse(
+        gen(),
+        media_type="multipart/x-mixed-replace; boundary=frame",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Connection": "close",
+            "X-Accel-Buffering": "no",
+        },
+    )

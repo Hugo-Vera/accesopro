@@ -1,18 +1,16 @@
 "use client";
 
-import { DahuaPanel } from "@/components/DahuaPanel";
-import { ModuleGate, PageHeader } from "@/components/PageHeader";
-import { useDash } from "@/components/DashboardProvider";
+import { EquipmentPanel } from "@/components/EquipmentPanel";
+import { FeatureGate, PageHeader } from "@/components/PageHeader";
 
 export default function DahuaPage() {
-  const { tenantId } = useDash();
   return (
-    <ModuleGate module="dahua_access">
+    <FeatureGate feature="dahua.devices" capability="access.dahua">
       <PageHeader
-        title="Acceso Dahua"
-        subtitle="Terminales faciales. El agent en la LAN habla CGI y pulsa el actuador con nombre."
+        title="Equipos"
+        subtitle="Agregar, editar y borrar. Probá conexión, estado, abrir y foto por separado."
       />
-      {tenantId ? <DahuaPanel tenantId={tenantId} /> : null}
-    </ModuleGate>
+      <EquipmentPanel />
+    </FeatureGate>
   );
 }
