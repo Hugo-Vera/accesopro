@@ -61,6 +61,13 @@ const SECTIONS: Section[] = [
         capability: "dahua.schedules",
       },
       {
+        href: "/dashboard/dahua/departamentos",
+        label: "Departamentos",
+        module: "dahua_access",
+        feature: "dahua.persons",
+        capability: "dahua.persons",
+      },
+      {
         href: "/dashboard/dahua/evidencia",
         label: "Evidencia",
         module: "dahua_access",
@@ -75,13 +82,16 @@ const SECTIONS: Section[] = [
         capability: "dahua.live",
       },
       { href: "/dashboard/actuadores", label: "Actuadores", module: "actuators", capability: "ops.relay" },
+      { href: "/dashboard/alpr", label: "Detecciones ALPR", module: "alpr", capability: "access.alpr" },
       { href: "/dashboard/visitas", label: "Visitas", module: "visitors", capability: "access.visitors.manage" },
+      { href: "/portal", label: "App Propietario (Portal)", module: "visitors" },
     ],
   },
   {
     title: "Administración",
     items: [
       { href: "/dashboard/propiedades", label: "Propiedades", module: "visitors", capability: "access.visitors.manage", adminOnly: true },
+      { href: "/dashboard/fichadas", label: "Fichadas", module: "attendance" },
       { href: "/dashboard/usuarios", label: "Usuarios y permisos", capability: "core.users.read", adminOnly: true },
       { href: "/dashboard/modulos", label: "Configuración", capability: "core.config", adminOnly: true },
       { href: "/dashboard/diagnostico", label: "Diagnóstico", capability: "ops.dashboard", adminOnly: true },
@@ -94,10 +104,12 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const { user, tenantName, isPlatform, isAdmin, status, logout, enabled, featureOn, can } = useDash();
 
   return (
-    <aside className="flex h-full w-[248px] shrink-0 flex-col border-r border-line bg-[var(--ap-ink)]">
-      <div className="border-b border-line px-5 pb-4 pt-6">
-        <p className="text-[1.35rem] font-semibold leading-none tracking-tight text-[var(--ap-accent-bright)]">AccesoPro</p>
-        <p className="mt-2 truncate text-[12px] text-muted">{tenantName ?? "Panel"}</p>
+    <aside className="flex h-full w-[248px] shrink-0 flex-col border-r border-slate-200 dark:border-line bg-white dark:bg-[var(--ap-ink)] transition-colors">
+      <div className="border-b border-slate-200 dark:border-line px-5 pb-4 pt-6">
+        <p className="text-[1.35rem] font-bold leading-none tracking-tight text-blue-600 dark:text-[var(--ap-accent-bright)]">
+          AccesoPro
+        </p>
+        <p className="mt-2 truncate text-[12px] text-slate-500 dark:text-muted">{tenantName ?? "Panel"}</p>
       </div>
 
       <nav className="flex flex-1 flex-col gap-5 overflow-auto px-3 py-4">
@@ -112,7 +124,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
           if (!items.length) return null;
           return (
             <div key={section.title}>
-              <p className="px-2 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-muted/80">
+              <p className="px-2 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400 dark:text-muted/80">
                 {section.title}
               </p>
               <div className="flex flex-col gap-0.5">
@@ -126,8 +138,8 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
                       onClick={onNavigate}
                       className={`rounded-md px-2.5 py-2 text-[13px] transition-colors ${
                         active
-                          ? "border-l-2 border-accent bg-accent/10 text-[var(--ap-text)]"
-                          : "border-l-2 border-transparent text-muted hover:bg-panel2/60 hover:text-[var(--ap-text-dim)]"
+                          ? "border-l-2 border-blue-600 bg-blue-50 text-blue-700 font-semibold dark:border-accent dark:bg-accent/10 dark:text-[var(--ap-text)]"
+                          : "border-l-2 border-transparent text-slate-600 hover:bg-slate-100 hover:text-slate-900 font-medium dark:text-muted dark:hover:bg-panel2/60 dark:hover:text-[var(--ap-text-dim)]"
                       }`}
                     >
                       {item.label}
@@ -140,15 +152,19 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
         })}
       </nav>
 
-      <div className="border-t border-line px-4 py-4">
-        <p className="text-[11px] text-muted">
+      <div className="border-t border-slate-200 dark:border-line px-4 py-4 bg-slate-50/50 dark:bg-transparent transition-colors">
+        <p className="text-[11px] text-slate-500 dark:text-muted">
           Dahua{" "}
-          <span className={status.agentOnline ? "text-ok" : "text-danger"}>
+          <span className={status.agentOnline ? "font-semibold text-emerald-600 dark:text-ok" : "font-semibold text-rose-600 dark:text-danger"}>
             {status.agentOnline ? "en línea" : "offline"}
           </span>
         </p>
-        <p className="mt-2 truncate text-[12px] text-[#d0d0d0]">{user?.name}</p>
-        <button type="button" className="btn-ghost mt-3 w-full" onClick={logout}>
+        <p className="mt-2 truncate text-[12px] font-medium text-slate-700 dark:text-[#d0d0d0]">{user?.name}</p>
+        <button
+          type="button"
+          className="mt-3 w-full rounded-md border border-slate-200 bg-white px-2.5 py-1 text-[13px] font-medium text-slate-600 hover:bg-slate-100 hover:text-slate-900 dark:border-line dark:bg-transparent dark:text-muted dark:hover:border-accent/40 dark:hover:bg-panel2 dark:hover:text-[#e8f1f6] transition-colors shadow-sm dark:shadow-none"
+          onClick={logout}
+        >
           Salir
         </button>
       </div>

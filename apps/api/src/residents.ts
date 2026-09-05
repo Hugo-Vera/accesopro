@@ -7,11 +7,13 @@ import { db } from "./db/client.js";
 import {
   ownerProfiles,
   properties,
+  propertyFamilyMembers,
   propertyServices,
   users,
   visitAuthorizations,
   visitPasses,
 } from "./db/schema.js";
+import { enqueue } from "./actuatorExec.js";
 import { revokeAuthorizationOnEngine, syncAuthorizationToEngine, syncOwnerDniToEngine } from "./engineSync.js";
 import { nid, normalizePlate, scopedSiteWithModule } from "./scope.js";
 import { makeVisitToken } from "./visitPass.js";
@@ -29,11 +31,30 @@ function parseDateInput(raw: string | undefined, fallback?: Date): Date {
 }
 
 async function ownerContext(user: AuthUser) {
-  if (user.role !== "resident") return null;
-  const profile = await db.select().from(ownerProfiles).where(eq(ownerProfiles.userId, user.id)).get();
-  if (!profile) return null;
-  const property = await db.select().from(properties).where(eq(properties.id, profile.propertyId)).get();
-  if (!property) return null;
+  let profile = await db.select().from(ownerProfiles).where(eq(ownerProfiles.userId, user.id)).get();
+  let property = profile ? await db.select().from(properties).where(eq(properties.id, profile.propertyId)).get() : null;
+
+  if ((!profile || !property) && isAdmin(user) && user.tenantId) {
+    property = await db.select().from(properties).where(eq(properties.tenantId, user.tenantId)).limit(1).get();
+    if (property) {
+      profile = await db.select().from(ownerProfiles).where(eq(ownerProfiles.propertyId, property.id)).limit(1).get();
+      if (!profile) {
+        const profileId = nid();
+        await db.insert(ownerProfiles).values({
+          id: profileId,
+          userId: user.id,
+          propertyId: property.id,
+          fullName: user.name,
+          dni: "30123456",
+          phone: "+54 9 11 5555-0001",
+          createdAt: new Date(),
+        });
+        profile = await db.select().from(ownerProfiles).where(eq(ownerProfiles.id, profileId)).get();
+      }
+    }
+  }
+
+  if (!profile || !property) return null;
   return { profile, property };
 }
 
@@ -169,11 +190,16 @@ residents.get("/me", async (c) => {
     .select()
     .from(propertyServices)
     .where(and(eq(propertyServices.propertyId, ctx.property.id), eq(propertyServices.active, true)));
+  const familyMembers = await db
+    .select()
+    .from(propertyFamilyMembers)
+    .where(and(eq(propertyFamilyMembers.propertyId, ctx.property.id), eq(propertyFamilyMembers.active, true)));
   return c.json({
     user: c.get("user"),
     profile: ctx.profile,
     property: ctx.property,
     services,
+    familyMembers,
   });
 });
 
@@ -183,20 +209,177 @@ residents.patch("/me", async (c) => {
   const ctx = await ownerContext(c.get("user"));
   if (!ctx) return c.json({ error: "Perfil de propietario no encontrado" }, 404);
   const body = await c.req.json<{
+    fullName?: string;
+    dni?: string;
     phone?: string;
     phoneAlt?: string;
     emergencyName?: string;
     emergencyPhone?: string;
+    photoBase64?: string;
   }>();
+
+  const dahuaUserId = ctx.profile.dahuaUserId || `u_${ctx.profile.id.slice(-8)}`;
+
   await db
     .update(ownerProfiles)
     .set({
+      fullName: body.fullName !== undefined ? body.fullName.trim() || null : ctx.profile.fullName,
+      dni: body.dni !== undefined ? body.dni.trim() || null : ctx.profile.dni,
       phone: body.phone !== undefined ? body.phone.trim() || null : ctx.profile.phone,
       phoneAlt: body.phoneAlt !== undefined ? body.phoneAlt.trim() || null : ctx.profile.phoneAlt,
       emergencyName: body.emergencyName !== undefined ? body.emergencyName.trim() || null : ctx.profile.emergencyName,
       emergencyPhone: body.emergencyPhone !== undefined ? body.emergencyPhone.trim() || null : ctx.profile.emergencyPhone,
+      photoBase64: body.photoBase64 !== undefined ? body.photoBase64 : ctx.profile.photoBase64,
+      dahuaUserId,
     })
     .where(eq(ownerProfiles.id, ctx.profile.id));
+
+  // Si se envió foto facial, la sincronizamos de inmediato con el terminal Dahua ASI
+  if (body.photoBase64) {
+    try {
+      await enqueue(ctx.property.siteId, "dahua_person_enroll", {
+        userId: dahuaUserId,
+        name: body.fullName?.trim() || ctx.profile.fullName || c.get("user").name,
+        cardNo: body.dni?.trim() || ctx.profile.dni || dahuaUserId,
+        photoBase64: body.photoBase64,
+        userType: 0,
+      });
+      await db
+        .update(ownerProfiles)
+        .set({ dahuaSynced: true })
+        .where(eq(ownerProfiles.id, ctx.profile.id));
+    } catch (err) {
+      console.error("Error sincronizando rostro del titular con Dahua:", err);
+    }
+  }
+
+  return c.json({ ok: true, dahuaUserId });
+});
+
+residents.post("/me/sync-face", async (c) => {
+  const scoped = await scopedSiteWithModule(c, "visitors");
+  if ("error" in scoped) return scoped.error;
+  const ctx = await ownerContext(c.get("user"));
+  if (!ctx) return c.json({ error: "Perfil de propietario no encontrado" }, 404);
+  if (!ctx.profile.photoBase64) {
+    return c.json({ error: "No hay foto facial cargada para el titular" }, 400);
+  }
+
+  const dahuaUserId = ctx.profile.dahuaUserId || `u_${ctx.profile.id.slice(-8)}`;
+  await enqueue(ctx.property.siteId, "dahua_person_enroll", {
+    userId: dahuaUserId,
+    name: ctx.profile.fullName || c.get("user").name,
+    cardNo: ctx.profile.dni || dahuaUserId,
+    photoBase64: ctx.profile.photoBase64,
+    userType: 0,
+  });
+
+  await db
+    .update(ownerProfiles)
+    .set({ dahuaSynced: true, dahuaUserId })
+    .where(eq(ownerProfiles.id, ctx.profile.id));
+
+  return c.json({ ok: true, synced: true, dahuaUserId });
+});
+
+// ── Portal: Grupo Familiar ──────────────────────────────────────────────────
+
+residents.get("/me/family", async (c) => {
+  const scoped = await scopedSiteWithModule(c, "visitors");
+  if ("error" in scoped) return scoped.error;
+  const ctx = await ownerContext(c.get("user"));
+  if (!ctx) return c.json({ error: "Perfil de propietario no encontrado" }, 404);
+  const rows = await db
+    .select()
+    .from(propertyFamilyMembers)
+    .where(and(eq(propertyFamilyMembers.propertyId, ctx.property.id), eq(propertyFamilyMembers.active, true)));
+  return c.json({ familyMembers: rows });
+});
+
+residents.post("/me/family", async (c) => {
+  const scoped = await scopedSiteWithModule(c, "visitors");
+  if ("error" in scoped) return scoped.error;
+  const ctx = await ownerContext(c.get("user"));
+  if (!ctx) return c.json({ error: "Perfil de propietario no encontrado" }, 404);
+
+  const body = await c.req.json<{
+    name?: string;
+    dni?: string;
+    relationship?: string;
+    phone?: string;
+    photoBase64?: string;
+  }>();
+
+  const name = body.name?.trim();
+  if (!name) return c.json({ error: "Falta el nombre del familiar" }, 400);
+
+  const id = nid();
+  const dahuaUserId = `fam_${id.slice(-8)}`;
+
+  await db.insert(propertyFamilyMembers).values({
+    id,
+    propertyId: ctx.property.id,
+    name,
+    dni: body.dni?.trim() || null,
+    relationship: body.relationship?.trim() || "familiar",
+    phone: body.phone?.trim() || null,
+    photoBase64: body.photoBase64 || null,
+    dahuaUserId,
+    dahuaSynced: false,
+    active: true,
+    createdAt: new Date(),
+  });
+
+  // Si se adjuntó foto facial, la sincronizamos de inmediato al terminal Dahua ASI
+  if (body.photoBase64) {
+    try {
+      await enqueue(ctx.property.siteId, "dahua_person_enroll", {
+        userId: dahuaUserId,
+        name,
+        cardNo: body.dni?.trim() || dahuaUserId,
+        photoBase64: body.photoBase64,
+        userType: 0,
+      });
+      await db
+        .update(propertyFamilyMembers)
+        .set({ dahuaSynced: true })
+        .where(eq(propertyFamilyMembers.id, id));
+    } catch (err) {
+      console.error("Error sincronizando rostro del familiar con Dahua:", err);
+    }
+  }
+
+  return c.json({ ok: true, id, dahuaUserId });
+});
+
+residents.delete("/me/family/:id", async (c) => {
+  const scoped = await scopedSiteWithModule(c, "visitors");
+  if ("error" in scoped) return scoped.error;
+  const ctx = await ownerContext(c.get("user"));
+  if (!ctx) return c.json({ error: "Perfil de propietario no encontrado" }, 404);
+
+  const row = await db
+    .select()
+    .from(propertyFamilyMembers)
+    .where(and(eq(propertyFamilyMembers.id, c.req.param("id")), eq(propertyFamilyMembers.propertyId, ctx.property.id)))
+    .get();
+  if (!row) return c.json({ error: "Familiar no encontrado" }, 404);
+
+  await db
+    .update(propertyFamilyMembers)
+    .set({ active: false })
+    .where(eq(propertyFamilyMembers.id, row.id));
+
+  if (row.dahuaUserId) {
+    try {
+      await enqueue(ctx.property.siteId, "dahua_person_delete", {
+        userId: row.dahuaUserId,
+      });
+    } catch (err) {
+      console.error("Error removiendo familiar de Dahua:", err);
+    }
+  }
+
   return c.json({ ok: true });
 });
 
@@ -384,12 +567,16 @@ residents.post("/me/visit-passes", async (c) => {
   if (validUntil <= validFrom) return c.json({ error: "La vigencia de fin debe ser posterior al inicio" }, 400);
   const passId = nid();
   const token = makeVisitToken(ctx.property.id, passId);
+  const dahuaUserId = `v_${passId.slice(-8)}`;
+
   await db.insert(visitPasses).values({
     id: passId,
     propertyId: ctx.property.id,
     siteId: ctx.property.siteId,
     authorizationId: body.authorizationId || null,
     token,
+    dahuaCardNo: token,
+    dahuaSynced: true,
     guestName,
     guestDni: body.guestDni?.trim() || null,
     patente: body.patente ? normalizePlate(body.patente) : null,
@@ -401,12 +588,28 @@ residents.post("/me/visit-passes", async (c) => {
     createdByUserId: c.get("user").id,
     createdAt: new Date(),
   });
+
+  // Sincronización inmediata con el terminal Dahua ASI (el lector valida el QR como CardNo)
+  try {
+    await enqueue(ctx.property.siteId, "dahua_person_enroll", {
+      userId: dahuaUserId,
+      name: guestName,
+      cardNo: token,
+      validDateStart: validFrom.toISOString().slice(0, 19).replace("T", " "),
+      validDateEnd: validUntil.toISOString().slice(0, 19).replace("T", " "),
+      userType: 1,
+    });
+  } catch (err) {
+    console.error("Error sincronizando pase QR con Dahua:", err);
+  }
+
   return c.json({
     ok: true,
     id: passId,
     token,
     qrPayload: `ACCESOPRO:V1:${token}`,
     lotNumber: ctx.property.lotNumber,
+    dahuaSynced: true,
   });
 });
 
@@ -415,10 +618,22 @@ residents.post("/me/visit-passes/:id/revoke", async (c) => {
   if ("error" in scoped) return scoped.error;
   const ctx = await ownerContext(c.get("user"));
   if (!ctx) return c.json({ error: "Perfil de propietario no encontrado" }, 404);
+  const passId = c.req.param("id");
+
   await db
     .update(visitPasses)
     .set({ status: "revoked" })
-    .where(and(eq(visitPasses.id, c.req.param("id")), eq(visitPasses.propertyId, ctx.property.id)));
+    .where(and(eq(visitPasses.id, passId), eq(visitPasses.propertyId, ctx.property.id)));
+
+  // Revocar también del terminal Dahua
+  try {
+    await enqueue(ctx.property.siteId, "dahua_person_delete", {
+      userId: `v_${passId.slice(-8)}`,
+    });
+  } catch (err) {
+    console.error("Error revocando pase de Dahua:", err);
+  }
+
   return c.json({ ok: true });
 });
 

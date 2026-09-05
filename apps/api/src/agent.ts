@@ -5,6 +5,7 @@ import { actuators, cameras, commands, dahuaDevices, events, plates, sites } fro
 import { nid, normalizePlate } from "./scope.js";
 import { fireActuator } from "./actuatorExec.js";
 import { matchesSentido, sentidoOf } from "./engineBridge.js";
+import { broadcastRealtimeEvent } from "./eventStream.js";
 
 type AgentEnv = { Variables: { siteId: string } };
 
@@ -108,8 +109,18 @@ agentRoutes.post("/events", async (c) => {
 
   if (body.type === "dahua_access") {
     const failed = String(payload.Status ?? payload.status ?? "1") === "0";
-    if (!failed && site) {
+    const method = String(payload.Method ?? payload.methodCode ?? payload.method ?? "");
+    const isRemoteUnlock = method === "4" || method === "remote";
+    const deviceId = String(payload.deviceId ?? "");
+
+    // Evitamos bucle infinito: si ya es una apertura remota (Method 4), no disparamos actuadores.
+    // Además, el terminal Dahua ya acciona su propio relé localmente al reconocer la cara;
+    // solo se disparan actuadores vinculados distintos (ej. barreras auxiliares de motor LAN u otros relés).
+    if (!failed && !isRemoteUnlock && site) {
       for (const a of acts.filter((x) => x.triggerDahua)) {
+        if (a.driver === "dahua" && a.dahuaDeviceId === deviceId) {
+          continue;
+        }
         await fireActuator(site, a.id, "open");
       }
     }
@@ -126,12 +137,25 @@ agentRoutes.post("/events", async (c) => {
     }
   }
 
+  const eventId = nid();
+  const eventDate = new Date();
+
   await db.insert(events).values({
-    id: nid(),
+    id: eventId,
     siteId,
     type: body.type,
     payload: JSON.stringify(payload),
-    createdAt: new Date(),
+    createdAt: eventDate,
+  });
+
+  // Emisión en tiempo real por SSE al frontend con 0ms de latencia
+  broadcastRealtimeEvent({
+    id: eventId,
+    siteId,
+    tenantId: site?.tenantId,
+    type: body.type,
+    payload,
+    createdAt: eventDate.getTime(),
   });
 
   return c.json({ ok: true, openActuatorId });

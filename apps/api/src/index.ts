@@ -22,6 +22,9 @@ import { properties, sites, tenantModules, tenants, users, visitPasses } from ".
 import { scanVisitPass, parseVisitQrPayload } from "./visitPass.js";
 import { hardware } from "./hardware.js";
 import { residents } from "./residents.js";
+import { attendanceApi } from "./attendance.js";
+import { visitorsApi } from "./visitors.js";
+import { eventStreamRoutes } from "./eventStream.js";
 import {
   assignPlanToTenant,
   getTenantPlan,
@@ -146,6 +149,8 @@ app.post("/api/visit-passes/scan", async (c) => {
   const result = await scanVisitPass(site, token, sentido);
   return c.json(result, result.ok ? 200 : 403);
 });
+
+app.route("/api", eventStreamRoutes);
 
 app.use("/api/*", requireAuth);
 
@@ -312,8 +317,11 @@ app.patch("/api/tenants/:id/features", async (c) => {
 });
 
 app.route("/api", hardware);
+app.route("/api/hardware", hardware);
 app.route("/api", usersApi);
 app.route("/api/residents", residents);
+app.route("/api", attendanceApi);
+app.route("/api", visitorsApi);
 app.route("/agent", agentRoutes);
 
 app.get("/api/dashboard", async (c) => {

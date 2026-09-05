@@ -63,7 +63,10 @@ export async function userFromToken(token: string | undefined): Promise<AuthUser
 }
 
 export async function requireAuth(c: Context, next: Next) {
-  const token = getCookie(c, COOKIE) ?? c.req.header("authorization")?.replace(/^Bearer\s+/i, "");
+  const token =
+    getCookie(c, COOKIE) ??
+    c.req.header("authorization")?.replace(/^Bearer\s+/i, "") ??
+    c.req.query("token");
   const user = await userFromToken(token);
   if (!user) return c.json({ error: "No autenticado" }, 401);
   c.set("user", user);

@@ -106,6 +106,13 @@ export async function ensureSchema() {
       created_at INTEGER NOT NULL
     )
   `);
+  await addColumn("dahua_devices", "device_type", "TEXT NOT NULL DEFAULT 'asi_facial'");
+  await addColumn("dahua_devices", "model", "TEXT");
+  await addColumn("dahua_devices", "serial_number", "TEXT");
+  await addColumn("dahua_devices", "location", "TEXT");
+  await addColumn("dahua_devices", "last_status", "TEXT NOT NULL DEFAULT 'unknown'");
+  await addColumn("dahua_devices", "last_seen_at", "INTEGER");
+  await addColumn("dahua_devices", "rtsp_url", "TEXT");
   await db.run(sql`
     CREATE TABLE IF NOT EXISTS actuators (
       id TEXT PRIMARY KEY,
@@ -251,4 +258,31 @@ export async function ensureSchema() {
       created_at INTEGER NOT NULL
     )
   `);
+  await addColumn("owner_profiles", "full_name", "TEXT");
+  await addColumn("owner_profiles", "photo_base64", "TEXT");
+  await addColumn("owner_profiles", "dahua_user_id", "TEXT");
+  await addColumn("owner_profiles", "dahua_synced", "INTEGER DEFAULT 0");
+
+  await db.run(sql`
+    CREATE TABLE IF NOT EXISTS property_family_members (
+      id TEXT PRIMARY KEY,
+      property_id TEXT NOT NULL REFERENCES properties(id),
+      name TEXT NOT NULL,
+      dni TEXT,
+      relationship TEXT NOT NULL DEFAULT 'familiar',
+      phone TEXT,
+      photo_base64 TEXT,
+      dahua_user_id TEXT,
+      dahua_synced INTEGER NOT NULL DEFAULT 0,
+      active INTEGER NOT NULL DEFAULT 1,
+      created_at INTEGER NOT NULL
+    )
+  `);
+
+  await addColumn("property_services", "photo_base64", "TEXT");
+  await addColumn("property_services", "dahua_user_id", "TEXT");
+  await addColumn("property_services", "dahua_synced", "INTEGER DEFAULT 0");
+
+  await addColumn("visit_passes", "dahua_synced", "INTEGER DEFAULT 0");
+  await addColumn("visit_passes", "dahua_card_no", "TEXT");
 }

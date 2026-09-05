@@ -88,39 +88,93 @@ def _open(actuator_id: str) -> dict[str, Any]:
     return {"ok": False, "error": f"Driver no soportado: {act['driver']}"}
 
 
+_device_backoffs: dict[str, float] = {}
+_device_initialized: set[str] = set()
+_last_person_access: dict[str, float] = {}
+_seen_records: set[str] = set()
+
+
 def _poll_dahua() -> None:
+    now = time.time()
     for dev in _config.get("dahua", []):
-        try:
-            records = _client(dev).access_records(20)
-        except Exception as exc:  # noqa: BLE001
-            print(f"Dahua {dev.get('name')}: {exc}")
+        if dev.get("deviceType") == "camera_ip":
             continue
-        primed = dev["id"] in _primed_dahua
+        dev_id = dev.get("id")
+        if not dev_id:
+            continue
+        if _device_backoffs.get(dev_id, 0) > now:
+            continue
+        try:
+            records = _client(dev).access_records(30)
+            if dev_id in _device_backoffs:
+                _device_backoffs.pop(dev_id, None)
+        except Exception as exc:  # noqa: BLE001
+            _device_backoffs[dev_id] = now + 40.0
+            print(f"Dahua {dev.get('name')} (pausado 40s): {exc}")
+            continue
+
+        if dev_id not in _device_initialized:
+            for rec in records:
+                stamp = rec.get("CreateTime") or rec.get("Time") or rec.get("UTC") or ""
+                rec_no = rec.get("RecNo") or rec.get("Index") or ""
+                _seen_records.add(f"{dev_id}:{rec_no}:{stamp}")
+            _device_initialized.add(dev_id)
+            continue
+
         for rec in records:
-            stamp = rec.get("CreateTime") or rec.get("Time") or ""
-            key = f"{dev['id']}:{stamp}:{rec.get('CardNo','')}:{rec.get('UserID','')}:{rec.get('Method','')}"
-            if key in _seen_records:
-                continue
-            _seen_records.add(key)
-            if len(_seen_records) > 400:
-                _seen_records.clear()
-            if not primed:
-                continue
-            try:
-                api_post(
-                    "/agent/events",
-                    {
-                        "type": "dahua_access",
-                        "payload": {
-                            "deviceId": dev["id"],
-                            "deviceName": dev.get("name"),
-                            **rec,
-                        },
-                    },
-                )
-            except Exception as exc:  # noqa: BLE001
-                print(f"Evento Dahua no enviado: {exc}")
-        _primed_dahua.add(dev["id"])
+            _dispatch_access_event(dev, rec)
+
+
+def _dispatch_access_event(dev: dict[str, Any], rec: dict[str, Any]) -> None:
+    now = time.time()
+    dev_id = dev.get("id") or ""
+    stamp = rec.get("CreateTime") or rec.get("Time") or rec.get("UTC") or str(int(now))
+    rec_no = rec.get("RecNo") or rec.get("Index") or ""
+    key = f"{dev_id}:{rec_no}:{stamp}"
+    if key in _seen_records:
+        return
+    _seen_records.add(key)
+    if len(_seen_records) > 3000:
+        _seen_records.clear()
+
+    status_code = str(rec.get("Status") or "0")
+    is_approved = status_code == "1"
+    method_code = str(rec.get("Method") or "")
+    method_name = "remote" if method_code in ("4", 4) else "facial" if method_code in ("15", 15) else "card" if method_code in ("1", 1) else "fingerprint" if method_code in ("2", 2) else "qr" if method_code in ("6", 6) else "password" if method_code in ("3", 3) else "other"
+    person_name = rec.get("CardName") or rec.get("UserID") or ("Apertura remota" if method_name == "remote" else ("Rostro no identificado" if not is_approved else "Usuario Facial"))
+
+    # Debounce de 3 segundos por persona para evitar spam
+    person_identifier = str(rec.get("UserID") or rec.get("CardNo") or rec.get("CardName") or "anon")
+    debounce_key = f"{dev_id}:{person_identifier}:{is_approved}"
+    last_event_time = _last_person_access.get(debounce_key, 0)
+    if abs(now - last_event_time) < 3.0:
+        return
+    _last_person_access[debounce_key] = now
+
+    try:
+        api_post(
+            "/agent/events",
+            {
+                "type": "dahua_access",
+                "payload": {
+                    "deviceId": dev_id,
+                    "deviceName": dev.get("name"),
+                    "method": method_name,
+                    "methodCode": method_code,
+                    "status": status_code,
+                    "approved": is_approved,
+                    "personName": person_name,
+                    "userId": rec.get("UserID") or "",
+                    "cardNo": rec.get("CardNo") or "",
+                    "recNo": rec_no,
+                    "rawTime": stamp,
+                    "snapshotUrl": rec.get("URL") or "",
+                    **rec,
+                },
+            },
+        )
+    except Exception as exc:  # noqa: BLE001
+        print(f"Evento Dahua no enviado: {exc}")
 
 
 def _run_command(cmd: dict[str, Any]) -> dict[str, Any]:
@@ -130,6 +184,8 @@ def _run_command(cmd: dict[str, Any]) -> dict[str, Any]:
         return _open(payload.get("actuatorId"))
     if action == "probe_dahua":
         dev = _device(payload.get("deviceId"))
+        if not dev and payload.get("host") and payload.get("username"):
+            dev = payload
         if not dev:
             return {"ok": False, "error": "Equipo no encontrado"}
         return _client(dev).probe()
@@ -171,6 +227,11 @@ def _run_command(cmd: dict[str, Any]) -> dict[str, Any]:
             name=name,
             card_no=card_no,
             password=str(password) if password else None,
+            valid_date_start=payload.get("validDateStart"),
+            valid_date_end=payload.get("validDateEnd"),
+            period_index=payload.get("periodIndex"),
+            user_type=int(payload.get("userType") or 0),
+            use_time=int(payload.get("useTime") or 0),
         )
         if not created.get("ok"):
             return created
@@ -201,17 +262,55 @@ def _run_command(cmd: dict[str, Any]) -> dict[str, Any]:
             rec_no=payload.get("recNo"),
             card_no=payload.get("cardNo"),
         )
+    if action == "dahua_qr_get_config":
+        dev = _device(payload.get("deviceId"))
+        if not dev:
+            return {"ok": False, "error": "Equipo no encontrado"}
+        return _client(dev).get_qr_config()
+    if action == "dahua_qr_set_config":
+        dev = _device(payload.get("deviceId"))
+        if not dev:
+            return {"ok": False, "error": "Equipo no encontrado"}
+        enable = bool(payload.get("transmissionEnable", True))
+        valid_time = int(payload.get("validTime") or 15)
+        return _client(dev).set_qr_config(enable, valid_time)
+    if action == "dahua_schedules_get":
+        dev = _device(payload.get("deviceId"))
+        if not dev:
+            return {"ok": False, "error": "Equipo no encontrado"}
+        count = int(payload.get("count") or 16)
+        return {"ok": True, "schedules": _client(dev).get_time_schedules(count)}
+    if action == "dahua_schedule_set":
+        dev = _device(payload.get("deviceId"))
+        if not dev:
+            return {"ok": False, "error": "Equipo no encontrado"}
+        idx = int(payload.get("index") or 0)
+        enable = bool(payload.get("enabled", True))
+        days = payload.get("days") or []
+        return _client(dev).set_time_schedule(idx, enable, days)
+    if action == "dahua_card_listen":
+        dev = _device(payload.get("deviceId"))
+        if not dev:
+            return {"ok": False, "error": "Equipo no encontrado"}
+        timeout = int(payload.get("timeout") or 15)
+        return _client(dev).listen_card(timeout)
+    if action == "dahua_clear_records":
+        dev = _device(payload.get("deviceId"))
+        if not dev:
+            return {"ok": False, "error": "Equipo no encontrado"}
+        res = _client(dev).clear_access_records()
+        _seen_records.clear()
+        _last_person_access.clear()
+        _device_last_times[dev["id"]] = int(time.time())
+        return res
     return {"ok": False, "error": f"Acción desconocida: {action}"}
 
 
-def loop() -> None:
-    dahua_tick = 0
+def _commands_worker() -> None:
     while not _stop.is_set():
         try:
-            api_post("/agent/heartbeat", {})
-            _config.update(api_get("/agent/config"))
-            alpr.sync(_config.get("cameras") or [])
-            cmds = api_get("/agent/commands").get("commands") or []
+            res = api_get("/agent/commands")
+            cmds = res.get("commands") or []
             for cmd in cmds:
                 try:
                     result = _run_command(cmd)
@@ -224,19 +323,63 @@ def loop() -> None:
                         f"/agent/commands/{cmd['id']}/result",
                         {"ok": False, "error": str(exc)},
                     )
-            dahua_tick += 1
-            if dahua_tick % 4 == 0:
-                _poll_dahua()
+        except Exception:  # noqa: BLE001
+            pass
+        time.sleep(0.35)
+
+
+def _heartbeat_worker() -> None:
+    while not _stop.is_set():
+        try:
+            api_post("/agent/heartbeat", {})
+            cfg = api_get("/agent/config")
+            if cfg:
+                _config.update(cfg)
+                alpr.sync(_config.get("cameras") or [])
         except Exception as exc:  # noqa: BLE001
-            print(f"Agent: {exc}")
-        time.sleep(1.2)
+            print(f"Heartbeat worker: {exc}")
+        time.sleep(3.5)
+
+
+def _dahua_stream_worker() -> None:
+    time.sleep(2.0)
+    while not _stop.is_set():
+        for dev in _config.get("dahua", []):
+            if dev.get("deviceType") == "camera_ip":
+                continue
+            try:
+                client = _client(dev)
+                for event in client.stream_events():
+                    if _stop.is_set():
+                        break
+                    if isinstance(event, dict):
+                        _dispatch_access_event(dev, event)
+            except Exception as exc:  # noqa: BLE001
+                pass
+        time.sleep(2.0)
+
+
+def _dahua_poller_worker() -> None:
+    time.sleep(1.0)
+    while not _stop.is_set():
+        try:
+            _poll_dahua()
+        except Exception as exc:  # noqa: BLE001
+            print(f"Poller worker: {exc}")
+        time.sleep(0.5)
 
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    t = threading.Thread(target=loop, daemon=True)
-    t.start()
-    print(f"AccesoPro agent -> {API}")
+    t_cmd = threading.Thread(target=_commands_worker, daemon=True, name="CommandsWorker")
+    t_hb = threading.Thread(target=_heartbeat_worker, daemon=True, name="HeartbeatWorker")
+    t_poll = threading.Thread(target=_dahua_poller_worker, daemon=True, name="PollerWorker")
+    t_stream = threading.Thread(target=_dahua_stream_worker, daemon=True, name="StreamWorker")
+    t_cmd.start()
+    t_hb.start()
+    t_poll.start()
+    t_stream.start()
+    print(f"AccesoPro agent multithreaded workers started -> {API}")
     yield
     _stop.set()
     alpr.stop()
@@ -291,6 +434,31 @@ def dahua_snapshot(
     return Response(content=raw, media_type=ctype, headers={"Cache-Control": "no-store"})
 
 
+@app.get("/dahua/{device_id}/record-snapshot")
+def dahua_record_snapshot(
+    device_id: str,
+    url: str = Query(..., description="Ruta de captura guardada en Dahua"),
+    authorization: str | None = Header(default=None),
+    token: str | None = Query(default=None),
+):
+    """Descarga de la captura exacta del evento de acceso desde el lector Dahua ASI."""
+    _authorize(authorization, token)
+    if not _config.get("dahua"):
+        try:
+            _config.update(api_get("/agent/config"))
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=503, detail=f"Sin config: {exc}") from exc
+    dev = _device(device_id)
+    if not dev:
+        raise HTTPException(status_code=404, detail="Equipo no encontrado")
+    try:
+        raw, ctype = _client(dev).get_record_snapshot(url)
+        return Response(content=raw, media_type=ctype, headers={"Cache-Control": "public, max-age=86400"})
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+
 def _ensure_dahua_config() -> None:
     if _config.get("dahua"):
         return
@@ -304,17 +472,20 @@ def _ensure_dahua_config() -> None:
 def dahua_live(
     device_id: str,
     channel: int = 1,
-    subtype: int = 1,
+    subtype: int = 2,
     authorization: str | None = Header(default=None),
     token: str | None = Query(default=None),
 ):
-    """MJPEG fluido desde RTSP (subtype 1 = stream extra)."""
+    """MJPEG fluido desde RTSP (subtype 2 = stream nativo vertical en lectores faciales ASI, con fallback a 1)."""
     _authorize(authorization, token)
     _ensure_dahua_config()
     dev = _device(device_id)
     if not dev:
         raise HTTPException(status_code=404, detail="Equipo no encontrado")
-    sub = 0 if int(subtype) == 0 else 1
+    try:
+        sub = int(subtype)
+    except (TypeError, ValueError):
+        sub = 2
     ch = int(channel) or 1
 
     def gen():
@@ -334,3 +505,84 @@ def dahua_live(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@app.get("/dahua/{device_id}/qr-config")
+def dahua_qr_config_get(
+    device_id: str,
+    authorization: str | None = Header(default=None),
+    token: str | None = Query(default=None),
+):
+    _authorize(authorization, token)
+    _ensure_dahua_config()
+    dev = _device(device_id)
+    if not dev:
+        raise HTTPException(status_code=404, detail="Equipo no encontrado")
+    return _client(dev).get_qr_config()
+
+
+@app.post("/dahua/{device_id}/qr-config")
+def dahua_qr_config_post(
+    device_id: str,
+    payload: dict[str, Any],
+    authorization: str | None = Header(default=None),
+    token: str | None = Query(default=None),
+):
+    _authorize(authorization, token)
+    _ensure_dahua_config()
+    dev = _device(device_id)
+    if not dev:
+        raise HTTPException(status_code=404, detail="Equipo no encontrado")
+    enable = bool(payload.get("transmissionEnable", True))
+    valid_time = int(payload.get("validTime") or 15)
+    return _client(dev).set_qr_config(enable, valid_time)
+
+
+@app.get("/dahua/{device_id}/schedules")
+def dahua_schedules_get(
+    device_id: str,
+    count: int = 16,
+    authorization: str | None = Header(default=None),
+    token: str | None = Query(default=None),
+):
+    _authorize(authorization, token)
+    _ensure_dahua_config()
+    dev = _device(device_id)
+    if not dev:
+        raise HTTPException(status_code=404, detail="Equipo no encontrado")
+    return {"ok": True, "schedules": _client(dev).get_time_schedules(count)}
+
+
+@app.post("/dahua/{device_id}/schedules")
+def dahua_schedules_post(
+    device_id: str,
+    payload: dict[str, Any],
+    authorization: str | None = Header(default=None),
+    token: str | None = Query(default=None),
+):
+    _authorize(authorization, token)
+    _ensure_dahua_config()
+    dev = _device(device_id)
+    if not dev:
+        raise HTTPException(status_code=404, detail="Equipo no encontrado")
+    idx = int(payload.get("index") or 0)
+    enable = bool(payload.get("enabled", True))
+    days = payload.get("days") or []
+    return _client(dev).set_time_schedule(idx, enable, days)
+
+
+@app.post("/dahua/{device_id}/listen-card")
+def dahua_listen_card(
+    device_id: str,
+    payload: dict[str, Any] | None = None,
+    authorization: str | None = Header(default=None),
+    token: str | None = Query(default=None),
+):
+    _authorize(authorization, token)
+    _ensure_dahua_config()
+    dev = _device(device_id)
+    if not dev:
+        raise HTTPException(status_code=404, detail="Equipo no encontrado")
+    timeout = int((payload or {}).get("timeout") or 15)
+    return _client(dev).listen_card(timeout)
+

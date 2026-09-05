@@ -113,6 +113,13 @@ export const dahuaDevices = sqliteTable("dahua_devices", {
     .notNull()
     .references(() => sites.id),
   name: text("name").notNull(),
+  deviceType: text("device_type").notNull().default("asi_facial"),
+  model: text("model"),
+  serialNumber: text("serial_number"),
+  location: text("location"),
+  lastStatus: text("last_status").notNull().default("unknown"),
+  lastSeenAt: integer("last_seen_at", { mode: "timestamp_ms" }),
+  rtspUrl: text("rtsp_url"),
   host: text("host").notNull(),
   port: integer("port").notNull().default(80),
   username: text("username").notNull(),
@@ -215,11 +222,32 @@ export const ownerProfiles = sqliteTable("owner_profiles", {
   propertyId: text("property_id")
     .notNull()
     .references(() => properties.id),
+  fullName: text("full_name"),
   dni: text("dni"),
   phone: text("phone"),
   phoneAlt: text("phone_alt"),
   emergencyName: text("emergency_name"),
   emergencyPhone: text("emergency_phone"),
+  photoBase64: text("photo_base64"),
+  dahuaUserId: text("dahua_user_id"),
+  dahuaSynced: integer("dahua_synced", { mode: "boolean" }).notNull().default(false),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+});
+
+/** Grupo familiar que reside en el lote/propiedad (con soporte de foto facial) */
+export const propertyFamilyMembers = sqliteTable("property_family_members", {
+  id: text("id").primaryKey(),
+  propertyId: text("property_id")
+    .notNull()
+    .references(() => properties.id),
+  name: text("name").notNull(),
+  dni: text("dni"),
+  relationship: text("relationship").notNull().default("familiar"),
+  phone: text("phone"),
+  photoBase64: text("photo_base64"),
+  dahuaUserId: text("dahua_user_id"),
+  dahuaSynced: integer("dahua_synced", { mode: "boolean" }).notNull().default(false),
+  active: integer("active", { mode: "boolean" }).notNull().default(true),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
 });
 
@@ -237,6 +265,9 @@ export const propertyServices = sqliteTable("property_services", {
   horaHasta: text("hora_hasta"),
   diasSemana: text("dias_semana"),
   notes: text("notes"),
+  photoBase64: text("photo_base64"),
+  dahuaUserId: text("dahua_user_id"),
+  dahuaSynced: integer("dahua_synced", { mode: "boolean" }).notNull().default(false),
   active: integer("active", { mode: "boolean" }).notNull().default(true),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
 });
@@ -284,6 +315,8 @@ export const visitPasses = sqliteTable("visit_passes", {
   horaDesde: text("hora_desde"),
   horaHasta: text("hora_hasta"),
   status: text("status").notNull().default("active"),
+  dahuaSynced: integer("dahua_synced", { mode: "boolean" }).notNull().default(false),
+  dahuaCardNo: text("dahua_card_no"),
   scannedInAt: integer("scanned_in_at", { mode: "timestamp_ms" }),
   scannedOutAt: integer("scanned_out_at", { mode: "timestamp_ms" }),
   createdByUserId: text("created_by_user_id")
@@ -291,3 +324,123 @@ export const visitPasses = sqliteTable("visit_passes", {
     .references(() => users.id),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
 });
+
+export const departments = sqliteTable("departments", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id")
+    .notNull()
+    .references(() => tenants.id),
+  siteId: text("site_id")
+    .notNull()
+    .references(() => sites.id),
+  dahuaDeptId: text("dahua_dept_id").notNull().default("1"),
+  name: text("name").notNull(),
+  defaultPeriodIndex: integer("default_period_index").notNull().default(255),
+  description: text("description"),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+});
+
+/** Identidad filiatoria DNI Argentino (normalizada e independiente) */
+export const visitorIdentities = sqliteTable("visitor_identities", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id")
+    .notNull()
+    .references(() => tenants.id),
+  dniNumber: text("dni_number").notNull(),
+  tramiteNumber: text("tramite_number"),
+  lastName: text("last_name").notNull(),
+  firstName: text("first_name").notNull(),
+  gender: text("gender"),
+  birthDate: text("birth_date"),
+  issueDate: text("issue_date"),
+  address: text("address"),
+  rawPdf417: text("raw_pdf417"),
+  phone: text("phone"),
+  blacklisted: integer("blacklisted", { mode: "boolean" }).notNull().default(false),
+  blacklistReason: text("blacklist_reason"),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+});
+
+/** Parque automotor identificado por patente única */
+export const vehicles = sqliteTable("vehicles", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id")
+    .notNull()
+    .references(() => tenants.id),
+  plate: text("plate").notNull(),
+  brand: text("brand"),
+  model: text("model"),
+  color: text("color"),
+  vehicleType: text("vehicle_type").notNull().default("car"),
+  notes: text("notes"),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+});
+
+/** Pólizas y vigencias de seguro automotor en Argentina (Ley 24.449 / SSN) */
+export const vehicleInsurances = sqliteTable("vehicle_insurances", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id")
+    .notNull()
+    .references(() => tenants.id),
+  vehicleId: text("vehicle_id")
+    .notNull()
+    .references(() => vehicles.id),
+  company: text("company").notNull(),
+  policyNumber: text("policy_number").notNull(),
+  validFrom: integer("valid_from", { mode: "timestamp_ms" }),
+  validUntil: integer("valid_until", { mode: "timestamp_ms" }).notNull(),
+  coverageType: text("coverage_type").notNull().default("responsabilidad_civil"),
+  cardPhotoUrl: text("card_photo_url"),
+  verifiedBy: text("verified_by"),
+  status: text("status").notNull().default("active"),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+});
+
+/** Licencias nacionales de conducir asociadas a la persona */
+export const driverLicenses = sqliteTable("driver_licenses", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id")
+    .notNull()
+    .references(() => tenants.id),
+  personId: text("person_id")
+    .notNull()
+    .references(() => visitorIdentities.id),
+  licenseNumber: text("license_number").notNull(),
+  classes: text("classes").notNull().default("B.1"),
+  jurisdiction: text("jurisdiction"),
+  validUntil: integer("valid_until", { mode: "timestamp_ms" }).notNull(),
+  photoUrl: text("photo_url"),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+});
+
+/** Registro transaccional de visita que cablea y vincula todas las entidades */
+export const visitRecords = sqliteTable("visit_records", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id")
+    .notNull()
+    .references(() => tenants.id),
+  siteId: text("site_id")
+    .notNull()
+    .references(() => sites.id),
+  propertyId: text("property_id")
+    .notNull()
+    .references(() => properties.id),
+  personId: text("person_id")
+    .notNull()
+    .references(() => visitorIdentities.id),
+  vehicleId: text("vehicle_id").references(() => vehicles.id),
+  insuranceId: text("insurance_id").references(() => vehicleInsurances.id),
+  licenseId: text("license_id").references(() => driverLicenses.id),
+  visitType: text("visit_type").notNull().default("social"),
+  status: text("status").notNull().default("in_site"),
+  authorizedBy: text("authorized_by").notNull(),
+  passToken: text("pass_token"),
+  scannedInAt: integer("scanned_in_at", { mode: "timestamp_ms" }),
+  scannedOutAt: integer("scanned_out_at", { mode: "timestamp_ms" }),
+  notes: text("notes"),
+  createdByUserId: text("created_by_user_id").references(() => users.id),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+});
+
+

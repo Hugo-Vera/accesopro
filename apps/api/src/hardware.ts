@@ -3,7 +3,7 @@ import { Hono } from "hono";
 import type { AuthUser } from "./auth.js";
 import { requireAuth } from "./auth.js";
 import { db } from "./db/client.js";
-import { actuators, cameras, commands, dahuaDevices, events, plates } from "./db/schema.js";
+import { actuators, cameras, commands, dahuaDevices, departments, events, plates } from "./db/schema.js";
 import { enqueue, fireActuator, waitCommand } from "./actuatorExec.js";
 import { processEngineAccessEvents } from "./engineBridge.js";
 import { agentOnline, nid, normalizePlate, scopedSite, scopedSiteWithModule } from "./scope.js";
@@ -264,6 +264,11 @@ hardware.post("/dahua", async (c) => {
     password?: string;
     actuatorName?: string;
     kind?: string;
+    deviceType?: string;
+    model?: string;
+    serialNumber?: string;
+    location?: string;
+    rtspUrl?: string;
   }>();
   if (!body.name || !body.host || !body.username || !body.password) {
     return c.json({ error: "Faltan nombre, IP, usuario o clave" }, 400);
@@ -274,26 +279,55 @@ hardware.post("/dahua", async (c) => {
     id: deviceId,
     siteId: scoped.site.id,
     name: body.name.trim(),
+    deviceType: body.deviceType || "asi_facial",
+    model: body.model?.trim() || null,
+    serialNumber: body.serialNumber?.trim() || null,
+    location: body.location?.trim() || null,
+    rtspUrl: body.rtspUrl?.trim() || null,
+    lastStatus: "unknown",
     host: body.host.trim(),
     port: body.port ?? 80,
     username: body.username.trim(),
     password: body.password,
     createdAt: now,
   });
-  const actuatorId = nid();
-  await db.insert(actuators).values({
-    id: actuatorId,
-    siteId: scoped.site.id,
-    name: (body.actuatorName ?? body.name).trim(),
-    kind: body.kind ?? "door",
-    driver: "dahua",
-    dahuaDeviceId: deviceId,
-    dahuaChannel: 1,
-    pulseMs: 1000,
-    triggerDahua: true,
-    triggerManual: true,
-    createdAt: now,
-  });
+  let actuatorId: string | null = null;
+  if (body.deviceType !== "camera_ip" || body.actuatorName?.trim()) {
+    actuatorId = nid();
+    await db.insert(actuators).values({
+      id: actuatorId,
+      siteId: scoped.site.id,
+      name: (body.actuatorName || body.name).trim(),
+      kind: body.kind ?? "door",
+      driver: "dahua",
+      dahuaDeviceId: deviceId,
+      dahuaChannel: 1,
+      pulseMs: 1000,
+      triggerDahua: true,
+      triggerManual: true,
+      createdAt: now,
+    });
+  }
+
+  if (body.deviceType === "camera_ip" && body.rtspUrl?.trim()) {
+    await db.insert(cameras).values({
+      id: `cam_${deviceId}`,
+      siteId: scoped.site.id,
+      name: body.name.trim(),
+      rtspUrl: body.rtspUrl.trim(),
+      actuatorId: actuatorId || null,
+      enabled: true,
+      createdAt: now,
+    }).onConflictDoUpdate({
+      target: cameras.id,
+      set: {
+        name: body.name.trim(),
+        rtspUrl: body.rtspUrl.trim(),
+        actuatorId: actuatorId || null,
+      },
+    });
+  }
+
   await enqueue(scoped.site.id, "probe_dahua", { deviceId });
   return c.json({ ok: true, id: deviceId, actuatorId });
 });
@@ -319,14 +353,25 @@ hardware.patch("/dahua/:id", async (c) => {
     password?: string;
     actuatorName?: string;
     kind?: string;
+    deviceType?: string;
+    model?: string;
+    serialNumber?: string;
+    location?: string;
+    rtspUrl?: string;
   }>();
-  const next = {
+  const next: Record<string, unknown> = {
     name: body.name?.trim() || row.name,
     host: body.host?.trim() || row.host,
     port: body.port ?? row.port,
     username: body.username?.trim() || row.username,
     password: body.password?.trim() ? body.password : row.password,
   };
+  if (body.deviceType !== undefined) next.deviceType = body.deviceType;
+  if (body.model !== undefined) next.model = body.model?.trim() || null;
+  if (body.serialNumber !== undefined) next.serialNumber = body.serialNumber?.trim() || null;
+  if (body.location !== undefined) next.location = body.location?.trim() || null;
+  if (body.rtspUrl !== undefined) next.rtspUrl = body.rtspUrl?.trim() || null;
+
   await db.update(dahuaDevices).set(next).where(eq(dahuaDevices.id, id));
   if (body.actuatorName?.trim() || body.kind) {
     const act = await db.select().from(actuators).where(eq(actuators.dahuaDeviceId, id)).get();
@@ -340,6 +385,26 @@ hardware.patch("/dahua/:id", async (c) => {
         .where(eq(actuators.id, act.id));
     }
   }
+
+  // Si es cámara, sincronizar cameras
+  const isCam = (body.deviceType ?? row.deviceType) === "camera_ip";
+  if (isCam && body.rtspUrl?.trim()) {
+    await db.insert(cameras).values({
+      id: `cam_${id}`,
+      siteId: scoped.site.id,
+      name: (body.name || row.name).trim(),
+      rtspUrl: body.rtspUrl.trim(),
+      enabled: true,
+      createdAt: new Date(),
+    }).onConflictDoUpdate({
+      target: cameras.id,
+      set: {
+        name: (body.name || row.name).trim(),
+        rtspUrl: body.rtspUrl.trim(),
+      },
+    });
+  }
+
   return c.json({ ok: true, id });
 });
 
@@ -350,8 +415,36 @@ hardware.delete("/dahua/:id", async (c) => {
   if ("error" in scoped) return scoped.error;
   const id = c.req.param("id");
   await db.delete(actuators).where(eq(actuators.dahuaDeviceId, id));
+  await db.delete(cameras).where(eq(cameras.id, `cam_${id}`));
   await db.delete(dahuaDevices).where(and(eq(dahuaDevices.id, id), eq(dahuaDevices.siteId, scoped.site.id)));
   return c.json({ ok: true });
+});
+
+hardware.post("/dahua/probe-transient", async (c) => {
+  const denied = await denyUnlessCapability(c.get("user"), "core.config");
+  if (denied) return denied;
+  const scoped = await scopedSiteWithModule(c, "dahua_access");
+  if ("error" in scoped) return scoped.error;
+  if (!agentOnline(scoped.site.lastSeenAt)) {
+    return c.json({ error: "El agent del sitio no está en línea. Arrancalo en la LAN." }, 503);
+  }
+  const body = await c.req.json<{
+    host?: string;
+    port?: number;
+    username?: string;
+    password?: string;
+  }>();
+  if (!body.host || !body.username || !body.password) {
+    return c.json({ error: "Completá IP, usuario y clave para probar conexión" }, 400);
+  }
+  const cmd = await enqueue(scoped.site.id, "probe_dahua", {
+    host: body.host.trim(),
+    port: Number(body.port) || 80,
+    username: body.username.trim(),
+    password: body.password,
+  });
+  const done = await waitCommand(cmd, 25);
+  return c.json(done);
 });
 
 hardware.post("/dahua/:id/probe", async (c) => {
@@ -360,9 +453,41 @@ hardware.post("/dahua/:id/probe", async (c) => {
   if (!agentOnline(scoped.site.lastSeenAt)) {
     return c.json({ error: "El agent del sitio no está en línea. Arrancalo en la LAN." }, 503);
   }
-  const cmd = await enqueue(scoped.site.id, "probe_dahua", { deviceId: c.req.param("id") });
-  const done = await waitCommand(cmd);
+  const id = c.req.param("id");
+  const cmd = await enqueue(scoped.site.id, "probe_dahua", { deviceId: id });
+  const done = await waitCommand(cmd, 25);
+  const isOk = Boolean(done.ok && (done.result as { ok?: boolean } | null)?.ok !== false);
+  const updateData: Record<string, unknown> = {
+    lastStatus: isOk ? "online" : "offline",
+    lastSeenAt: isOk ? new Date() : undefined,
+  };
+  const resObj = done.result as { deviceType?: string; serial?: string } | null;
+  if (isOk && resObj?.deviceType) updateData.model = resObj.deviceType;
+  if (isOk && resObj?.serial) updateData.serialNumber = resObj.serial;
+  await db.update(dahuaDevices).set(updateData).where(eq(dahuaDevices.id, id));
   return c.json(done);
+});
+
+hardware.post("/dahua/:id/check-online", async (c) => {
+  const scoped = await scopedSiteWithModule(c, "dahua_access");
+  if ("error" in scoped) return scoped.error;
+  const id = c.req.param("id");
+  if (!agentOnline(scoped.site.lastSeenAt)) {
+    await db.update(dahuaDevices).set({ lastStatus: "offline" }).where(eq(dahuaDevices.id, id));
+    return c.json({ ok: false, status: "offline", error: "Agent Dahua offline" });
+  }
+  const cmd = await enqueue(scoped.site.id, "probe_dahua", { deviceId: id });
+  const done = await waitCommand(cmd, 25);
+  const isOk = Boolean(done.ok && (done.result as { ok?: boolean } | null)?.ok !== false);
+  const updateData: Record<string, unknown> = {
+    lastStatus: isOk ? "online" : "offline",
+  };
+  if (isOk) updateData.lastSeenAt = new Date();
+  const resObj = done.result as { deviceType?: string; serial?: string } | null;
+  if (isOk && resObj?.deviceType) updateData.model = resObj.deviceType;
+  if (isOk && resObj?.serial) updateData.serialNumber = resObj.serial;
+  await db.update(dahuaDevices).set(updateData).where(eq(dahuaDevices.id, id));
+  return c.json({ ok: isOk, status: isOk ? "online" : "offline", result: done.result });
 });
 
 hardware.post("/dahua/:id/test", async (c) => {
@@ -370,7 +495,7 @@ hardware.post("/dahua/:id/test", async (c) => {
   if ("error" in scoped) return scoped.error;
   const id = c.req.param("id");
   if (!id) return c.json({ error: "Falta id" }, 400);
-  const body = await c.req.json<{ action?: string; channel?: number }>().catch(() => ({}));
+  const body = await c.req.json<{ action?: string; channel?: number }>().catch(() => ({} as { action?: string; channel?: number }));
   const action = body.action ?? "probe";
   if (action === "open") {
     const u = c.get("user");
@@ -400,6 +525,15 @@ hardware.post("/dahua/:id/test", async (c) => {
   if (!agentAction) return c.json({ error: "Acción de prueba desconocida" }, 400);
   const cmd = await enqueue(scoped.site.id, agentAction, { deviceId: id, channel });
   const done = await waitCommand(cmd, action === "snapshot" ? 40 : 25);
+  const isOk = Boolean(done.ok && (done.result as { ok?: boolean } | null)?.ok !== false);
+  const updateData: Record<string, unknown> = {
+    lastStatus: isOk ? "online" : "offline",
+  };
+  if (isOk) updateData.lastSeenAt = new Date();
+  const resObj = done.result as { deviceType?: string; serial?: string } | null;
+  if (isOk && resObj?.deviceType) updateData.model = resObj.deviceType;
+  if (isOk && resObj?.serial) updateData.serialNumber = resObj.serial;
+  await db.update(dahuaDevices).set(updateData).where(eq(dahuaDevices.id, id));
   return c.json(done);
 });
 
@@ -461,6 +595,36 @@ hardware.get("/dahua/:id/snapshot", async (c) => {
   });
 });
 
+hardware.get("/dahua/:id/record-snapshot", async (c) => {
+  const scoped = await scopedSiteWithModule(c, "dahua_access");
+  if ("error" in scoped) return scoped.error;
+  const id = c.req.param("id");
+  const url = c.req.query("url");
+  if (!id || !url) return c.json({ error: "Falta id o url" }, 400);
+
+  const agentBase = (process.env.SITE_AGENT_URL ?? "http://127.0.0.1:8790").replace(/\/$/, "");
+  const agentToken = process.env.SITE_AGENT_TOKEN ?? "accesopro-demo-agent";
+  try {
+    const res = await fetch(`${agentBase}/dahua/${id}/record-snapshot?url=${encodeURIComponent(url)}`, {
+      headers: { Authorization: `Bearer ${agentToken}` },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (res.ok) {
+      const buf = Buffer.from(await res.arrayBuffer());
+      return new Response(buf, {
+        status: 200,
+        headers: {
+          "Content-Type": res.headers.get("Content-Type") || "image/jpeg",
+          "Cache-Control": "public, max-age=86400",
+        },
+      });
+    }
+    return c.json({ error: "Captura no disponible" }, res.status as any);
+  } catch (err) {
+    return c.json({ error: err instanceof Error ? err.message : "Error al descargar captura" }, 502);
+  }
+});
+
 hardware.get("/dahua/:id/live", async (c) => {
   const denied = await denyUnlessCapability(c.get("user"), "dahua.live");
   if (denied) return denied;
@@ -482,7 +646,10 @@ hardware.get("/dahua/:id/live", async (c) => {
   if (!row) return c.json({ error: "Equipo no encontrado" }, 404);
 
   const channel = Number(c.req.query("channel")) || 1;
-  const subtype = c.req.query("subtype") === "0" ? 0 : 1;
+  const rawSubtype = c.req.query("subtype");
+  const subtype = rawSubtype !== undefined && !isNaN(Number(rawSubtype))
+    ? Number(rawSubtype)
+    : /facial|lector|asi|totem|pedestre/i.test(row.name) ? 2 : 2;
   const agentBase = (process.env.SITE_AGENT_URL ?? "http://127.0.0.1:8790").replace(/\/$/, "");
   const agentToken = process.env.SITE_AGENT_TOKEN ?? "accesopro-demo-agent";
   try {
@@ -563,19 +730,28 @@ hardware.post("/dahua/:id/persons", async (c) => {
     cardNo?: string;
     password?: string;
     photoBase64?: string;
+    validDateStart?: string;
+    validDateEnd?: string;
+    periodIndex?: number;
+    userType?: number;
+    useTime?: number;
   }>();
   const name = body.name?.trim();
   if (!name) return c.json({ error: "Falta el nombre" }, 400);
   const userId = (body.userId?.trim() || `u${Date.now().toString().slice(-8)}`).slice(0, 16);
   const cardNo = (body.cardNo?.trim() || userId).slice(0, 20);
-  if (!body.photoBase64) return c.json({ error: "Falta la foto de la cara (JPG)" }, 400);
   const cmd = await enqueue(scoped.site.id, "dahua_person_enroll", {
     deviceId: id,
     userId,
     name,
     cardNo,
     password: body.password?.trim() || undefined,
-    photoBase64: body.photoBase64,
+    photoBase64: body.photoBase64 || undefined,
+    validDateStart: body.validDateStart?.trim() || undefined,
+    validDateEnd: body.validDateEnd?.trim() || undefined,
+    periodIndex: body.periodIndex !== undefined ? Number(body.periodIndex) : 255,
+    userType: Number(body.userType || 0),
+    useTime: Number(body.useTime || 0),
   });
   const done = await waitCommand(cmd, 50);
   if (!done.ok) {
@@ -610,6 +786,123 @@ hardware.delete("/dahua/:id/persons/:userId", async (c) => {
   const done = await waitCommand(cmd, 30);
   if (!done.ok) return c.json({ error: done.error || "No se pudo borrar" }, 502);
   return c.json(done.result ?? { ok: true });
+});
+
+hardware.get("/dahua/:id/qr-config", async (c) => {
+  const scoped = await scopedSiteWithModule(c, "dahua_access");
+  if ("error" in scoped) return scoped.error;
+  const id = c.req.param("id");
+  const agentBase = (process.env.SITE_AGENT_URL ?? "http://127.0.0.1:8790").replace(/\/$/, "");
+  const agentToken = process.env.SITE_AGENT_TOKEN ?? "accesopro-demo-agent";
+  try {
+    const res = await fetch(`${agentBase}/dahua/${id}/qr-config`, {
+      headers: { Authorization: `Bearer ${agentToken}` },
+      signal: AbortSignal.timeout(6000),
+    });
+    if (res.ok) return c.json(await res.json());
+  } catch {}
+  const cmd = await enqueue(scoped.site.id, "dahua_qr_get_config", { deviceId: id });
+  const done = await waitCommand(cmd, 20);
+  if (!done.ok) return c.json({ error: done.error || "No se pudo consultar QR" }, 502);
+  return c.json(done.result);
+});
+
+hardware.post("/dahua/:id/qr-config", async (c) => {
+  const scoped = await scopedSiteWithModule(c, "dahua_access");
+  if ("error" in scoped) return scoped.error;
+  const id = c.req.param("id");
+  const body = await c.req.json<{ transmissionEnable?: boolean; validTime?: number }>();
+  const agentBase = (process.env.SITE_AGENT_URL ?? "http://127.0.0.1:8790").replace(/\/$/, "");
+  const agentToken = process.env.SITE_AGENT_TOKEN ?? "accesopro-demo-agent";
+  try {
+    const res = await fetch(`${agentBase}/dahua/${id}/qr-config`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${agentToken}` },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(8000),
+    });
+    if (res.ok) return c.json(await res.json());
+  } catch {}
+  const cmd = await enqueue(scoped.site.id, "dahua_qr_set_config", {
+    deviceId: id,
+    transmissionEnable: body.transmissionEnable,
+    validTime: body.validTime,
+  });
+  const done = await waitCommand(cmd, 25);
+  if (!done.ok) return c.json({ error: done.error || "No se pudo actualizar QR" }, 502);
+  return c.json(done.result);
+});
+
+hardware.get("/dahua/:id/schedules", async (c) => {
+  const scoped = await scopedSiteWithModule(c, "dahua_access");
+  if ("error" in scoped) return scoped.error;
+  const id = c.req.param("id");
+  const count = Number(c.req.query("count")) || 16;
+  const agentBase = (process.env.SITE_AGENT_URL ?? "http://127.0.0.1:8790").replace(/\/$/, "");
+  const agentToken = process.env.SITE_AGENT_TOKEN ?? "accesopro-demo-agent";
+  try {
+    const res = await fetch(`${agentBase}/dahua/${id}/schedules?count=${count}`, {
+      headers: { Authorization: `Bearer ${agentToken}` },
+      signal: AbortSignal.timeout(12000),
+    });
+    if (res.ok) return c.json(await res.json());
+  } catch {}
+  const cmd = await enqueue(scoped.site.id, "dahua_schedules_get", { deviceId: id, count });
+  const done = await waitCommand(cmd, 35);
+  if (!done.ok) return c.json({ error: done.error || "No se pudo consultar periodos" }, 502);
+  return c.json(done.result);
+});
+
+hardware.post("/dahua/:id/schedules", async (c) => {
+  const scoped = await scopedSiteWithModule(c, "dahua_access");
+  if ("error" in scoped) return scoped.error;
+  const id = c.req.param("id");
+  const body = await c.req.json<{ index: number; enabled?: boolean; days: string[][] }>();
+  const agentBase = (process.env.SITE_AGENT_URL ?? "http://127.0.0.1:8790").replace(/\/$/, "");
+  const agentToken = process.env.SITE_AGENT_TOKEN ?? "accesopro-demo-agent";
+  try {
+    const res = await fetch(`${agentBase}/dahua/${id}/schedules`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${agentToken}` },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(10000),
+    });
+    if (res.ok) return c.json(await res.json());
+  } catch {}
+  const cmd = await enqueue(scoped.site.id, "dahua_schedule_set", {
+    deviceId: id,
+    index: body.index,
+    enabled: body.enabled,
+    days: body.days,
+  });
+  const done = await waitCommand(cmd, 30);
+  if (!done.ok) return c.json({ error: done.error || "No se pudo guardar periodo" }, 502);
+  return c.json(done.result);
+});
+
+hardware.post("/dahua/:id/listen-card", async (c) => {
+  const scoped = await scopedSiteWithModule(c, "dahua_access");
+  if ("error" in scoped) return scoped.error;
+  const id = c.req.param("id");
+  const body = await c.req.json<{ timeout?: number }>().catch(() => ({ timeout: 15 }));
+  const agentBase = (process.env.SITE_AGENT_URL ?? "http://127.0.0.1:8790").replace(/\/$/, "");
+  const agentToken = process.env.SITE_AGENT_TOKEN ?? "accesopro-demo-agent";
+  try {
+    const res = await fetch(`${agentBase}/dahua/${id}/listen-card`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${agentToken}` },
+      body: JSON.stringify(body),
+      signal: AbortSignal.timeout(20000),
+    });
+    if (res.ok) return c.json(await res.json());
+  } catch {}
+  const cmd = await enqueue(scoped.site.id, "dahua_card_listen", {
+    deviceId: id,
+    timeout: body.timeout || 15,
+  });
+  const done = await waitCommand(cmd, 25);
+  if (!done.ok) return c.json({ error: done.error || "No se detectó tarjeta" }, 502);
+  return c.json(done.result);
 });
 
 hardware.post("/actuators/:id/open", async (c) => {
@@ -890,6 +1183,53 @@ hardware.get("/events", async (c) => {
   });
 });
 
+hardware.post("/events/clear", async (c) => {
+  const scoped = await scopedSite(c);
+  if ("error" in scoped) return scoped.error;
+  const user = c.get("user");
+  const denied = await denyUnlessCapability(user, "core.config");
+  if (denied) return denied;
+
+  const body = await c.req.json<{
+    clearLocal?: boolean;
+    clearDevice?: boolean;
+    type?: string;
+    deviceId?: string;
+  }>().catch(() => ({ clearLocal: true, clearDevice: false, type: undefined, deviceId: undefined }));
+
+  const clearLocal = body.clearLocal !== false;
+  const clearDevice = Boolean(body.clearDevice);
+  const typeFilter = body.type;
+
+  if (clearLocal) {
+    if (typeFilter) {
+      await db
+        .delete(events)
+        .where(and(eq(events.siteId, scoped.site.id), eq(events.type, typeFilter)));
+    } else {
+      await db.delete(events).where(eq(events.siteId, scoped.site.id));
+    }
+  }
+
+  let deviceResults: Record<string, unknown> = {};
+  if (clearDevice) {
+    const devs = await db
+      .select()
+      .from(dahuaDevices)
+      .where(eq(dahuaDevices.siteId, scoped.site.id));
+
+    for (const dev of devs) {
+      if (dev.deviceType === "camera_ip") continue;
+      if (body.deviceId && dev.id !== body.deviceId) continue;
+      const cmd = await enqueue(scoped.site.id, "dahua_clear_records", { deviceId: dev.id });
+      const done = await waitCommand(cmd, 15);
+      deviceResults[dev.name] = done.result ?? done;
+    }
+  }
+
+  return c.json({ ok: true, clearLocal, clearDevice, deviceResults });
+});
+
 type ActuatorInput = {
   name: string;
   kind: string;
@@ -952,3 +1292,51 @@ function safeJson(raw: string | null) {
     return raw;
   }
 }
+
+hardware.get("/departments", async (c) => {
+  const scoped = await scopedSite(c);
+  if ("error" in scoped) return scoped.error;
+  const rows = await db
+    .select()
+    .from(departments)
+    .where(and(eq(departments.tenantId, scoped.site.tenantId), eq(departments.siteId, scoped.site.id)));
+  return c.json({ ok: true, departments: rows });
+});
+
+hardware.post("/departments", async (c) => {
+  const scoped = await scopedSite(c);
+  if ("error" in scoped) return scoped.error;
+  const body = await c.req.json<{
+    name?: string;
+    dahuaDeptId?: string;
+    defaultPeriodIndex?: number;
+    description?: string;
+  }>();
+  const name = body.name?.trim();
+  if (!name) return c.json({ error: "Falta el nombre del departamento" }, 400);
+  const dahuaDeptId = body.dahuaDeptId?.trim() || "1";
+  const defaultPeriodIndex = body.defaultPeriodIndex !== undefined ? Number(body.defaultPeriodIndex) : 255;
+  const id = nid();
+  const row = {
+    id,
+    tenantId: scoped.site.tenantId,
+    siteId: scoped.site.id,
+    dahuaDeptId,
+    name,
+    defaultPeriodIndex,
+    description: body.description?.trim() || null,
+    createdAt: new Date(),
+  };
+  await db.insert(departments).values(row);
+  return c.json({ ok: true, department: row });
+});
+
+hardware.delete("/departments/:id", async (c) => {
+  const scoped = await scopedSite(c);
+  if ("error" in scoped) return scoped.error;
+  const id = c.req.param("id");
+  if (!id) return c.json({ error: "Falta id" }, 400);
+  await db.delete(departments).where(and(eq(departments.id, id), eq(departments.siteId, scoped.site.id)));
+  return c.json({ ok: true });
+});
+
