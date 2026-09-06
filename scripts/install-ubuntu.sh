@@ -12,6 +12,9 @@
 
 set -euo pipefail
 
+# Debe ir exportado: no se puede pasar "VAR=x cmd" a need_root_for (rompe como root).
+export DEBIAN_FRONTEND=noninteractive
+
 REPO_URL="${ACCESOPRO_REPO:-https://github.com/Hugo-Vera/accesopro.git}"
 BRANCH="${ACCESOPRO_BRANCH:-master}"
 INSTALL_DIR="${ACCESOPRO_DIR:-/opt/accesopro}"
@@ -54,8 +57,7 @@ detect_ip() {
 ensure_packages() {
   step "Paquetes base (git, curl, ca-certificates)"
   need_root_for apt-get update -qq
-  need_root_for DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-    ca-certificates curl git >/dev/null
+  need_root_for apt-get install -y -qq ca-certificates curl git >/dev/null
   ok "apt listo"
 }
 
@@ -64,8 +66,7 @@ ensure_docker() {
   if command -v docker >/dev/null 2>&1; then
     ok "Docker ya instalado: $(docker --version 2>/dev/null | head -1)"
   else
-    need_root_for DEBIAN_FRONTEND=noninteractive apt-get install -y -qq \
-      docker.io docker-compose-v2 >/dev/null
+    need_root_for apt-get install -y -qq docker.io docker-compose-v2 >/dev/null
     need_root_for systemctl enable --now docker
     ok "Docker instalado"
   fi
@@ -76,7 +77,7 @@ ensure_docker() {
   elif command -v docker-compose >/dev/null 2>&1; then
     warn "Usando docker-compose legacy"
   else
-    need_root_for DEBIAN_FRONTEND=noninteractive apt-get install -y -qq docker-compose-v2 >/dev/null || true
+    need_root_for apt-get install -y -qq docker-compose-v2 >/dev/null || true
     docker compose version >/dev/null 2>&1 || die "No se pudo instalar docker compose"
   fi
 
