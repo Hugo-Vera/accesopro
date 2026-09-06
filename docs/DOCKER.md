@@ -1,5 +1,15 @@
 # Docker / server — AccesoPro (producción)
 
+## Ubuntu: un solo comando
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Hugo-Vera/accesopro/master/scripts/install-ubuntu.sh | bash
+```
+
+Instala Docker si hace falta, clona en `/opt/accesopro`, genera `.env` y levanta `web` + `api` + `agent` (profile `dahua`).
+
+Variables: `ACCESOPRO_PROFILE=core|dahua|full`, `ACCESOPRO_DIR=...`, `ACCESOPRO_IP=...`.
+
 ## Qué es “real” vs “simulado”
 
 | Pieza | Simulado (lab) | Real (portería) |

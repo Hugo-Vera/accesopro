@@ -4,6 +4,26 @@ Acceso y seguridad para barrios cerrados (Argentina). Módulos tildables: relés
 
 Documentación: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) · [`docs/MODULES.md`](docs/MODULES.md)
 
+## Instalación en 1 comando (Ubuntu + Docker)
+
+Como N8N: un script clona, instala Docker si falta, crea `.env` y levanta producción.
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Hugo-Vera/accesopro/master/scripts/install-ubuntu.sh | bash
+```
+
+Opciones:
+
+```bash
+# Solo API + web (sin agent Dahua)
+curl -fsSL https://raw.githubusercontent.com/Hugo-Vera/accesopro/master/scripts/install-ubuntu.sh | ACCESOPRO_PROFILE=core bash
+
+# Forzar IP del dashboard
+curl -fsSL https://raw.githubusercontent.com/Hugo-Vera/accesopro/master/scripts/install-ubuntu.sh | ACCESOPRO_IP=192.168.1.50 bash
+```
+
+Queda en `/opt/accesopro`. Dashboard: `http://IP:3000`. Detalle: [`docs/DOCKER.md`](docs/DOCKER.md).
+
 ## Estructura del monorepo
 
 ```
