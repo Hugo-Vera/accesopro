@@ -24,6 +24,8 @@ import {
   Camera,
   ShieldAlert,
 } from "lucide-react";
+import { markSnapshotFailed, snapshotProxyUrl } from "@/components/ops/parseFacialEvent";
+import { useEscapeKey } from "@/hooks/useEscapeKey";
 
 type EventRow = {
   id: string;
@@ -50,6 +52,11 @@ export default function DahuaEventosPage() {
   // Modal Vista Previa de Captura
   const [selectedPhotoEvent, setSelectedPhotoEvent] = useState<EventRow | null>(null);
 
+  useEscapeKey(() => {
+    if (selectedPhotoEvent) setSelectedPhotoEvent(null);
+    else if (isClearModalOpen) setIsClearModalOpen(false);
+  }, !!selectedPhotoEvent || isClearModalOpen);
+
   const loadEvents = () => {
     if (!tenantId) return;
     setLoading(true);
@@ -64,17 +71,28 @@ export default function DahuaEventosPage() {
 
   useEffect(() => {
     loadEvents();
+    if (!tenantId) return;
 
     let es: EventSource | null = null;
     try {
-      es = new EventSource("/api/events/stream?type=dahua_access");
+      es = new EventSource(withTenant("/api/events/stream?type=dahua_access", tenantId), {
+        withCredentials: true,
+      });
       es.addEventListener("access_event", (event: MessageEvent) => {
         try {
           const ev = JSON.parse(event.data);
           if (!ev?.id) return;
           setEvents((prev) => {
             const filtered = prev.filter((x) => x.id !== ev.id);
-            return [{ id: ev.id, createdAt: ev.createdAt || Date.now(), payload: ev.payload || {} }, ...filtered];
+            return [
+              {
+                id: ev.id,
+                type: ev.type || "dahua_access",
+                createdAt: ev.createdAt || Date.now(),
+                payload: ev.payload || {},
+              },
+              ...filtered,
+            ];
           });
         } catch {}
       });
@@ -212,12 +230,11 @@ export default function DahuaEventosPage() {
   }
 
   function getSnapshotUrl(deviceId?: string, rawUrl?: string) {
-    if (!deviceId || !rawUrl) return null;
-    return `/api/dahua/${deviceId}/record-snapshot?url=${encodeURIComponent(rawUrl)}`;
+    return snapshotProxyUrl(deviceId || "", rawUrl);
   }
 
   return (
-    <FeatureGate feature="dahua.events" capability="dahua.events">
+    <FeatureGate feature="dahua.events" capability="dahua.events" orModule="dahua_access">
       <div className="space-y-6">
         <PageHeader
           title="Historial de Eventos Dahua"
@@ -393,7 +410,7 @@ export default function DahuaEventosPage() {
                                 alt={personName}
                                 className="h-full w-full object-cover"
                                 onError={(ev) => {
-                                  // Fallback si la imagen expiró
+                                  markSnapshotFailed(String(devId || ""), snapshotUrl);
                                   ev.currentTarget.style.display = "none";
                                 }}
                               />
@@ -518,6 +535,13 @@ export default function DahuaEventosPage() {
                     src={getSnapshotUrl(selectedPhotoEvent.payload.deviceId, selectedPhotoEvent.payload.snapshotUrl || selectedPhotoEvent.payload.URL)!}
                     alt="Captura de rostro"
                     className="h-full w-full object-contain"
+                    onError={(ev) => {
+                      markSnapshotFailed(
+                        String(selectedPhotoEvent.payload.deviceId || ""),
+                        String(selectedPhotoEvent.payload.snapshotUrl || selectedPhotoEvent.payload.URL || ""),
+                      );
+                      ev.currentTarget.style.display = "none";
+                    }}
                   />
                 ) : (
                   <div className="text-center text-slate-500 p-4">

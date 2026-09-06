@@ -235,24 +235,396 @@
   min-height: 0;
 }
 
+/* Toolbar menú + telemetría (legacy) */
+.ops-lanes-toolbar {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.4rem;
+  flex-shrink: 0;
+}
+
+.ops-lanes-footer {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.35rem;
+  flex-shrink: 0;
+  min-height: 0;
+}
+
+@media (min-width: 1100px) {
+  .ops-lanes-footer {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+  }
+}
+
+.ops-status-compact {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.45rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #fff;
+}
+
+.dark .ops-status-compact {
+  border-color: #1c3347;
+  background: #0b1824;
+}
+
+.ops-lanes-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.45rem;
+  min-height: 0;
+  flex: 1 1 0;
+}
+
+@media (min-width: 1100px) {
+  .ops-lanes-grid {
+    /* Izquierda ingreso | derecha (notif + historial + live) */
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr);
+  }
+}
+
+/* Centro → derecha: notificaciones | historial+live salida */
+.ops-center-right {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.45rem;
+  min-height: 0;
+  min-width: 0;
+}
+
+@media (min-width: 900px) {
+  .ops-center-right {
+    grid-template-columns: minmax(170px, 0.72fr) minmax(0, 1.4fr);
+  }
+}
+
+.ops-out-cols {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 0.4rem;
+}
+
+.dark .ops-out-cols {
+  border-color: #1c3347;
+  background: #0a1520;
+}
+
+.ops-out-cols-head {
+  flex-shrink: 0;
+}
+
+.ops-out-cols-main {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.35rem;
+  min-height: 0;
+  flex: 1 1 0;
+}
+
+@media (min-width: 720px) {
+  .ops-out-cols-main {
+    /* Historial salida | Live cámara */
+    grid-template-columns: minmax(120px, 0.85fr) minmax(150px, 1.15fr);
+  }
+}
+
+.ops-auth-rail {
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+}
+
+.ops-auth-tabs {
+  display: flex;
+  gap: 0.25rem;
+}
+
+.ops-auth-tab {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  border-radius: 6px;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  padding: 0.28rem 0.4rem;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.ops-auth-tab.active {
+  border-color: #93c5fd;
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+
+.dark .ops-auth-tab {
+  border-color: #1f374c;
+  background: #081624;
+  color: #7892a7;
+}
+
+.dark .ops-auth-tab.active {
+  border-color: #1e3a5f;
+  background: #0c1e30;
+  color: #93c5fd;
+}
+
+.ops-hist-time {
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
+
+.ops-feed--compact .ops-hist-time {
+  font-size: 10.5px;
+}
+
+.ops-scroll-hidden {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.ops-scroll-hidden::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+  display: none;
+}
+
+.ops-auth-card {
+  border-radius: 8px;
+  border: 1px solid #e2e8f0;
+  background: #fff;
+  padding: 0.45rem 0.5rem;
+}
+
+.dark .ops-auth-card {
+  border-color: #1f374c;
+  background: #081624;
+}
+
+.ops-auth-card--new {
+  border-color: #93c5fd;
+  background: #eff6ff;
+}
+
+.dark .ops-auth-card--new {
+  border-color: #1e3a5f;
+  background: #0c1e30;
+}
+
+.ops-auth-card--ok {
+  border-color: #a7f3d0;
+  background: #ecfdf5;
+}
+
+.dark .ops-auth-card--ok {
+  border-color: #14532d;
+  background: #052e1c;
+}
+
+.ops-auth-card--danger {
+  border-color: #fecaca;
+  background: #fff1f2;
+}
+
+.dark .ops-auth-card--danger {
+  border-color: #7f1d1d;
+  background: #2a0f14;
+}
+
+.ops-auth-pill {
+  font-size: 8.5px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border-radius: 999px;
+  padding: 0.1rem 0.4rem;
+}
+
+.ops-auth-pill--new {
+  background: #dbeafe;
+  color: #1d4ed8;
+}
+
+.ops-auth-pill--ok {
+  background: #d1fae5;
+  color: #047857;
+}
+
+.ops-auth-pill--danger {
+  background: #ffe4e6;
+  color: #be123c;
+}
+
+.ops-auth-pill--muted {
+  background: #e2e8f0;
+  color: #475569;
+}
+
+.dark .ops-auth-pill--new {
+  background: #122a44;
+  color: #93c5fd;
+}
+
+.dark .ops-auth-pill--ok {
+  background: #064e3b;
+  color: #6ee7b7;
+}
+
+.dark .ops-auth-pill--danger {
+  background: #4c0519;
+  color: #fda4af;
+}
+
+.dark .ops-auth-pill--muted {
+  background: #1e293b;
+  color: #94a3b8;
+}
+
+.ops-lane {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  background: #ffffff;
+  padding: 0.4rem;
+}
+
+.dark .ops-lane {
+  border-color: #1c3347;
+  background: #0a1520;
+}
+
+.ops-lane-head {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0 0.15rem;
+  flex-shrink: 0;
+}
+
+.ops-lane-badge {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 0.2rem 0.45rem;
+  border-radius: 4px;
+}
+
+.ops-lane-badge--in {
+  background: #e0f2fe;
+  color: #0369a1;
+}
+
+.ops-lane-badge--out {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.dark .ops-lane-badge--in {
+  background: #0c2a3a;
+  color: #7dd3fc;
+}
+
+.dark .ops-lane-badge--out {
+  background: #2a2210;
+  color: #fbbf24;
+}
+
+/* Live + historial en fila dentro del sentido */
+.ops-lane-main {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.35rem;
+  min-height: 0;
+  flex: 1 1 0;
+}
+
+@media (min-width: 720px) {
+  .ops-lane-main {
+    /* Live más ancho, historial más angosto (deja aire al rail central) */
+    grid-template-columns: minmax(150px, 1.25fr) minmax(110px, 0.7fr);
+  }
+}
+
+.ops-lane-cam {
+  min-height: 0;
+  height: 100%;
+  /* sin borde doble: el AccesoCam ya trae marco */
+  border: none;
+  box-shadow: none;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.ops-lane-feed {
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.ops-lane-feed > .ops-subpanel {
+  flex: 1;
+  min-height: 0;
+}
+
+.ops-menu--compact .ops-menu-grid {
+  grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+  gap: 0.3rem;
+  padding: 0.35rem;
+}
+
+.ops-menu--compact .ops-menu-tile {
+  aspect-ratio: auto;
+  min-height: 52px;
+  padding: 0.3rem 0.15rem;
+  gap: 0.2rem;
+}
+
+.ops-menu--compact .ops-menu-label {
+  font-size: 9px;
+  line-height: 1.15;
+}
+
+.ops-menu--compact .ops-menu-icon svg {
+  width: 1rem;
+  height: 1rem;
+}
+
 @media (min-width: 992px) {
   .ops-grid {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: 1.15fr 1fr;
     grid-template-rows: auto auto;
-  }
-  .ops-col:nth-child(3) {
-    grid-column: span 2;
   }
 }
 
 @media (min-width: 1366px) {
   .ops-grid {
-    grid-template-columns: minmax(320px, 1.2fr) minmax(420px, 1.6fr) minmax(260px, 300px);
+    grid-template-columns: minmax(520px, 1.45fr) minmax(400px, 1fr);
     grid-template-rows: 100%;
     min-height: 0;
-  }
-  .ops-col:nth-child(3) {
-    grid-column: span 1;
   }
   .ops-col {
     min-height: 0;
@@ -418,15 +790,34 @@
   flex-direction: column;
 }
 
-/* Contenedor del video con encuadre adaptable */
+/* Contenedor dual (legacy): prioriza alto del live */
+.ops-cam-dual {
+  width: 100%;
+  flex: 1.55 1 0;
+  min-height: 280px;
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.35rem;
+  overflow: hidden;
+}
+
+@media (min-width: 720px) {
+  .ops-cam-dual {
+    grid-template-columns: 1fr 1fr;
+    min-height: 320px;
+  }
+}
+
 .ops-cam-live-wrap {
   width: 100%;
-  min-height: 180px;
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
   border: 1px solid #e2e8f0;
   border-radius: 8px;
   background: #000000;
-  flex-shrink: 0;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
 }
 
@@ -434,6 +825,39 @@
   border: 1px solid #1c3347;
   background: #07121c;
   box-shadow: none;
+}
+
+.ops-cam-viewport {
+  width: 100%;
+  min-height: 180px;
+}
+
+/* Facial ASI: marco 272×480; en dual aprovecha casi todo el alto de la celda. */
+.ops-cam-viewport--facial {
+  padding: 0.15rem 0;
+}
+
+.ops-cam-frame-facial {
+  height: 100%;
+  width: auto;
+  max-width: 100%;
+  max-height: 100%;
+  aspect-ratio: 272 / 480;
+  object-fit: fill;
+  object-position: center center;
+  border-radius: 6px;
+  background: #000;
+}
+
+/* Cámara IP / VTO: ocupa el ancho disponible sin deformar. */
+.ops-cam-frame-wide {
+  width: 100%;
+  height: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  object-position: center;
+  border-radius: 6px;
+  background: #000;
 }
 
 .ops-relay-strip {

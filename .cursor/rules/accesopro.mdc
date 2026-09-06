@@ -3,10 +3,25 @@ description: AccesoPro — producto, módulos y mercado Argentina
 alwaysApply: true
 ---
 
-Leer `AGENTS.md` antes de tocar auth, módulos, actuadores, plano o alarmas.
+Leer `AGENTS.md` antes de tocar auth, módulos, actuadores, plano, alarmas o puntos de acceso.
 
 - Mercado: barrios cerrados en Argentina. Sin vínculo con Interplus.
 - Módulos: catálogo en `packages/catalog`. `core` siempre on. El dashboard no muestra lo no contratado.
 - Actuador = relé con nombre configurable (barrera / portón / puerta). Driver Dahua o IP.
 - `fire` es supervisión de un panel existente, no un sistema contra incendio certificado.
 - UI en español rioplatense.
+
+## Orden modular de hardware (no mezclar)
+
+1. Entidades sueltas y reutilizables: `actuators`, `dahua_devices`, `cameras`.
+2. Topología: `access_points` (sector vehicular|peatonal|servicio + sentido in|out|both).
+3. Cableado en tablas aparte: `access_point_actuators`, `access_point_devices`, `access_point_cameras`.
+4. Disparo: resolver punto por dispositivo/cámara del evento → abrir solo actuadores cableados ahí.
+5. Nunca fusionar módulo comercial (ALPR/Dahua/visitas) dentro de la fila del punto.
+6. Migraciones: `CREATE IF NOT EXISTS` + backfill; **no borrar** la DB ni datos legacy.
+
+## Modales (siempre)
+
+- Todo modal/overlay usa `useEscapeKey(onClose, open)` desde `apps/web/hooks/useEscapeKey.ts`.
+- Escape cierra / vuelve atrás; click en backdrop también cuando aplica.
+- No inventar otro listener de teclado por pantalla.

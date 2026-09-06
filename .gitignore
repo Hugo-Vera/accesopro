@@ -22,3 +22,6 @@ apps/site/evidencia/
 apps/site/nssm.exe
 *.log
 .turbo/
+cookie.txt
+*.tsbuildinfo
+apps/web/tsconfig.tsbuildinfo

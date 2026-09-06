@@ -31,6 +31,7 @@ export const eventStreamRoutes = new Hono();
 
 eventStreamRoutes.get("/events/stream", (c) => {
   const typeFilter = c.req.query("type");
+  const tenantFilter = c.req.query("tenantId");
   c.header("Cache-Control", "no-cache, no-transform");
   c.header("X-Accel-Buffering", "no");
 
@@ -43,6 +44,7 @@ eventStreamRoutes.get("/events/stream", (c) => {
 
     const onEvent: SSEListener = async (ev) => {
       if (typeFilter && ev.type !== typeFilter) return;
+      if (tenantFilter && ev.tenantId && ev.tenantId !== tenantFilter) return;
       try {
         await stream.writeSSE({
           event: "access_event",

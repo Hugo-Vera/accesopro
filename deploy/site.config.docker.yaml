@@ -1,4 +1,8 @@
-# Config motor LAN para Docker — editar RTSP antes de levantar con --profile alpr
+# Config motor LAN para Docker
+# Por defecto simulated (lab). Para portería real:
+#   1) copiá site.config.real.example.yaml sobre este archivo
+#   2) completá IPs RTSP y relés
+#   3) docker compose --profile alpr up -d --build
 
 barreras:
   type_in: simulated
@@ -44,7 +48,7 @@ sistema:
   allow_exit_without_entry: false
 
 video:
-  frecuencia_inferencia: 3
+  frecuencia_inferencia: 5
   fuente_in: ""
   fuente_out: ""
   hud_overlay_enabled: false

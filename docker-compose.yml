@@ -1,11 +1,69 @@
-# AccesoPro — stack Docker
-# Core:  docker compose up -d --build
-# +ALPR: docker compose --profile alpr up -d --build
-# +Dahua: docker compose --profile dahua up -d --build
-# Todo:  docker compose --profile alpr --profile dahua up -d --build
+# AccesoPro — stack Docker optimizado
+#
+# Core (dashboard + API):     docker compose up -d --build
+# + Agent Dahua real:         docker compose --profile dahua up -d --build
+# + Motor ALPR:               docker compose --profile alpr up -d --build
+# Todo:                       docker compose --profile alpr --profile dahua up -d --build
+#
+# Preferí:  powershell -File scripts\start-server.ps1 -Profile dahua
 
 services:
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    ports:
+      - "8787:8787"
+    environment:
+      NODE_ENV: production
+      PORT: "8787"
+      HOST: "0.0.0.0"
+      JWT_SECRET: ${JWT_SECRET:-cambiar-en-produccion-docker}
+      WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:3000}
+      SITE_ENGINE_URL: ${SITE_ENGINE_URL:-http://site:5051}
+      SITE_ENGINE_USER: ${SITE_ENGINE_USER:-admin}
+      SITE_ENGINE_PASSWORD: ${SITE_ENGINE_PASSWORD:-admin}
+      ACCESOPRO_BRIDGE_KEY: ${ACCESOPRO_BRIDGE_KEY:-accesopro-bridge}
+      ENGINE_BRIDGE_POLL_MS: ${ENGINE_BRIDGE_POLL_MS:-5000}
+      SITE_AGENT_URL: ${SITE_AGENT_URL:-http://agent:8790}
+      SITE_AGENT_TOKEN: ${SITE_AGENT_TOKEN:-accesopro-demo-agent}
+    volumes:
+      - api_data:/app/apps/api/data
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 20s
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        # Browser → mismo origen (:3000); Next reescribe a la API del compose
+        NEXT_PUBLIC_API_URL: ""
+        API_INTERNAL_URL: http://api:8787
+    ports:
+      - "3000:3000"
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      HOSTNAME: "0.0.0.0"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 20s
+      timeout: 5s
+      retries: 8
+      start_period: 25s
+    restart: unless-stopped
+
   postgres:
+    profiles: [alpr]
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: postgres
@@ -20,37 +78,6 @@ services:
       interval: 5s
       timeout: 5s
       retries: 12
-    restart: unless-stopped
-
-  api:
-    build:
-      context: .
-      dockerfile: apps/api/Dockerfile
-    ports:
-      - "8787:8787"
-    environment:
-      PORT: "8787"
-      JWT_SECRET: ${JWT_SECRET:-cambiar-en-produccion-docker}
-      WEB_ORIGIN: ${WEB_ORIGIN:-http://localhost:3000}
-      SITE_ENGINE_URL: ${SITE_ENGINE_URL:-http://site:5051}
-      SITE_ENGINE_USER: ${SITE_ENGINE_USER:-admin}
-      SITE_ENGINE_PASSWORD: ${SITE_ENGINE_PASSWORD:-admin}
-      ACCESOPRO_BRIDGE_KEY: ${ACCESOPRO_BRIDGE_KEY:-accesopro-bridge}
-      ENGINE_BRIDGE_POLL_MS: ${ENGINE_BRIDGE_POLL_MS:-5000}
-    volumes:
-      - api_data:/app/apps/api/data
-    restart: unless-stopped
-
-  web:
-    build:
-      context: .
-      dockerfile: apps/web/Dockerfile
-      args:
-        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8787}
-    ports:
-      - "3000:3000"
-    depends_on:
-      - api
     restart: unless-stopped
 
   site:
@@ -70,7 +97,13 @@ services:
       postgres:
         condition: service_healthy
       api:
-        condition: service_started
+        condition: service_healthy
+    # ALPR consume CPU; limitar evita matar el host
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 3G
     restart: unless-stopped
 
   agent:
@@ -83,8 +116,19 @@ services:
     environment:
       ACCESOPRO_API_URL: http://api:8787
       SITE_AGENT_TOKEN: ${SITE_AGENT_TOKEN:-accesopro-demo-agent}
+      # Workers concurrentes: poller, commands y heartbeat en hilos separados
+      UVICORN_WORKERS: "1"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
-      - api
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8790/health', timeout=3)"]
+      interval: 20s
+      timeout: 5s
+      retries: 6
+      start_period: 15s
     restart: unless-stopped
 
 volumes:

@@ -196,6 +196,86 @@ export const commands = sqliteTable("commands", {
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
 });
 
+/**
+ * Punto de acceso = topología del predio (entrada/salida/peatonal).
+ * No mezcla módulos: solo agrupa cableados. Los módulos (ALPR, Dahua, visitas)
+ * se enganchan vía tablas de vínculo reutilizables.
+ */
+export const accessPoints = sqliteTable("access_points", {
+  id: text("id").primaryKey(),
+  siteId: text("site_id")
+    .notNull()
+    .references(() => sites.id),
+  name: text("name").notNull(),
+  /** vehicular | peatonal | servicio */
+  sector: text("sector").notNull().default("peatonal"),
+  /** in | out | both */
+  sentido: text("sentido").notNull().default("both"),
+  sortOrder: integer("sort_order").notNull().default(0),
+  enabled: integer("enabled", { mode: "boolean" }).notNull().default(true),
+  mapX: text("map_x"),
+  mapY: text("map_y"),
+  notes: text("notes"),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+});
+
+/** Cableado: punto ↔ actuador (relé físico). */
+export const accessPointActuators = sqliteTable(
+  "access_point_actuators",
+  {
+    accessPointId: text("access_point_id")
+      .notNull()
+      .references(() => accessPoints.id),
+    actuatorId: text("actuator_id")
+      .notNull()
+      .references(() => actuators.id),
+    /** primary | aux */
+    role: text("role").notNull().default("primary"),
+    sortOrder: integer("sort_order").notNull().default(0),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.accessPointId, t.actuatorId] }),
+  }),
+);
+
+/** Cableado: punto ↔ equipo Dahua (validador / live). */
+export const accessPointDevices = sqliteTable(
+  "access_point_devices",
+  {
+    accessPointId: text("access_point_id")
+      .notNull()
+      .references(() => accessPoints.id),
+    dahuaDeviceId: text("dahua_device_id")
+      .notNull()
+      .references(() => dahuaDevices.id),
+    /** validator | live | both */
+    role: text("role").notNull().default("both"),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.accessPointId, t.dahuaDeviceId] }),
+  }),
+);
+
+/** Cableado: punto ↔ cámara IP / evidencia / ALPR. */
+export const accessPointCameras = sqliteTable(
+  "access_point_cameras",
+  {
+    accessPointId: text("access_point_id")
+      .notNull()
+      .references(() => accessPoints.id),
+    cameraId: text("camera_id")
+      .notNull()
+      .references(() => cameras.id),
+    /** alpr | evidence | live */
+    role: text("role").notNull().default("live"),
+    /** override opcional de sentido para ALPR (in|out); null = hereda del punto */
+    sentido: text("sentido"),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.accessPointId, t.cameraId] }),
+  }),
+);
+
 export const properties = sqliteTable("properties", {
   id: text("id").primaryKey(),
   tenantId: text("tenant_id")

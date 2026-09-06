@@ -22,6 +22,32 @@ AccesoPro/
 
 ## Arranque local
 
+### Con XAMPP (Apache, sin Docker)
+
+```powershell
+# Apache en verde en XAMPP Control Panel, después:
+powershell -ExecutionPolicy Bypass -File scripts\start-xampp.ps1 -Profile dahua
+```
+
+Abrí **http://localhost:3080** — detalle en [`docs/XAMPP.md`](docs/XAMPP.md).
+
+### Server real (recomendado — producción)
+
+```powershell
+cd C:\Users\Master\AccesoPro
+copy .env.docker.example .env
+powershell -ExecutionPolicy Bypass -File scripts\start-server.ps1 -Profile dahua
+```
+
+- Dashboard: http://localhost:3000  
+- API: http://localhost:8787/health  
+- Agent Dahua: http://localhost:8790/health  
+- Doc: [`docs/DOCKER.md`](docs/DOCKER.md)
+
+Parar: `scripts\stop-server.ps1`
+
+### Dev (hot reload)
+
 Node 20+.
 
 ```powershell
@@ -31,9 +57,6 @@ npm run dev:api
 npm run dev:web
 ```
 
-- API: http://localhost:8787/health
-- Dashboard: http://localhost:3000
-
 | Usuario | Clave | Rol |
 |---|---|---|
 | `admin@accesopro.local` | `AccesoPro!2026` | Plataforma (tilda módulos) |
@@ -41,14 +64,9 @@ npm run dev:web
 
 Motor LAN y agent Dahua: ver `apps/site/README.md` y `apps/agent/README.md`.
 
-Postgres y Redis (opcionales, no hace falta para el demo):
+Barreras ALPR reales (no `simulated`): `deploy/site.config.real.example.yaml`.
 
-```powershell
-docker compose up -d
-```
-
-Copiá `.env.example` a `.env`. Despliegue: [`docs/DEPLOY_SITE.md`](docs/DEPLOY_SITE.md) (FTP) · [`docs/DOCKER.md`](docs/DOCKER.md) (Docker).
-
+Copiá `.env.example` a `.env` para dev. Despliegue: [`docs/DEPLOY_SITE.md`](docs/DEPLOY_SITE.md) · [`docs/DOCKER.md`](docs/DOCKER.md).
 ## Sectores
 
 | Sector | Dónde | Qué hace |

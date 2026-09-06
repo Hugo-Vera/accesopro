@@ -53,7 +53,18 @@ API: `GET/PATCH /api/tenants/:id/features`. UI: Configuración → Módulos (blo
 
 Definición viva en `packages/catalog`. Claves: `core` (siempre), `actuators`, `dahua_access`, `visitors`, `dni_enroll`, `alpr`, `panic`, `fire`, `attendance`.
 
-Actuador = relé con **nombre libre** (Barrera entrada, Portón cochera, Puerta peatonal). Driver Dahua, IP o motor LAN (`engine`). Pulso o hold. Las reglas (cara, QR, chapa, botón) disparan un actuador, no “la puerta 1”. Las barreras IN/OUT de AccesoSeguro se mapean a dos actuadores AccesoPro.
+Actuador = relé con **nombre libre** (Barrera entrada, Portón cochera, Puerta peatonal). Driver Dahua, IP o motor LAN (`engine`). Pulso o hold.
+
+**Puntos de acceso** (`access_points`): topología del predio (sector vehicular/peatonal/servicio + sentido in/out/both). No es un módulo comercial: solo agrupa cableados.
+
+**Live portería:** dos consolas **Ingreso** | **Salida** (live + actuadores cableados a ese sentido + historial del lector). El 2º ASI de salida habilita medir permanencia de visitas; propietarios/permanentes no llevan control de tiempo. Softphone SIP queda pendiente (FreePBX local).
+
+**Cableado** (tablas de vínculo, reutilizables):
+- `access_point_actuators` — qué relé abre ese punto
+- `access_point_devices` — qué ASI valida / da live
+- `access_point_cameras` — qué cámara ALPR / evidencia / live
+
+Las reglas (cara, QR, ALPR, botón) resuelven el **punto** por el dispositivo que disparó el evento y abren solo los actuadores cableados ahí. No mezclar sectores ni módulos en una sola tabla.
 
 Plano del predio = core. Pines arrastrables. Pánico y fuego aparecen cuando el módulo está tildado.
 
@@ -61,7 +72,7 @@ Plano del predio = core. Pines arrastrables. Pánico y fuego aparecen cuando el 
 
 Monorepo: `apps/web` (Next.js), `apps/api` (Hono), `apps/agent` (Dahua CGI), `apps/site` (AccesoSeguro / FastALPR). Postgres lo usa el sitio ALPR.
 
-Mapa detallado: `docs/ARCHITECTURE.md`. Estado por módulo: `docs/MODULES.md`. Base de datos: `docs/DATABASE.md`. Pendientes: `docs/PENDING.md` (intercom FreePBX local, personas/credenciales, QR).
+Mapa detallado: `docs/ARCHITECTURE.md`. Estado por módulo: `docs/MODULES.md`. Base de datos: `docs/DATABASE.md`. Pendientes: `docs/PENDING.md`. Inventario + plan punta a punta: `docs/ROADMAP.md`. Ops IN/OUT: `docs/OPS_LANES.md`.
 
 ## Convenciones
 
@@ -69,7 +80,7 @@ Mapa detallado: `docs/ARCHITECTURE.md`. Estado por módulo: `docs/MODULES.md`. B
 - Mercado Argentina (DNI PDF417/QR, patentes Mercosur).
 - Comentarios solo para trampas.
 - Prohibido el uso de emojis tanto en respuestas y explicaciones como en la interfaz de usuario y código fuente. Utilizar siempre iconografía vectorial profesional (SVG / Material icons / Lucide) con estética sobria y técnica.
-- **Regla de Creación, Configuración y Edición (Modales)**: Toda alta, edición o configuración de entidades (equipos, personas, tarjetas, huellas, actuadores, usuarios, propiedades, etc.) DEBE realizarse mediante un modal emergente centrado y limpio, NUNCA mediante formularios incrustados o planos inline que deformen la pantalla o desalineen las tablas/listas. La pantalla principal debe mantener un botón superior prominente «Nuevo / Agregar» y una tabla o grilla con botón de «Configurar / Editar» por fila.
+- **Regla de Creación, Configuración y Edición (Modales)**: Toda alta, edición o configuración de entidades (equipos, personas, tarjetas, huellas, actuadores, usuarios, propiedades, etc.) DEBE realizarse mediante un modal emergente centrado y limpio, NUNCA mediante formularios incrustados o planos inline que deformen la pantalla o desalineen las tablas/listas. La pantalla principal debe mantener un botón superior prominente «Nuevo / Agregar» y una tabla o grilla con botón de «Configurar / Editar» por fila. **Todo modal debe cerrarse con Escape** usando el hook `useEscapeKey` (`apps/web/hooks/useEscapeKey.ts`): `useEscapeKey(onClose, open)`.
 - **Soporte Dual de Tema (Claro / Oscuro)**: Todos los componentes, paneles, inputs (`.cfg-input`), tablas y modales deben ser 100% compatibles con modo claro y oscuro (`bg-white` / `dark:bg-slate-900`, `border-slate-200` / `dark:border-slate-700`, texto con alto contraste). NUNCA dejar inputs o bloques negros fijos en modo claro.
 - **Arquitectura de Agente Dahua Concurrente**: En `apps/agent`, la ejecución de comandos interactivos (`_commands_worker`) DEBE correr en un hilo independiente del poller de eventos (`_dahua_poller_worker`) y del heartbeat (`_heartbeat_worker`). Los equipos offline o con falla de autenticación (HTTP 401) deben entrar en enfriamiento (`backoff` de 40s) para no bloquear ni retrasar las pruebas de diagnóstico ni los comandos de apertura inmediata.
 

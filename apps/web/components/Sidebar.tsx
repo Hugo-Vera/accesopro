@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { useEffect, useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
 import { useDash } from "@/components/DashboardProvider";
 
 type Item = {
@@ -99,9 +100,43 @@ const SECTIONS: Section[] = [
   },
 ];
 
+function pathMatchesHref(path: string, href: string) {
+  if (href === "/dashboard") return path === "/dashboard";
+  return path === href || path.startsWith(`${href}/`);
+}
+
+/** Una sola fila activa: la coincidencia más larga (evita Equipos + Eventos juntos). */
+function bestActiveHref(path: string, hrefs: string[]) {
+  let best: string | null = null;
+  for (const href of hrefs) {
+    if (!pathMatchesHref(path, href)) continue;
+    if (!best || href.length > best.length) best = href;
+  }
+  return best;
+}
+
 export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
+  const router = useRouter();
+  const [pendingHref, setPendingHref] = useState<string | null>(null);
   const { user, tenantName, isPlatform, isAdmin, status, logout, enabled, featureOn, can } = useDash();
+
+  useEffect(() => {
+    setPendingHref(null);
+  }, [pathname]);
+
+  const visibleHrefs = SECTIONS.flatMap((section) =>
+    section.items
+      .filter(
+        (item) =>
+          (!item.adminOnly || isAdmin || isPlatform) &&
+          (!item.module || enabled(item.module)) &&
+          (!item.feature || featureOn(item.feature)) &&
+          (!item.capability || can(item.capability)),
+      )
+      .map((item) => item.href),
+  );
+  const activeHref = bestActiveHref(pendingHref ?? pathname, visibleHrefs);
 
   return (
     <aside className="flex h-full w-[248px] shrink-0 flex-col border-r border-slate-200 dark:border-line bg-white dark:bg-[var(--ap-ink)] transition-colors">
@@ -129,13 +164,17 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
               </p>
               <div className="flex flex-col gap-0.5">
                 {items.map((item) => {
-                  const active =
-                    item.href === "/dashboard" ? pathname === item.href : pathname.startsWith(item.href);
+                  const active = item.href === activeHref;
                   return (
                     <Link
                       key={item.href}
                       href={item.href}
-                      onClick={onNavigate}
+                      prefetch
+                      onMouseEnter={() => router.prefetch(item.href)}
+                      onClick={() => {
+                        setPendingHref(item.href);
+                        onNavigate?.();
+                      }}
                       className={`rounded-md px-2.5 py-2 text-[13px] transition-colors ${
                         active
                           ? "border-l-2 border-blue-600 bg-blue-50 text-blue-700 font-semibold dark:border-accent dark:bg-accent/10 dark:text-[var(--ap-text)]"

@@ -30,14 +30,21 @@ def iter_mjpeg(
     dev: dict[str, Any],
     channel: int = 1,
     subtype: int = 2,
-    jpeg_quality: int = 65,
-    max_width: int = 1280,
+    jpeg_quality: int = 52,
+    max_width: int = 720,
+    force_size: tuple[int, int] | None = None,
+    target_fps: float = 8.0,
 ) -> Iterator[bytes]:
+    """
+    force_size: (width, height). Si se indica, reescala cada frame a ese tamaño
+    (p.ej. 272×480 del display ASI) para que el live coincida con la pantalla del lector.
+    target_fps: tope de encode (OpenCV en Windows come CPU si no se limita).
+    """
     sub = int(subtype)
     url = rtsp_url(dev, channel=channel, subtype=sub)
     cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
     try:
-        cap.set(cv2.CAP_PROP_BUFFERSIZE, 2)
+        cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
     except Exception:  # noqa: BLE001
         pass
 
@@ -47,7 +54,7 @@ def iter_mjpeg(
         url = rtsp_url(dev, channel=channel, subtype=sub)
         cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
         try:
-            cap.set(cv2.CAP_PROP_BUFFERSIZE, 2)
+            cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         except Exception:  # noqa: BLE001
             pass
 
@@ -55,6 +62,8 @@ def iter_mjpeg(
         raise RuntimeError("No se pudo abrir el RTSP del lector (¿puerto 554 / stream extra?)")
 
     fails = 0
+    min_interval = 1.0 / max(1.0, float(target_fps))
+    next_emit = 0.0
     try:
         while True:
             ok, frame = cap.read()
@@ -62,12 +71,26 @@ def iter_mjpeg(
                 fails += 1
                 if fails > 40:
                     raise RuntimeError("Se cortó el RTSP del lector")
-                time.sleep(0.05)
+                time.sleep(0.08)
                 continue
             fails = 0
+            now = time.monotonic()
+            if now < next_emit:
+                # Descartar frames extra sin encodear (ahorra CPU)
+                continue
+            next_emit = now + min_interval
             h, w = frame.shape[:2]
-            if w > max_width:
-                frame = cv2.resize(frame, (max_width, max(1, int(h * max_width / w))))
+
+            if force_size:
+                tw, th = int(force_size[0]), int(force_size[1])
+                # Si el RTSP viene apaisado y el destino es vertical (ASI), rotar 90° antes de estirar
+                if tw < th and w >= h:
+                    frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
+                    h, w = frame.shape[:2]
+                frame = cv2.resize(frame, (tw, th), interpolation=cv2.INTER_AREA)
+            elif w > max_width:
+                frame = cv2.resize(frame, (max_width, max(1, int(h * max_width / w))), interpolation=cv2.INTER_AREA)
+
             ok, buf = cv2.imencode(
                 ".jpg",
                 frame,

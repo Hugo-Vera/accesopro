@@ -36,12 +36,29 @@ Variable: `DATABASE_URL=file:./data/accesopro.db` (relativo a `apps/api`).
 | Tabla | Uso |
 |-------|-----|
 | `sites` | Predio LAN (token del agent Dahua) |
-| `actuators` | Relés con nombre, driver, triggers IN/OUT |
-| `dahua_devices` | Terminales faciales |
-| `cameras` | RTSP → actuador (referencia nube) |
+| `access_points` | Topología: entrada/salida/peatonal/servicio (sin mezclar módulos) |
+| `access_point_actuators` | Cableado punto ↔ relé (`primary` / `aux`) |
+| `access_point_devices` | Cableado punto ↔ Dahua (`validator` / `live` / `both`) |
+| `access_point_cameras` | Cableado punto ↔ cámara (`alpr` / `evidence` / `live`) |
+| `actuators` | Relés reutilizables (driver, pulso, triggers) |
+| `dahua_devices` | Terminales faciales / IP (credenciales) |
+| `cameras` | RTSP (referencia nube; vínculo ALPR legacy vía `actuator_id`) |
 | `plates` | Lista blanca/negra en API (complementa motor) |
 | `events` | Auditoría: plate, qr_access, visit_scan, … |
 | `commands` | Cola agent + log engine.open |
+
+**Regla modular:** cada entidad vive sola; el **cableado** une. Un facial peatonal no abre barreras vehiculares si no está cableado al mismo punto.
+
+```
+site 1 ── N access_points
+access_point 1 ── N actuators   (access_point_actuators)
+access_point 1 ── N dahua_devices (access_point_devices)
+access_point 1 ── N cameras     (access_point_cameras)
+```
+
+Sectores (`ACCESS_POINT_SECTORS` en catálogo): `vehicular` | `peatonal` | `servicio`.
+Sentido: `in` | `out` | `both`.
+
 
 ### Propietarios y visitas (módulo `visitors`)
 
@@ -69,7 +86,9 @@ property 1 ── N owner_profiles (típico 1 usuario resident)
 property 1 ── N property_services
 property 1 ── N visit_authorizations
 property 1 ── N visit_passes
+site 1 ── N access_points
 site 1 ── N actuators
+access_point ── actuators / dahua_devices / cameras (tablas de cableado)
 ```
 
 ## Motor LAN (`apps/site`) — PostgreSQL

@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import { db } from "./db/client.js";
 import { actuators, cameras, commands, dahuaDevices, events, plates, sites } from "./db/schema.js";
 import { nid, normalizePlate } from "./scope.js";
+import { actuatorsForDahuaDevice } from "./accessPoints.js";
 import { fireActuator } from "./actuatorExec.js";
 import { matchesSentido, sentidoOf } from "./engineBridge.js";
 import { broadcastRealtimeEvent } from "./eventStream.js";
@@ -117,10 +118,10 @@ agentRoutes.post("/events", async (c) => {
     // Además, el terminal Dahua ya acciona su propio relé localmente al reconocer la cara;
     // solo se disparan actuadores vinculados distintos (ej. barreras auxiliares de motor LAN u otros relés).
     if (!failed && !isRemoteUnlock && site) {
-      for (const a of acts.filter((x) => x.triggerDahua)) {
-        if (a.driver === "dahua" && a.dahuaDeviceId === deviceId) {
-          continue;
-        }
+      const targets = await actuatorsForDahuaDevice(siteId, deviceId);
+      for (const a of targets) {
+        // El ASI ya abre su relé local; no re-encolar el mismo equipo.
+        if (a.driver === "dahua" && a.dahuaDeviceId === deviceId) continue;
         await fireActuator(site, a.id, "open");
       }
     }

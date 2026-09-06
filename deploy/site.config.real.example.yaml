@@ -1,0 +1,63 @@
+# Plantilla de barreras REALES (IP / COM) — copiar sobre site.config.docker.yaml
+# o a apps/site/config.yaml en la LAN.
+#
+# Tipos válidos: disabled | simulated | com | ip
+# Para producción usá ip o com — nunca dejar "simulated" en portería.
+
+barreras:
+  type_in: ip
+  type_out: ip
+  baudrate_in: 9600
+  baudrate_out: 9600
+  # Relé / controlador HTTP de barrera IN (ej. ESP, Shelly, placa IP)
+  ip_in: "192.168.1.50"
+  ip_out: "192.168.1.51"
+  ip_port_in: 80
+  ip_port_out: 80
+  ip_protocol_in: http
+  ip_protocol_out: http
+  # Ajustar al firmware del relé
+  ip_cmd_open_in: "/relay/0?turn=on"
+  ip_cmd_close_in: "/relay/0?turn=off"
+  ip_cmd_open_out: "/relay/0?turn=on"
+  ip_cmd_close_out: "/relay/0?turn=off"
+  max_open_sec_in: 4
+  max_open_sec_out: 4
+  # Si usás Arduino/USB en vez de IP:
+  port_in: ""
+  port_out: ""
+
+db:
+  engine: postgresql
+  host: postgres
+  name: fastalpr
+  user: postgres
+  password: postgres
+  port: 5432
+
+modelo:
+  confianza_avg_ocr: 0.35
+  confianza_detector: 0.35
+  confianza_low_ocr: 0.2
+  ocr_device: cpu
+  resolucion_detector: 384
+
+sistema:
+  auth_mode: combinado
+  require_dni_qr: false
+  propietario_auth_visits: true
+  barrier_auto_open_in: true
+  barrier_auto_open_out: true
+  allow_exit_without_entry: false
+  dedup_window_sec: 3.0
+
+video:
+  # Subir a 5–8 en CPU débil (menos FPS de inferencia)
+  frecuencia_inferencia: 5
+  fuente_in: "rtsp://USER:PASS@192.168.1.64:554/cam/realmonitor?channel=1&subtype=0"
+  fuente_out: ""
+  hud_overlay_enabled: false
+  motion_detection_enabled: true
+
+video_salida:
+  fuente: ""

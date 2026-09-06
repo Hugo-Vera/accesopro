@@ -157,6 +157,8 @@ def _dispatch_access_event(dev: dict[str, Any], rec: dict[str, Any]) -> None:
             {
                 "type": "dahua_access",
                 "payload": {
+                    # raw Dahua primero; campos AccesoPro después (no los pisa el CGI)
+                    **rec,
                     "deviceId": dev_id,
                     "deviceName": dev.get("name"),
                     "method": method_name,
@@ -169,7 +171,6 @@ def _dispatch_access_event(dev: dict[str, Any], rec: dict[str, Any]) -> None:
                     "recNo": rec_no,
                     "rawTime": stamp,
                     "snapshotUrl": rec.get("URL") or "",
-                    **rec,
                 },
             },
         )
@@ -360,13 +361,14 @@ def _dahua_stream_worker() -> None:
 
 
 def _dahua_poller_worker() -> None:
+    """Respaldo del stream HTTP; no hace falta cada 0.5s (quema CPU + CGI)."""
     time.sleep(1.0)
     while not _stop.is_set():
         try:
             _poll_dahua()
         except Exception as exc:  # noqa: BLE001
             print(f"Poller worker: {exc}")
-        time.sleep(0.5)
+        time.sleep(4.0)
 
 
 @asynccontextmanager
@@ -455,7 +457,14 @@ def dahua_record_snapshot(
         raw, ctype = _client(dev).get_record_snapshot(url)
         return Response(content=raw, media_type=ctype, headers={"Cache-Control": "public, max-age=86400"})
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail=str(exc)) from exc
+        msg = str(exc)
+        low = msg.lower()
+        # Fallos esperados: archivo borrado del ASI, auth o timeout — no 500 genérico
+        if "no encontró" in low or "falta url" in low or "not found" in low:
+            raise HTTPException(status_code=404, detail=msg) from exc
+        if "autentic" in low or "401" in low or "403" in low:
+            raise HTTPException(status_code=502, detail=msg) from exc
+        raise HTTPException(status_code=502, detail=msg) from exc
 
 
 
@@ -490,7 +499,9 @@ def dahua_live(
 
     def gen():
         try:
-            yield from iter_mjpeg(dev, channel=ch, subtype=sub)
+            # Pantalla ASI: forzar 272×480 (como el display del lector) para no aplastar el live
+            force = (272, 480) if sub == 2 else None
+            yield from iter_mjpeg(dev, channel=ch, subtype=sub, force_size=force)
         except Exception as exc:  # noqa: BLE001
             # Un frame JPEG de error no rompe el multipart; el cliente reintenta.
             print(f"Live RTSP error: {exc}")

@@ -1,79 +1,90 @@
-# Docker — AccesoPro en una máquina
+# Docker / server — AccesoPro (producción)
 
-## Requisitos
+## Qué es “real” vs “simulado”
 
-- **Docker Desktop** (Windows) o **Docker Engine** (Ubuntu)
-- 8 GB RAM si usás perfil `alpr` (modelos ONNX)
-- 4 GB RAM solo dashboard + API
+| Pieza | Simulado (lab) | Real (portería) |
+|-------|----------------|-----------------|
+| Dashboard + API | `npm run dev:*` | Docker o `start-server.ps1` (`NODE_ENV=production`) |
+| Barreras ALPR | `type_in/out: simulated` en config | `ip` o `com` — ver `deploy/site.config.real.example.yaml` |
+| Agent Dahua | apagado | profile `dahua` → CGI, openDoor, live, eventos |
+| Softphone | overlay «Próximamente» | FreePBX pendiente (no simula 911) |
 
-## Arranque rápido
+## Arranque recomendado (esta PC)
 
 ```powershell
 cd C:\Users\Master\AccesoPro
 copy .env.docker.example .env
-docker compose up -d --build
+# editá JWT_SECRET
+
+# Core + Agent Dahua (lo típico AccesoPro)
+powershell -ExecutionPolicy Bypass -File scripts\start-server.ps1 -Profile dahua
+
+# Solo dashboard + API
+powershell -ExecutionPolicy Bypass -File scripts\start-server.ps1 -Profile core
+
+# + motor ALPR (Postgres + site :5051)
+powershell -ExecutionPolicy Bypass -File scripts\start-server.ps1 -Profile full
 ```
 
-- Dashboard: http://localhost:3000  
-- API: http://localhost:8787/health  
-- Demo: `admin@lasacacias.local` / `AccesoPro!2026`
-
-### Con motor ALPR (Postgres + FastALPR)
+Parar:
 
 ```powershell
-docker compose --profile alpr up -d --build
+powershell -ExecutionPolicy Bypass -File scripts\stop-server.ps1
 ```
 
-- Motor: http://localhost:5051 (`admin` / `admin`)
-- Editar RTSP y barreras en `deploy/site.config.docker.yaml` antes de levantar
+### Nativo (sin Docker, producción Node)
 
-### Con agent Dahua
+Útil si el agent necesita acceso USB/COM o RTSP más directo en Windows:
 
 ```powershell
-docker compose --profile dahua up -d --build
+powershell -ExecutionPolicy Bypass -File scripts\start-server.ps1 -Native -Profile dahua
 ```
 
-### Todo
+## Requisitos
 
-```powershell
-docker compose --profile alpr --profile dahua up -d --build
-```
+- **Docker Desktop** (Windows) o Engine (Ubuntu)
+- 4 GB RAM: `core` / `dahua`
+- 8 GB RAM: perfil `alpr` / `full` (ONNX)
 
 ## Servicios
 
-| Servicio | Puerto | Perfil | Datos persistentes |
-|----------|--------|--------|-------------------|
+| Servicio | Puerto | Perfil | Datos |
+|----------|--------|--------|-------|
 | `web` | 3000 | core | — |
-| `api` | 8787 | core | volumen `api_data` (SQLite) |
-| `postgres` | 5432 | alpr | volumen `pgdata` |
-| `site` | 5051 | alpr | `site_evidencia` + `config.yaml` |
+| `api` | 8787 | core | volumen `api_data` |
 | `agent` | 8790 | dahua | — |
+| `postgres` | 5432 | alpr | `pgdata` |
+| `site` | 5051 | alpr | `site_evidencia` + config |
 
-## RTSP y cámaras desde Docker
+Optimizaciones del compose:
 
-Los contenedores ven la LAN del host. En `deploy/site.config.docker.yaml` usá:
+- Postgres **solo** con perfil `alpr` (no ocupa RAM en core/dahua)
+- Healthchecks API/web/agent; web espera API healthy
+- Web same-origin (`NEXT_PUBLIC_API_URL` vacío + rewrites a `http://api:8787`)
+- API conoce `SITE_AGENT_URL=http://agent:8790` (live / CGI)
+- Límite CPU/RAM en `site` (ALPR)
 
-- RTSP con IP de cámara en la LAN (ej. `rtsp://user:pass@192.168.1.64:554/...`)
-- En Linux, si falla RTSP, probá `network_mode: host` en el servicio `site` (solo Linux).
+## Barreras reales (ALPR)
 
-Puerto COM / Arduino: en Docker es incómodo; en producción suele correr el motor **sin** Docker o con dispositivo USB pasado al contenedor.
+1. Copiá `deploy/site.config.real.example.yaml` → `deploy/site.config.docker.yaml`
+2. Completá IPs de relé + RTSP
+3. `start-server.ps1 -Profile alpr` (o `full`)
+
+En AccesoPro, mapeá esas barreras a **actuadores** `driver=engine` (IN/OUT).
+
+## RTSP desde Docker
+
+Usá IP LAN de la cámara (`192.168.x.x`). En Linux, si falla: `network_mode: host` en `site`.
+
+Puerto COM / Arduino: preferí agent/site **nativo** (`-Native`) o pasá el dispositivo USB al contenedor.
 
 ## Actualizar
 
 ```powershell
 git pull
-docker compose --profile alpr build
-docker compose --profile alpr up -d
+powershell -File scripts\start-server.ps1 -Profile dahua
 ```
 
-No se pierden datos: SQLite en `api_data`, Postgres en `pgdata`, fotos en `site_evidencia`.
+Datos persistentes: no se pierden con `up --build`. Wipe: `scripts\stop-server.ps1 -WipeVolumes`.
 
-## Parar
-
-```powershell
-docker compose --profile alpr --profile dahua down
-```
-
-Para borrar datos: `docker compose down -v` (¡borra bases!).
-
-Ver también: [`DEPLOY_SITE.md`](DEPLOY_SITE.md) (FTP / instalación sin Docker).
+Ver también: [`DEPLOY_SITE.md`](DEPLOY_SITE.md).

@@ -41,15 +41,19 @@ export function CapabilityGate({
 export function FeatureGate({
   feature,
   capability,
+  orModule,
   children,
 }: {
   feature: string;
   capability?: string;
+  /** Si el pack no está tildado pero el módulo sí, igual deja pasar (ej. eventos con dahua_access). */
+  orModule?: string;
   children: React.ReactNode;
 }) {
-  const { loading, featureOn, can } = useDash();
+  const { loading, featureOn, can, enabled } = useDash();
   const router = useRouter();
-  const ok = featureOn(feature) && (!capability || can(capability));
+  const featureOk = featureOn(feature) || (orModule ? enabled(orModule) : false);
+  const ok = featureOk && (!capability || can(capability));
 
   useEffect(() => {
     if (!loading && !ok) router.replace("/dashboard");

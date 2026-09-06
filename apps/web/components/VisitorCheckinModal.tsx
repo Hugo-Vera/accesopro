@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { api, withTenant } from "@/lib/api";
+import { useEscapeKey } from "@/hooks/useEscapeKey";
 import {
   IdCard,
   Home,
@@ -67,6 +68,8 @@ type Props = {
 };
 
 export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Props) {
+  useEscapeKey(onClose, isOpen);
+
   // Pasos: 1 = DNI, 2 = Destino, 3 = Modalidad (Vehicular o Peatonal), 4 = Vehículo & Seguro, 5 = Licencia, 6 = Resumen
   const [step, setStep] = useState<number>(1);
   const [loading, setLoading] = useState(false);

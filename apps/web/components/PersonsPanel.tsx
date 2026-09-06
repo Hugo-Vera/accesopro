@@ -1724,7 +1724,7 @@ function EditPersonModal({
 }
 
 /** COMPONENTE PRINCIPAL: Gestión y Visualización de Personas */
-export function PersonsPanel() {
+export function PersonsPanel({ initialSearch = "" }: { initialSearch?: string }) {
   const { tenantId, status } = useDash();
   const { theme, toggleTheme } = useTheme();
   const toast = useToast();
@@ -1734,7 +1734,7 @@ export function PersonsPanel() {
   const [deviceId, setDeviceId] = useState<string | null>(null);
   const [persons, setPersons] = useState<Person[]>([]);
   const [loading, setLoading] = useState(false);
-  const [searchFilter, setSearchFilter] = useState("");
+  const [searchFilter, setSearchFilter] = useState(initialSearch);
   const [roleFilter, setRoleFilter] = useState<string>("todos");
 
   // Modales

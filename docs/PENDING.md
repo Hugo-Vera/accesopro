@@ -1,38 +1,63 @@
 # Pendientes AccesoPro
 
-Lista viva de trabajo futuro. Si algo se completa, moverlo a `MODULES.md` / `AGENTS.md` y sacarlo de acá.
+Lista viva. Inventario completo + plan por fases: **`docs/ROADMAP.md`**.  
+Ops IN/OUT: **`docs/OPS_LANES.md`**. Si algo se completa, actualizar `MODULES.md` / `AGENTS.md` y tachar acá.
+
+## Sprint inmediato (P0)
+
+- [ ] Same ASI en Salida: compartir relés de Ingreso (`HomeDashboard` outSlots).
+- [ ] Apertura toast: resolver por `dahuaDeviceId` → pool IN/OUT.
+- [ ] Validar toast anti-F5 en runtime (código watermark en `useOpsEvents`).
+- [ ] UI admin cableado `access_points` (API ya existe).
+- [ ] QR visita: unificar payload vs CardNo ASI + enganchar `scanVisitPass` desde eventos.
 
 ## Intercom (SIP)
 
-- [x] UI softphone en dashboard portería (`AccesoPhone`: contactos, teclado, emergencias) — stub hasta FreePBX.
-- [ ] **FreePBX / Asterisk en LAN del barrio** (no en la nube AccesoPro), mismo sitio que el agent.
+- [x] UI softphone stub (`AccesoPhone`) — fuera del home ops hasta FreePBX.
+- [ ] **FreePBX / Asterisk en LAN del barrio** (no en la nube AccesoPro).
 - [ ] Extensión SIP del ASI + extensión de portería.
 - [ ] Softphone embebido real (WebRTC ↔ SIP si hace falta gateway).
 - [ ] Feature pack `dahua.intercom` + capability + UI llamar / contestar / colgar + abrir.
 - [ ] Documentar puertos SIP/RTP y que el audio no salga a internet salvo VPN.
 
-Notas: DMSS hoy hace la llamada por P2P/ecosistema Dahua. AccesoPro apuntaría a PBX propio en local.
-Dashboard portería (`/dashboard`): layout consola 3 columnas (live + relés | menú/status | softphone).
+## Dual live IN/OUT (permanencia visitas)
 
-## Personas y credenciales en el lector (`dahua.persons`)
+- [x] Dos AccesoCam en home: entrada + salida.
+- [x] Asignación por cableado / heurística / override AccesoCam.
+- [x] Actuadores e historial separados por sentido (producción).
+- [ ] Same-device lab: Salida hereda relés de Ingreso (doc vs código).
+- [ ] UI admin para cablear lector ↔ punto / sentido.
+- [ ] Reloj de permanencia: visita = evento IN → OUT; propietarios sin control de tiempo.
 
-- [x] MVP urgente: alta cara + QR (CardNo) + listar + borrar (`PersonsPanel`, agent CGI).
+## Personas y credenciales (`dahua.persons`)
+
+- [x] MVP: alta cara + QR (CardNo) + listar + borrar.
 - [ ] Editar persona / vigencia / franjas.
-- [ ] Huella y tarjeta física (además del QR).
+- [ ] Huella y tarjeta física.
 - [ ] PIN / contraseña desde el panel.
-- [ ] Mejorar listado si el firmware usa AccessUser.cgi en vez de AccessControlCard.
+- [ ] Listado si firmware usa AccessUser.cgi.
 
 ## QR: dos cosas distintas
 
 | Tipo | Dónde | Para qué |
 |------|--------|----------|
-| **QR nativo ASI** | Pack `dahua.qr` + web del equipo | Lectura/configuración del código en el terminal |
-| **QR visita AccesoPro** | Módulo `visitors` | Pase firmado con fechas; lo genera el vecino/admin |
+| **QR nativo ASI** | Pack `dahua.qr` | Ajustes del terminal |
+| **QR visita AccesoPro** | Módulo `visitors` | Pase firmado; portal genera |
 
-- [ ] Pack `dahua.qr`: UI de ajustes del lector (no confundir con visitas).
-- [ ] Módulo visitas: emitir / revocar QR de visita y que dispare actuador.
+- [x] Pack `dahua.qr`: UI ajustes CGI (parcial).
+- [x] Portal: emitir / revocar QR visita.
+- [ ] Lectura ASI → AccesoPro (`scanVisitPass` + actuador `triggerQr`).
+- [ ] Payload QR alineado con CardNo enrollado.
 
-## Live / evidencia (seguimiento)
+## Live / evidencia
 
-- [ ] Live RTSP estable (reintentos, un solo cliente compartido si hay varias pestañas).
-- [ ] Evidencia: copiar foto del evento al almacenamiento del barrio + galería.
+- [ ] Live RTSP estable (reintentos, cliente compartido).
+- [ ] Evidencia: sync foto + galería (hoy stub).
+
+## Módulos stub (comercial)
+
+- [ ] Alta DNI portería.
+- [ ] Pánico / SOS (dashboard + portal).
+- [ ] Fuego (contacto panel; no certificado).
+- [ ] Fichadas / asistencia.
+- [ ] Plano croquis con pines cableados.

@@ -8,6 +8,9 @@ import {
   vehicles,
   visitorIdentities,
   visitRecords,
+  visitPasses,
+  visitAuthorizations,
+  users,
   events,
 } from "./db/schema.js";
 import { nid, scopedSiteWithModule } from "./scope.js";
@@ -137,6 +140,161 @@ visitorsApi.get("/visitors/search-vehicle", async (c) => {
     found: true,
     vehicle,
     insurance: insurance ?? null,
+  });
+});
+
+/** Autorizaciones y pases de todos los propietarios del barrio (portería). */
+visitorsApi.get("/visitors/owner-passes", async (c) => {
+  const denied = await denyUnlessCapability(c.get("user"), "access.visitors.manage");
+  if (denied) return denied;
+  const scoped = await scopedSiteWithModule(c, "visitors");
+  if ("error" in scoped) return scoped.error;
+
+  const limit = Math.min(Number(c.req.query("limit") ?? 60), 120);
+  const now = Date.now();
+
+  const [passRows, authRows] = await Promise.all([
+    db
+      .select({
+        id: visitPasses.id,
+        guestName: visitPasses.guestName,
+        guestDni: visitPasses.guestDni,
+        patente: visitPasses.patente,
+        status: visitPasses.status,
+        validFrom: visitPasses.validFrom,
+        validUntil: visitPasses.validUntil,
+        createdAt: visitPasses.createdAt,
+        scannedInAt: visitPasses.scannedInAt,
+        scannedOutAt: visitPasses.scannedOutAt,
+        dahuaSynced: visitPasses.dahuaSynced,
+        lotNumber: properties.lotNumber,
+        propertyLabel: properties.label,
+        ownerName: users.name,
+      })
+      .from(visitPasses)
+      .leftJoin(properties, eq(properties.id, visitPasses.propertyId))
+      .leftJoin(users, eq(users.id, visitPasses.createdByUserId))
+      .where(eq(visitPasses.siteId, scoped.site.id))
+      .orderBy(desc(visitPasses.createdAt))
+      .limit(limit),
+    db
+      .select({
+        id: visitAuthorizations.id,
+        guestName: visitAuthorizations.guestName,
+        guestDni: visitAuthorizations.guestDni,
+        patente: visitAuthorizations.patente,
+        kind: visitAuthorizations.kind,
+        active: visitAuthorizations.active,
+        validFrom: visitAuthorizations.fechaDesde,
+        validUntil: visitAuthorizations.fechaHasta,
+        createdAt: visitAuthorizations.createdAt,
+        lotNumber: properties.lotNumber,
+        propertyLabel: properties.label,
+        ownerName: users.name,
+      })
+      .from(visitAuthorizations)
+      .leftJoin(properties, eq(properties.id, visitAuthorizations.propertyId))
+      .leftJoin(users, eq(users.id, visitAuthorizations.createdByUserId))
+      .where(eq(visitAuthorizations.siteId, scoped.site.id))
+      .orderBy(desc(visitAuthorizations.createdAt))
+      .limit(limit),
+  ]);
+
+  type Notice = {
+    id: string;
+    source: "pass" | "auth";
+    guestName: string;
+    guestDni: string | null;
+    patente: string | null;
+    status: string;
+    bucket: "pending" | "closed";
+    validFrom: Date | number | null;
+    validUntil: Date | number | null;
+    createdAt: Date | number;
+    scannedInAt: Date | number | null;
+    scannedOutAt: Date | number | null;
+    dahuaSynced: boolean;
+    lot: string;
+    ownerName: string;
+    kind?: string;
+  };
+
+  const ms = (v: Date | number | null | undefined) => {
+    if (v == null) return null;
+    return v instanceof Date ? v.getTime() : Number(v);
+  };
+
+  const notices: Notice[] = [];
+
+  for (const r of passRows) {
+    const until = ms(r.validUntil);
+    const revoked = r.status === "revoked" || r.status === "cancelled";
+    const expired = until != null && until < now;
+    const closed = Boolean(r.scannedOutAt) || revoked || expired || r.status === "expired" || r.status === "used";
+    notices.push({
+      id: `pass:${r.id}`,
+      source: "pass",
+      guestName: r.guestName,
+      guestDni: r.guestDni,
+      patente: r.patente,
+      status: closed
+        ? r.scannedOutAt
+          ? "completed"
+          : revoked
+            ? "revoked"
+            : expired
+              ? "expired"
+              : r.status
+        : r.scannedInAt
+          ? "in_site"
+          : "pending",
+      bucket: closed ? "closed" : "pending",
+      validFrom: r.validFrom,
+      validUntil: r.validUntil,
+      createdAt: r.createdAt,
+      scannedInAt: r.scannedInAt,
+      scannedOutAt: r.scannedOutAt,
+      dahuaSynced: Boolean(r.dahuaSynced),
+      lot: r.lotNumber ? `Lote ${r.lotNumber}` : r.propertyLabel || "Propiedad",
+      ownerName: r.ownerName || "Propietario",
+    });
+  }
+
+  for (const r of authRows) {
+    const until = ms(r.validUntil);
+    const expired = until != null && until < now;
+    const inactive = r.active === false;
+    const closed = inactive || expired;
+    notices.push({
+      id: `auth:${r.id}`,
+      source: "auth",
+      guestName: r.guestName,
+      guestDni: r.guestDni,
+      patente: r.patente,
+      status: closed ? (inactive && !expired ? "revoked" : "expired") : "pending",
+      bucket: closed ? "closed" : "pending",
+      validFrom: r.validFrom,
+      validUntil: r.validUntil,
+      createdAt: r.createdAt,
+      scannedInAt: null,
+      scannedOutAt: null,
+      dahuaSynced: false,
+      lot: r.lotNumber ? `Lote ${r.lotNumber}` : r.propertyLabel || "Propiedad",
+      ownerName: r.ownerName || "Propietario",
+      kind: r.kind,
+    });
+  }
+
+  notices.sort((a, b) => ms(b.createdAt)! - ms(a.createdAt)!);
+
+  const pending = notices.filter((n) => n.bucket === "pending").slice(0, 40);
+  const closed = notices.filter((n) => n.bucket === "closed").slice(0, 40);
+
+  return c.json({
+    pending,
+    closed,
+    /** Compat: lista plana (pendientes primero). */
+    passes: [...pending, ...closed],
   });
 });
 

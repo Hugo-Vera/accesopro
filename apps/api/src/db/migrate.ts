@@ -1,5 +1,15 @@
 import { sql } from "drizzle-orm";
 import { client, db } from "./client.js";
+import { eq } from "drizzle-orm";
+import {
+  accessPointActuators,
+  accessPointCameras,
+  accessPointDevices,
+  accessPoints,
+  actuators,
+  cameras,
+  dahuaDevices,
+} from "./schema.js";
 
 async function addColumn(table: string, column: string, def: string) {
   try {
@@ -285,4 +295,135 @@ export async function ensureSchema() {
 
   await addColumn("visit_passes", "dahua_synced", "INTEGER DEFAULT 0");
   await addColumn("visit_passes", "dahua_card_no", "TEXT");
+
+  // —— Puntos de acceso + cableados (modulares; no mezclan módulos comerciales) ——
+  await db.run(sql`
+    CREATE TABLE IF NOT EXISTS access_points (
+      id TEXT PRIMARY KEY,
+      site_id TEXT NOT NULL REFERENCES sites(id),
+      name TEXT NOT NULL,
+      sector TEXT NOT NULL DEFAULT 'peatonal',
+      sentido TEXT NOT NULL DEFAULT 'both',
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      enabled INTEGER NOT NULL DEFAULT 1,
+      map_x TEXT,
+      map_y TEXT,
+      notes TEXT,
+      created_at INTEGER NOT NULL
+    )
+  `);
+  await db.run(sql`
+    CREATE TABLE IF NOT EXISTS access_point_actuators (
+      access_point_id TEXT NOT NULL REFERENCES access_points(id),
+      actuator_id TEXT NOT NULL REFERENCES actuators(id),
+      role TEXT NOT NULL DEFAULT 'primary',
+      sort_order INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (access_point_id, actuator_id)
+    )
+  `);
+  await db.run(sql`
+    CREATE TABLE IF NOT EXISTS access_point_devices (
+      access_point_id TEXT NOT NULL REFERENCES access_points(id),
+      dahua_device_id TEXT NOT NULL REFERENCES dahua_devices(id),
+      role TEXT NOT NULL DEFAULT 'both',
+      PRIMARY KEY (access_point_id, dahua_device_id)
+    )
+  `);
+  await db.run(sql`
+    CREATE TABLE IF NOT EXISTS access_point_cameras (
+      access_point_id TEXT NOT NULL REFERENCES access_points(id),
+      camera_id TEXT NOT NULL REFERENCES cameras(id),
+      role TEXT NOT NULL DEFAULT 'live',
+      sentido TEXT,
+      PRIMARY KEY (access_point_id, camera_id)
+    )
+  `);
+
+  await backfillAccessPointsFromLegacy();
 }
+
+/** Crea un punto por actuador aún no cableado, y engancha device/cámara legacy. */
+async function backfillAccessPointsFromLegacy() {
+  const acts = await db.select().from(actuators);
+  if (acts.length === 0) return;
+
+  const wired = await db.select().from(accessPointActuators);
+  const wiredActIds = new Set(wired.map((w) => w.actuatorId));
+
+  for (const a of acts) {
+    if (wiredActIds.has(a.id)) continue;
+
+    const nameLower = a.name.toLowerCase();
+    let sector = "peatonal";
+    if (a.driver === "engine" || a.kind === "barrier" || a.kind === "gate" || /barrera|port[oó]n|veh[ií]cul/i.test(nameLower)) {
+      sector = "vehicular";
+    } else if (/basura|riego|sirena|emergencia|servicio|ilumin/i.test(nameLower)) {
+      sector = "servicio";
+    }
+
+    let sentido = "both";
+    if (a.engineSentido === "in" || a.engineSentido === "out") {
+      sentido = a.engineSentido;
+    } else if (/entrada|ingreso|\bin\b/i.test(nameLower)) {
+      sentido = "in";
+    } else if (/salida|egreso|\bout\b/i.test(nameLower)) {
+      sentido = "out";
+    }
+
+    const pointId = crypto.randomUUID();
+    const now = Date.now();
+    await db.insert(accessPoints).values({
+      id: pointId,
+      siteId: a.siteId,
+      name: a.name,
+      sector,
+      sentido,
+      sortOrder: 0,
+      enabled: true,
+      mapX: null,
+      mapY: null,
+      notes: "Creado automáticamente desde actuador legacy",
+      createdAt: new Date(now),
+    });
+    await db.insert(accessPointActuators).values({
+      accessPointId: pointId,
+      actuatorId: a.id,
+      role: "primary",
+      sortOrder: 0,
+    });
+
+    if (a.dahuaDeviceId) {
+      const exists = await db
+        .select()
+        .from(dahuaDevices)
+        .where(eq(dahuaDevices.id, a.dahuaDeviceId))
+        .get();
+      if (exists) {
+        try {
+          await db.insert(accessPointDevices).values({
+            accessPointId: pointId,
+            dahuaDeviceId: a.dahuaDeviceId,
+            role: "both",
+          });
+        } catch {
+          // ya cableado
+        }
+      }
+    }
+
+    const cams = await db.select().from(cameras).where(eq(cameras.actuatorId, a.id));
+    for (const cam of cams) {
+      try {
+        await db.insert(accessPointCameras).values({
+          accessPointId: pointId,
+          cameraId: cam.id,
+          role: a.triggerAlpr ? "alpr" : "live",
+          sentido: a.engineSentido === "in" || a.engineSentido === "out" ? a.engineSentido : null,
+        });
+      } catch {
+        // ya cableado
+      }
+    }
+  }
+}
+

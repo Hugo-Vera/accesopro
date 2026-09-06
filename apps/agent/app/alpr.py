@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import threading
 import time
 from typing import Any, Callable
@@ -37,6 +38,10 @@ class AlprWorker:
         return self._alpr
 
     def sync(self, cameras: list[dict[str, Any]]) -> None:
+        # ALPR principal = apps/site (AccesoSeguro). El worker del agent
+        # solo si AGENT_ALPR=1 (YOLO + OpenCV satura CPU en Windows).
+        if os.environ.get("AGENT_ALPR", "0").strip() != "1":
+            return
         wanted = {cam["id"]: cam for cam in cameras if cam.get("rtspUrl")}
         for cam_id in list(self._threads):
             if cam_id not in wanted:

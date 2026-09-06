@@ -442,3 +442,54 @@ export function featuresForModule(moduleKey: ModuleKey): FeaturePackDef[] {
 export function isFeatureKey(value: string): boolean {
   return FEATURE_PACK_CATALOG.some((f) => f.key === value);
 }
+
+/* —— Puntos de acceso (topología del predio; no es un módulo comercial) —— */
+
+/** Sector operativo: agrupa UI/plano sin mezclar módulos. */
+export type AccessPointSector = "vehicular" | "peatonal" | "servicio";
+
+export type AccessPointSentido = "in" | "out" | "both";
+
+export type AccessActuatorWireRole = "primary" | "aux";
+export type AccessDeviceWireRole = "validator" | "live" | "both";
+export type AccessCameraWireRole = "alpr" | "evidence" | "live";
+
+export const ACCESS_POINT_SECTORS: {
+  key: AccessPointSector;
+  name: string;
+  summary: string;
+}[] = [
+  {
+    key: "vehicular",
+    name: "Vehicular",
+    summary: "Barreras y portones de ingreso/egreso. Suele ligarse a ALPR.",
+  },
+  {
+    key: "peatonal",
+    name: "Peatonal",
+    summary: "Puertas y torniquetes. Suele ligarse a facial/tarjeta/QR Dahua.",
+  },
+  {
+    key: "servicio",
+    name: "Servicio",
+    summary: "Accesos auxiliares (basura, mantenimiento, emergencia).",
+  },
+];
+
+export const ACCESS_POINT_SENTIDOS: {
+  key: AccessPointSentido;
+  name: string;
+}[] = [
+  { key: "in", name: "Entrada" },
+  { key: "out", name: "Salida" },
+  { key: "both", name: "Entrada y salida" },
+];
+
+export function isAccessPointSector(v: string): v is AccessPointSector {
+  return ACCESS_POINT_SECTORS.some((s) => s.key === v);
+}
+
+export function isAccessPointSentido(v: string): v is AccessPointSentido {
+  return ACCESS_POINT_SENTIDOS.some((s) => s.key === v);
+}
+

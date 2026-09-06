@@ -11,6 +11,9 @@
     "dev": "npm run dev --workspaces --if-present",
     "dev:api": "npm run dev -w @accesopro/api",
     "dev:web": "npm run dev -w @accesopro/web",
+    "build:web": "npm run build -w @accesopro/web",
+    "start:api": "npm run start -w @accesopro/api",
+    "start:web": "npm run start -w @accesopro/web",
     "db:seed": "npm run seed -w @accesopro/api"
   },
   "engines": {

@@ -601,11 +601,15 @@ hardware.get("/dahua/:id/record-snapshot", async (c) => {
   const id = c.req.param("id");
   const url = c.req.query("url");
   if (!id || !url) return c.json({ error: "Falta id o url" }, 400);
+  const trimmed = url.trim();
+  if (!trimmed || trimmed === "undefined" || trimmed === "null") {
+    return c.json({ error: "URL de captura inválida" }, 400);
+  }
 
   const agentBase = (process.env.SITE_AGENT_URL ?? "http://127.0.0.1:8790").replace(/\/$/, "");
   const agentToken = process.env.SITE_AGENT_TOKEN ?? "accesopro-demo-agent";
   try {
-    const res = await fetch(`${agentBase}/dahua/${id}/record-snapshot?url=${encodeURIComponent(url)}`, {
+    const res = await fetch(`${agentBase}/dahua/${id}/record-snapshot?url=${encodeURIComponent(trimmed)}`, {
       headers: { Authorization: `Bearer ${agentToken}` },
       signal: AbortSignal.timeout(10000),
     });
@@ -619,9 +623,19 @@ hardware.get("/dahua/:id/record-snapshot", async (c) => {
         },
       });
     }
-    return c.json({ error: "Captura no disponible" }, res.status as any);
+    const status = res.status === 404 ? 404 : res.status === 503 ? 503 : 502;
+    return c.json(
+      { error: "Captura no disponible" },
+      {
+        status,
+        headers: { "Cache-Control": "no-store" },
+      },
+    );
   } catch (err) {
-    return c.json({ error: err instanceof Error ? err.message : "Error al descargar captura" }, 502);
+    return c.json(
+      { error: err instanceof Error ? err.message : "Error al descargar captura" },
+      { status: 502, headers: { "Cache-Control": "no-store" } },
+    );
   }
 });
 

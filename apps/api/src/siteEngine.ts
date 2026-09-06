@@ -1,4 +1,6 @@
-const FETCH_MS = 4000;
+const FETCH_MS = 2500;
+const HEALTH_OK_TTL_MS = 5000;
+const HEALTH_FAIL_TTL_MS = 15000;
 
 type DetectionRow = {
   id: number;
@@ -231,14 +233,32 @@ export async function engineRelay(action: "open" | "close", sentido: "in" | "out
   return res.json();
 }
 
+type HealthValue =
+  | { online: false }
+  | { online: true; in: ReturnType<typeof publicCam>; out: ReturnType<typeof publicCam> };
+
+let healthCache: { at: number; value: HealthValue } | null = null;
+
 export async function engineHealth() {
+  const now = Date.now();
+  if (healthCache && now - healthCache.at < (healthCache.value.online ? HEALTH_OK_TTL_MS : HEALTH_FAIL_TTL_MS)) {
+    return healthCache.value;
+  }
   try {
     const res = await siteFetch("/api/status");
-    if (!res.ok) return { online: false as const };
+    if (!res.ok) {
+      const offline = { online: false as const };
+      healthCache = { at: now, value: offline };
+      return offline;
+    }
     const data = (await res.json()) as { in?: unknown; out?: unknown };
-    return { online: true as const, in: publicCam(data.in), out: publicCam(data.out) };
+    const online = { online: true as const, in: publicCam(data.in), out: publicCam(data.out) };
+    healthCache = { at: now, value: online };
+    return online;
   } catch {
-    return { online: false as const };
+    const offline = { online: false as const };
+    healthCache = { at: now, value: offline };
+    return offline;
   }
 }
 

@@ -140,12 +140,29 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!tenantId) return;
-    const id = setInterval(() => {
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | null = null;
+
+    const tick = () => {
       api<Parameters<typeof mapStatus>[0]>(withTenant("/api/status", tenantId))
-        .then((st) => setStatus(mapStatus(st)))
-        .catch(() => null);
-    }, 8000);
-    return () => clearInterval(id);
+        .then((st) => {
+          if (cancelled) return;
+          setStatus(mapStatus(st));
+          // Si AccesoSeguro no responde, poll menos seguido para no trabar el hilo / API.
+          const ms = st.engineOnline === false ? 20000 : 8000;
+          timer = setTimeout(tick, ms);
+        })
+        .catch(() => {
+          if (cancelled) return;
+          timer = setTimeout(tick, 20000);
+        });
+    };
+
+    timer = setTimeout(tick, 8000);
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
   }, [tenantId]);
 
   const value = useMemo<Dash>(

@@ -4,10 +4,12 @@ import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 
+const isDev = process.env.NODE_ENV === "development";
+
 export default function LoginPage() {
   const router = useRouter();
-  const [email, setEmail] = useState("admin@accesopro.local");
-  const [password, setPassword] = useState("AccesoPro!2026");
+  const [email, setEmail] = useState(isDev ? "admin@accesopro.local" : "");
+  const [password, setPassword] = useState(isDev ? "AccesoPro!2026" : "");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 

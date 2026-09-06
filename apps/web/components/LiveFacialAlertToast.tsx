@@ -1,7 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { CheckCircle2, AlertTriangle, X, DoorOpen, ScanFace } from "lucide-react";
+import { markSnapshotFailed, snapshotProxyUrl } from "@/components/ops/parseFacialEvent";
+import { useEscapeKey } from "@/hooks/useEscapeKey";
 
 export type FacialEventAlert = {
   id: string;
@@ -26,178 +29,271 @@ export function LiveFacialAlertToast({ alert, onDismiss, onOpenRelay }: Props) {
   const onDismissRef = useRef(onDismiss);
   onDismissRef.current = onDismiss;
   const [animKey, setAnimKey] = useState(0);
+  const [mounted, setMounted] = useState(false);
+  const [liveAlert, setLiveAlert] = useState<FacialEventAlert | null>(null);
+  const [photoFailed, setPhotoFailed] = useState(false);
 
-  // Auto-cierre de 7 segundos sin timers de 50ms en JavaScript
+  const shown = liveAlert ?? alert;
+
+  const dismiss = () => {
+    setLiveAlert(null);
+    onDismissRef.current();
+  };
+
+  useEscapeKey(dismiss, !!shown);
+
   useEffect(() => {
-    if (!alert?.id) return;
+    setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    if (alert?.id) {
+      setLiveAlert(alert);
+      setPhotoFailed(false);
+    } else {
+      setLiveAlert(null);
+    }
+  }, [alert]);
+
+  // Fuente principal: CustomEvent (también si el host aún no setea prop)
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<FacialEventAlert>).detail;
+      if (!detail?.id) return;
+      setLiveAlert(detail);
+      setPhotoFailed(false);
+    };
+    window.addEventListener("ap:facial-alert", handler as EventListener);
+    return () => window.removeEventListener("ap:facial-alert", handler as EventListener);
+  }, []);
+
+  useEffect(() => {
+    if (!shown?.id) return;
     setAnimKey((k) => k + 1);
-
     const timer = setTimeout(() => {
-      onDismissRef.current();
-    }, 7000);
-
+      dismiss();
+    }, 60000);
     return () => clearTimeout(timer);
-  }, [alert?.id]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shown?.id]);
 
-  if (!alert) return null;
+  if (!mounted || !shown) return null;
 
-  const isApproved = alert.approved;
-  const photoProxy =
-    alert.deviceId && alert.snapshotUrl
-      ? `/api/dahua/${alert.deviceId}/record-snapshot?url=${encodeURIComponent(alert.snapshotUrl)}`
-      : null;
+  const isApproved = shown.approved;
+  const photoProxy = !photoFailed ? snapshotProxyUrl(shown.deviceId, shown.snapshotUrl) : null;
 
-  const timeStr = alert.createdAt
-    ? new Date(alert.createdAt).toLocaleTimeString("es-AR", {
+  const timeStr = shown.createdAt
+    ? new Date(shown.createdAt).toLocaleTimeString("es-AR", {
         hour: "2-digit",
         minute: "2-digit",
         second: "2-digit",
       })
     : "Ahora";
 
-  return (
+  const accent = isApproved ? "#10b981" : "#f43f5e";
+  const accentSoft = isApproved ? "#34d399" : "#fb7185";
+  const bg = isApproved ? "#ecfdf5" : "#fff1f2";
+
+  const node = (
     <aside
       aria-label="Alerta de reconocimiento facial en vivo"
-      className="fixed bottom-6 right-6 z-50 w-full max-w-md animate-in slide-in-from-bottom-5 duration-300 pointer-events-auto"
+      data-testid="facial-alert-toast"
+      style={{
+        position: "fixed",
+        top: 20,
+        right: 20,
+        left: "auto",
+        zIndex: 2147483646,
+        width: "min(420px, calc(100vw - 24px))",
+        pointerEvents: "auto",
+      }}
     >
       <style>{`
-        @keyframes toastProgressAnim {
+        @keyframes apToastIn {
+          from { opacity: 0; transform: translateY(-12px) scale(0.98); }
+          to { opacity: 1; transform: translateY(0) scale(1); }
+        }
+        @keyframes apToastBar {
           from { width: 100%; }
           to { width: 0%; }
         }
       `}</style>
       <div
-        className={`relative overflow-hidden rounded-2xl border-2 shadow-2xl backdrop-blur-xl transition-all ${
-          isApproved
-            ? "border-emerald-500/80 bg-white/95 dark:bg-slate-900/95 shadow-emerald-500/10"
-            : "border-rose-500/80 bg-white/95 dark:bg-slate-900/95 shadow-rose-500/10"
-        }`}
+        style={{
+          animation: "apToastIn 0.22s ease-out",
+          borderRadius: 16,
+          border: `3px solid ${accent}`,
+          background: bg,
+          boxShadow: "0 20px 50px rgba(0,0,0,0.35)",
+          overflow: "hidden",
+          color: "#0f172a",
+        }}
       >
-        {/* Barra de progreso de auto-cierre animada por CSS (GPU) sin forzar reflows ni re-renders */}
-        <div className="h-1.5 w-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
+        <div style={{ height: 4, background: "rgba(0,0,0,0.08)" }}>
           <div
             key={animKey}
-            className={`h-full ${isApproved ? "bg-emerald-500" : "bg-rose-500"}`}
             style={{
-              animation: "toastProgressAnim 7s linear forwards",
+              height: "100%",
+              background: isApproved ? "#059669" : "#e11d48",
+              animation: "apToastBar 60s linear forwards",
             }}
           />
         </div>
 
-        <div className="p-4">
-          <div className="flex items-start justify-between gap-3">
-            <div className="flex items-center gap-2">
-              <span
-                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-bold tracking-wide uppercase ${
-                  isApproved
-                    ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300"
-                    : "bg-rose-100 text-rose-800 dark:bg-rose-950/80 dark:text-rose-300"
-                }`}
+        {/* Foto a la izquierda + textos al costado */}
+        <div style={{ display: "flex", alignItems: "stretch", gap: 0, minHeight: 200 }}>
+          <div
+            style={{
+              width: 120,
+              flexShrink: 0,
+              alignSelf: "stretch",
+              minHeight: 200,
+              borderRight: `2px solid ${accentSoft}`,
+              background: "#0b1220",
+              position: "relative",
+              overflow: "hidden",
+            }}
+          >
+            {photoProxy ? (
+              // eslint-disable-next-line @next/next/no-img-element
+              <img
+                src={photoProxy}
+                alt={shown.personName}
+                style={{
+                  width: "100%",
+                  height: "100%",
+                  objectFit: "cover",
+                  objectPosition: "center top",
+                  display: "block",
+                }}
+                onError={() => {
+                  markSnapshotFailed(shown.deviceId, shown.snapshotUrl);
+                  setPhotoFailed(true);
+                }}
+              />
+            ) : (
+              <div
+                style={{
+                  position: "absolute",
+                  inset: 0,
+                  display: "grid",
+                  placeItems: "center",
+                  color: "#64748b",
+                  background: isApproved ? "#d1fae5" : "#ffe4e6",
+                }}
               >
-                {isApproved ? (
-                  <>
-                    <CheckCircle2 className="h-3.5 w-3.5" />
-                    Acceso Aprobado
-                  </>
-                ) : (
-                  <>
-                    <AlertTriangle className="h-3.5 w-3.5" />
-                    Acceso Denegado
-                  </>
-                )}
-              </span>
-              <span className="font-mono text-[11px] text-slate-500 dark:text-slate-400">
-                {timeStr}
-              </span>
-            </div>
-
-            <button
-              type="button"
-              onClick={onDismiss}
-              className="rounded-lg p-1 text-slate-400 hover:text-slate-600 dark:text-slate-500 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-              title="Cerrar notificación"
-            >
-              <X className="h-4 w-4" />
-            </button>
+                <ScanFace size={36} strokeWidth={1.5} />
+              </div>
+            )}
           </div>
 
-          <div className="mt-3 flex items-center gap-4">
-            {/* Foto del snapshot capturado por Dahua ASI (Proporción pantalla según datasheet: 272(H) × 480(V)) */}
-            <div
-              className={`relative w-20 aspect-[272/480] flex-shrink-0 overflow-hidden rounded-xl border-2 shadow-inner ${
-                isApproved
-                  ? "border-emerald-300 bg-emerald-50 dark:border-emerald-800 dark:bg-emerald-950/50"
-                  : "border-rose-300 bg-rose-50 dark:border-rose-800 dark:bg-rose-950/50"
-              }`}
-            >
-              {photoProxy ? (
-                <img
-                  src={photoProxy}
-                  alt={alert.personName}
-                  className="h-full w-full object-cover object-center"
-                  onError={(e) => {
-                    e.currentTarget.style.display = "none";
+          <div
+            style={{
+              flex: 1,
+              minWidth: 0,
+              padding: "12px 12px 12px 14px",
+              display: "flex",
+              flexDirection: "column",
+              justifyContent: "space-between",
+              gap: 8,
+            }}
+          >
+            <div>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "flex-start" }}>
+                <div
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 5,
+                    padding: "4px 9px",
+                    borderRadius: 999,
+                    fontSize: 10,
+                    fontWeight: 800,
+                    letterSpacing: "0.04em",
+                    textTransform: "uppercase",
+                    background: isApproved ? "#a7f3d0" : "#fecdd3",
+                    color: isApproved ? "#065f46" : "#9f1239",
                   }}
-                />
-              ) : null}
-              <div className="absolute inset-0 -z-10 flex flex-col items-center justify-center p-2 text-center text-slate-400 dark:text-slate-600">
-                <ScanFace className="h-7 w-7 mb-1 opacity-50" />
-                <span className="text-[9px] font-mono leading-tight">Sin Foto</span>
+                >
+                  {isApproved ? <CheckCircle2 size={12} /> : <AlertTriangle size={12} />}
+                  {isApproved ? "Acceso Aprobado" : "Acceso Denegado"}
+                </div>
+                <button
+                  type="button"
+                  onClick={dismiss}
+                  title="Cerrar"
+                  style={{
+                    border: "none",
+                    background: "transparent",
+                    cursor: "pointer",
+                    padding: 2,
+                    color: "#64748b",
+                    flexShrink: 0,
+                  }}
+                >
+                  <X size={16} />
+                </button>
               </div>
+
+              <div
+                style={{
+                  marginTop: 6,
+                  fontFamily: "ui-monospace, monospace",
+                  fontSize: 10,
+                  color: "#64748b",
+                }}
+              >
+                {timeStr}
+              </div>
+
+              <div style={{ marginTop: 10, fontSize: 17, fontWeight: 800, lineHeight: 1.15, wordBreak: "break-word" }}>
+                {shown.personName}
+              </div>
+              <div style={{ marginTop: 4, fontSize: 12, color: "#475569", lineHeight: 1.35 }}>
+                {shown.deviceName}
+                <span style={{ opacity: 0.55 }}> · </span>
+                {shown.method === "facial" ? "Rostro" : shown.method}
+              </div>
+              {!isApproved ? (
+                <div style={{ marginTop: 6, fontSize: 12, fontWeight: 700, color: "#be123c", lineHeight: 1.35 }}>
+                  {shown.reason || "Rostro no registrado"}
+                </div>
+              ) : (
+                <div style={{ marginTop: 6, fontSize: 12, fontWeight: 600, color: "#047857" }}>
+                  Identidad validada
+                </div>
+              )}
             </div>
 
-            {/* Detalles filiatorios y de ubicación */}
-            <div className="min-w-0 flex-1">
-              <h4 className="text-base font-bold text-slate-900 dark:text-slate-100 truncate">
-                {alert.personName}
-              </h4>
-
-              <p className="mt-0.5 text-xs text-slate-600 dark:text-slate-400 truncate">
-                Lector: <span className="font-semibold">{alert.deviceName}</span>
-              </p>
-
-              <p className="text-xs text-slate-600 dark:text-slate-400">
-                Método:{" "}
-                <span className="font-mono text-slate-700 dark:text-slate-300 uppercase">
-                  {alert.method === "facial"
-                    ? "Rostro Facial"
-                    : alert.method === "qr"
-                    ? "Código QR"
-                    : alert.method === "card"
-                    ? "Tarjeta RFID"
-                    : alert.method}
-                </span>
-              </p>
-
-              <div className="mt-1.5">
-                {isApproved ? (
-                  <span className="text-xs font-medium text-emerald-700 dark:text-emerald-400">
-                    Identidad validada correctamente
-                  </span>
-                ) : (
-                  <span className="text-xs font-semibold text-rose-700 dark:text-rose-400">
-                    Motivo: {alert.reason || "Rostro no registrado en el sistema"}
-                  </span>
-                )}
-              </div>
-            </div>
-          </div>
-
-          {/* Acciones de guardia si fue rechazado */}
-          {!isApproved && onOpenRelay && (
-            <div className="mt-3 pt-3 border-t border-slate-200 dark:border-slate-800 flex items-center justify-end gap-2">
+            {!isApproved && onOpenRelay ? (
               <button
                 type="button"
-                onClick={() => onOpenRelay(alert.deviceId)}
-                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-emerald-600 text-white hover:bg-emerald-700 dark:bg-emerald-500 dark:hover:bg-emerald-600 transition-colors shadow-sm"
+                onClick={() => onOpenRelay(shown.deviceId)}
+                style={{
+                  display: "inline-flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 6,
+                  alignSelf: "flex-start",
+                  border: "none",
+                  borderRadius: 10,
+                  padding: "9px 12px",
+                  background: "#059669",
+                  color: "#fff",
+                  fontSize: 12,
+                  fontWeight: 700,
+                  cursor: "pointer",
+                }}
               >
-                <DoorOpen className="h-3.5 w-3.5" />
+                <DoorOpen size={14} />
                 Apertura Manual Guardia
               </button>
-            </div>
-          )}
+            ) : null}
+          </div>
         </div>
       </div>
     </aside>
   );
+
+  return createPortal(node, document.body);
 }
