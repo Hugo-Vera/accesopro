@@ -377,14 +377,14 @@ def _dahua_stream_worker() -> None:
 
 
 def _dahua_poller_worker() -> None:
-    """Respaldo del stream HTTP; no hace falta cada 0.5s (quema CPU + CGI)."""
+    """Respaldo del stream HTTP; 2.5s equilibra toast vs CPU/CGI."""
     time.sleep(1.0)
     while not _stop.is_set():
         try:
             _poll_dahua()
         except Exception as exc:  # noqa: BLE001
             print(f"Poller worker: {exc}")
-        time.sleep(4.0)
+        time.sleep(2.5)
 
 
 @asynccontextmanager
