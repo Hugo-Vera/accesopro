@@ -65,6 +65,19 @@ export function ServerUpdatePanel() {
     return () => clearInterval(id);
   }, [modalOpen, status?.status]);
 
+  useEffect(() => {
+    const blob = `${status?.error ?? ""}\n${status?.logTail ?? ""}\n${error ?? ""}`;
+    if (!/insufficient permission|dubious ownership|safe\.directory|\.git\/objects/i.test(blob)) return;
+    setHintCmd(
+      [
+        "# Reparar dueño del repo y actualizar (consola Ubuntu):",
+        'sudo chown -R "$USER:$USER" /opt/accesopro',
+        "curl -fsSL https://raw.githubusercontent.com/Hugo-Vera/accesopro/master/scripts/update-ubuntu.sh | bash",
+        "# Docs: docs/UPDATE_UBUNTU.md",
+      ].join("\n"),
+    );
+  }, [status?.error, status?.logTail, error]);
+
   useEscapeKey(() => setModalOpen(false), modalOpen);
 
   if (!allowed) return null;

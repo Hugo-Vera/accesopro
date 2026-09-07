@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
 # Actualizar AccesoPro en Ubuntu (sin ALPR). Conserva volúmenes / DB.
+#
+# Orden correcto y anti-errores (.git root, dubious ownership):
+#   docs/UPDATE_UBUNTU.md
+#
 # Uso:
 #   curl -fsSL https://raw.githubusercontent.com/Hugo-Vera/accesopro/master/scripts/update-ubuntu.sh | bash
 #   # o local:
 #   bash /opt/accesopro/scripts/update-ubuntu.sh
-
+#
+# Tip: en .env poné ACCESOPRO_OWNER=<usuario-linux> para no dejar .git de root.
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
 

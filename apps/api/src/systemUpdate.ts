@@ -127,6 +127,7 @@ async function runHostUpdate() {
           ...process.env,
           ACCESOPRO_DIR: HOST_DIR,
           ACCESOPRO_PROFILE: process.env.ACCESOPRO_PROFILE ?? "dahua",
+          ACCESOPRO_OWNER: process.env.ACCESOPRO_OWNER ?? "",
           PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
         },
         maxBuffer: 4 * 1024 * 1024,

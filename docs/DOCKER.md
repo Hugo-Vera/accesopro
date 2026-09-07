@@ -12,14 +12,17 @@ Variables: `ACCESOPRO_PROFILE=core|dahua|full`, `ACCESOPRO_DIR=...`, `ACCESOPRO_
 
 ### Actualizar (orden fijo tras cada cambio en GitHub)
 
+Playbook completo (permisos `.git`, self-update, anti-errores): **[`docs/UPDATE_UBUNTU.md`](./UPDATE_UBUNTU.md)**.
+
 1. Push a `master`.
-2. En el dashboard: **Configuración → Módulos → Actualizar servidor** (preferido), o:
+2. En el dashboard: **Configuración → Módulos → Actualizar servidor** (preferido), o en consola:
    ```bash
+   sudo chown -R "$USER:$USER" /opt/accesopro   # si git falla por permisos root
    curl -fsSL https://raw.githubusercontent.com/Hugo-Vera/accesopro/master/scripts/update-ubuntu.sh | bash
    ```
 3. Recargar `http://IP:3000`. Conserva volúmenes (`api_data`).
 
-Self-update: `ACCESOPRO_ALLOW_SELF_UPDATE=1` + montaje `/opt/accesopro` y `docker.sock` (ver `docker-compose.yml`).
+Self-update: `ACCESOPRO_ALLOW_SELF_UPDATE=1`, montaje `/opt/accesopro` + `docker.sock`, y **`ACCESOPRO_OWNER=<usuario-linux>`** en `.env` (evita que el contenedor deje `.git` de root).
 
 ### Arranque automático al encender Ubuntu
 

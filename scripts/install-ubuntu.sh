@@ -153,6 +153,9 @@ write_env() {
   token="accesopro-demo-agent"
   bridge="accesopro-bridge"
 
+  local real_user="${SUDO_USER:-$USER}"
+  [[ "$real_user" == "root" ]] && real_user="${USER:-root}"
+
   cat > .env << EOF
 JWT_SECRET=${secret}
 WEB_ORIGIN=http://${ip}:3000
@@ -170,10 +173,11 @@ SITE_AGENT_TOKEN=${token}
 
 ACCESOPRO_ALLOW_SELF_UPDATE=1
 ACCESOPRO_HOST_DIR=${INSTALL_DIR}
+ACCESOPRO_OWNER=${real_user}
 ACCESOPRO_REPO=Hugo-Vera/accesopro
 ACCESOPRO_BRANCH=master
 EOF
-  ok "Creado .env (WEB_ORIGIN=http://${ip}:3000)"
+  ok "Creado .env (WEB_ORIGIN=http://${ip}:3000, OWNER=${real_user})"
 }
 
 open_firewall() {

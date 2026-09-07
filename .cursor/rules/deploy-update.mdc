@@ -7,6 +7,8 @@ alwaysApply: true
 
 Cada vez que se complete un cambio que deba verse en el servidor Ubuntu (`192.168.191.x` u `/opt/accesopro`), seguir **este orden** — no dejar solo el cambio local.
 
+Playbook completo (anti-errores `.git` / permisos): `docs/UPDATE_UBUNTU.md`.
+
 ## Orden obligatorio
 
 1. **Implementar** el cambio en el monorepo (web / api / agent / docs).
@@ -14,12 +16,13 @@ Cada vez que se complete un cambio que deba verse en el servidor Ubuntu (`192.16
 3. **Push a `master`** en `https://github.com/Hugo-Vera/accesopro` (origen del Ubuntu).
 4. **Actualizar el Ubuntu** por una de estas vías (preferir A):
    - **A — Desde el dashboard:** login admin → **Configuración → Módulos** → bloque **Servidor AccesoPro** → **Verificar** → **Actualizar servidor**.
-   - **B — Consola en el Ubuntu:**
+   - **B — Consola en el Ubuntu** (si el botón falla, 1ª vez, o `insufficient permission` / `dubious ownership`):
      ```bash
+     sudo chown -R "$USER:$USER" /opt/accesopro
      curl -fsSL https://raw.githubusercontent.com/Hugo-Vera/accesopro/master/scripts/update-ubuntu.sh | bash
      ```
 5. **Verificar** en el browser del servidor: `http://IP:3000` + health `8787` / agent `8790` si aplica.
-6. Recordar al usuario: la primera vez tras agregar self-update hace falta un update por consola; después alcanza el botón.
+6. Recordar: en `.env` del host conviene `ACCESOPRO_OWNER=<usuario-linux>` para que el self-update no deje `.git` de root.
 
 ## No hacer
 
@@ -27,22 +30,24 @@ Cada vez que se complete un cambio que deba verse en el servidor Ubuntu (`192.16
 - No pedir `docker compose down -v` (borra datos) salvo pedido explícito.
 - No mezclar ALPR (`profile alpr`) si el usuario dijo que no es urgente.
 - No inventar otro canal de deploy (FTP ad-hoc) si GitHub + update script/UI está disponible.
+- No indicar `git pull` como `usuario` si antes hubo update como root **sin** `chown` previo.
 
 ## Piezas del mecanismo
 
 | Pieza | Ruta |
 |-------|------|
+| Playbook operadores | `docs/UPDATE_UBUNTU.md` |
 | Instalador 1 comando | `scripts/install-ubuntu.sh` |
 | Updater consola | `scripts/update-ubuntu.sh` |
 | Agent LAN Linux | `deploy/docker-compose.linux.yml` |
 | API self-update | `apps/api/src/systemUpdate.ts` |
 | UI botón | `apps/web/components/ServerUpdatePanel.tsx` (Módulos) |
-| Env | `ACCESOPRO_ALLOW_SELF_UPDATE=1`, `ACCESOPRO_HOST_DIR=/opt/accesopro` |
+| Env | `ACCESOPRO_ALLOW_SELF_UPDATE=1`, `ACCESOPRO_HOST_DIR=/opt/accesopro`, `ACCESOPRO_OWNER=<user>` |
 
 ## Al cerrar una tarea de fix/feature desplegable
 
 En la respuesta final, incluir siempre:
 
 1. Qué se subió a GitHub (sí/no).
-2. Cómo actualizar el Ubuntu (**botón** o comando `update-ubuntu.sh`).
+2. Cómo actualizar el Ubuntu (**botón** o `curl … update-ubuntu.sh` / `chown` si hace falta).
 3. Qué probar después del rebuild.
