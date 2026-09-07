@@ -94,30 +94,80 @@ _last_person_access: dict[str, float] = {}
 _seen_records: set[str] = set()
 
 
+def _normalize_access_rec(rec: dict[str, Any]) -> dict[str, Any]:
+    """Aplana eventos del stream attach (data={...}) al mismo shape que RecordFinder."""
+    if not isinstance(rec, dict):
+        return {}
+    data = rec.get("data") if isinstance(rec.get("data"), dict) else None
+    if data is None and isinstance(rec.get("Data"), dict):
+        data = rec.get("Data")
+    out: dict[str, Any] = {**(data or {}), **rec}
+    # Alias comunes del eventManager vs recordFinder
+    if not out.get("CreateTime") and out.get("LocalTime"):
+        out["CreateTime"] = out["LocalTime"]
+    if not out.get("URL") and out.get("SnapURL"):
+        out["URL"] = out["SnapURL"]
+    if not out.get("CardName") and out.get("UserName"):
+        out["CardName"] = out["UserName"]
+    return out
+
+
+def _record_key(dev_id: str, rec: dict[str, Any]) -> str:
+    rec = _normalize_access_rec(rec)
+    rec_no = str(rec.get("RecNo") or rec.get("Index") or "").strip()
+    stamp = str(rec.get("CreateTime") or rec.get("Time") or rec.get("UTC") or "").strip()
+    if rec_no:
+        return f"{dev_id}:rec:{rec_no}:{stamp}"
+    uid = str(rec.get("UserID") or rec.get("CardNo") or rec.get("CardName") or "").strip()
+    url = str(rec.get("URL") or rec.get("SnapURL") or "").strip()
+    status = str(rec.get("Status") or "").strip()
+    method = str(rec.get("Method") or "").strip()
+    # Stream AccessControl a menudo sin RecNo: no usar solo "dev::" (colisionaba todos).
+    return f"{dev_id}:live:{uid}:{status}:{method}:{stamp}:{url}"
+
+
 def _dispatch_access_event(dev: dict[str, Any], rec: dict[str, Any], *, skip_debounce: bool = False) -> None:
     now = time.time()
-    dev_id = dev.get("id") or ""
-    stamp = rec.get("CreateTime") or rec.get("Time") or rec.get("UTC") or str(int(now))
-    rec_no = rec.get("RecNo") or rec.get("Index") or ""
-    key = f"{dev_id}:{rec_no}:{stamp}"
+    rec = _normalize_access_rec(rec)
+    if not rec:
+        return
+    dev_id = str(dev.get("id") or "")
+    key = _record_key(dev_id, rec)
     if key in _seen_records:
         return
-    _seen_records.add(key)
-    if len(_seen_records) > 3000:
-        _seen_records.clear()
 
-    status_code = str(rec.get("Status") or "0")
+    stamp = rec.get("CreateTime") or rec.get("Time") or rec.get("UTC") or str(int(now))
+    rec_no = rec.get("RecNo") or rec.get("Index") or ""
+    status_code = str(rec.get("Status") if rec.get("Status") is not None else "0")
     is_approved = status_code == "1"
     method_code = str(rec.get("Method") or "")
-    method_name = "remote" if method_code in ("4", 4) else "facial" if method_code in ("15", 15) else "card" if method_code in ("1", 1) else "fingerprint" if method_code in ("2", 2) else "qr" if method_code in ("6", 6) else "password" if method_code in ("3", 3) else "other"
-    person_name = rec.get("CardName") or rec.get("UserID") or ("Apertura remota" if method_name == "remote" else ("Rostro no identificado" if not is_approved else "Usuario Facial"))
+    method_name = (
+        "remote"
+        if method_code in ("4", 4)
+        else "facial"
+        if method_code in ("15", 15)
+        else "card"
+        if method_code in ("1", 1)
+        else "fingerprint"
+        if method_code in ("2", 2)
+        else "qr"
+        if method_code in ("6", 6)
+        else "password"
+        if method_code in ("3", 3)
+        else "other"
+    )
+    person_name = rec.get("CardName") or rec.get("UserID") or (
+        "Apertura remota"
+        if method_name == "remote"
+        else ("Rostro no identificado" if not is_approved else "Usuario Facial")
+    )
 
-    # Debounce de 3 segundos por persona para evitar spam (no en backfill inicial)
     person_identifier = str(rec.get("UserID") or rec.get("CardNo") or rec.get("CardName") or "anon")
     debounce_key = f"{dev_id}:{person_identifier}:{is_approved}"
     if not skip_debounce:
         last_event_time = _last_person_access.get(debounce_key, 0)
         if abs(now - last_event_time) < 3.0:
+            # No marcar seen: si el POST no corrió, el poll lo reintenta al vencer el debounce.
             return
     _last_person_access[debounce_key] = now
 
@@ -127,8 +177,7 @@ def _dispatch_access_event(dev: dict[str, Any], rec: dict[str, Any], *, skip_deb
             {
                 "type": "dahua_access",
                 "payload": {
-                    # raw Dahua primero; campos AccesoPro después (no los pisa el CGI)
-                    **rec,
+                    **{k: v for k, v in rec.items() if not isinstance(v, (dict, list))},
                     "deviceId": dev_id,
                     "deviceName": dev.get("name"),
                     "method": method_name,
@@ -144,14 +193,34 @@ def _dispatch_access_event(dev: dict[str, Any], rec: dict[str, Any], *, skip_deb
                 },
             },
         )
+        # Solo tras éxito: si falló el POST, el próximo poll reintenta.
+        _seen_records.add(key)
+        if len(_seen_records) > 3000:
+            # Conservar las claves más recientes aproximando con clear parcial
+            _seen_records.clear()
+            _seen_records.add(key)
     except Exception as exc:  # noqa: BLE001
         print(f"Evento Dahua no enviado: {exc}")
 
 
-def _record_key(dev_id: str, rec: dict[str, Any]) -> str:
-    stamp = rec.get("CreateTime") or rec.get("Time") or rec.get("UTC") or ""
-    rec_no = rec.get("RecNo") or rec.get("Index") or ""
-    return f"{dev_id}:{rec_no}:{stamp}"
+def _fetch_latest_records(dev: dict[str, Any], count: int = 25) -> list[dict[str, Any]]:
+    """Últimos N del ASI (RPC). El CGI find&count=N devuelve los más viejos y congela el historial."""
+    client = _client(dev)
+    try:
+        latest = client.get_latest_access_records(count)
+        if isinstance(latest, list) and latest:
+            return [_normalize_access_rec(r) for r in latest if isinstance(r, dict)]
+    except Exception as exc:  # noqa: BLE001
+        print(f"Dahua {dev.get('name')}: RPC latest falló ({exc}), fallback CGI")
+    try:
+        rows = client.access_records(count)
+        if not isinstance(rows, list):
+            return []
+        # CGI suele ir viejo→nuevo: quedarnos con la cola
+        tail = rows[-count:] if len(rows) > count else rows
+        return [_normalize_access_rec(r) for r in tail if isinstance(r, dict)]
+    except Exception:
+        return []
 
 
 def _poll_dahua() -> None:
@@ -165,7 +234,7 @@ def _poll_dahua() -> None:
         if _device_backoffs.get(dev_id, 0) > now:
             continue
         try:
-            records = _client(dev).access_records(30)
+            records = _fetch_latest_records(dev, 25)
             if dev_id in _device_backoffs:
                 _device_backoffs.pop(dev_id, None)
         except Exception as exc:  # noqa: BLE001
@@ -173,18 +242,13 @@ def _poll_dahua() -> None:
             print(f"Dahua {dev.get('name')} (pausado 40s): {exc}")
             continue
 
-        if not isinstance(records, list):
-            records = []
+        if not records:
+            continue
 
         if dev_id not in _device_initialized:
-            # Traer al historial AccesoPro los últimos del ASI (antes se marcaban vistos y no se enviaban)
             _device_initialized.add(dev_id)
+            # records ya son los más recientes
             recent = records[-20:] if len(records) > 20 else list(records)
-            recent_keys = {_record_key(dev_id, r) for r in recent}
-            for rec in records:
-                key = _record_key(dev_id, rec)
-                if key not in recent_keys:
-                    _seen_records.add(key)
             print(f"Dahua {dev.get('name')}: backfill {len(recent)} registros al historial")
             for rec in recent:
                 _dispatch_access_event(dev, rec, skip_debounce=True)

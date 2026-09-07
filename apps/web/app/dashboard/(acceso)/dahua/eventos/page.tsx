@@ -74,6 +74,7 @@ export default function DahuaEventosPage() {
     if (!tenantId) return;
 
     let es: EventSource | null = null;
+    let pollTimer: ReturnType<typeof setInterval> | null = null;
     try {
       es = new EventSource(withTenant("/api/events/stream?type=dahua_access", tenantId), {
         withCredentials: true,
@@ -83,7 +84,7 @@ export default function DahuaEventosPage() {
           const ev = JSON.parse(event.data);
           if (!ev?.id) return;
           setEvents((prev) => {
-            const filtered = prev.filter((x) => x.id !== ev.id);
+            if (prev.some((x) => x.id === ev.id)) return prev;
             return [
               {
                 id: ev.id,
@@ -91,18 +92,37 @@ export default function DahuaEventosPage() {
                 createdAt: ev.createdAt || Date.now(),
                 payload: ev.payload || {},
               },
-              ...filtered,
-            ];
+              ...prev,
+            ].slice(0, 80);
           });
-        } catch {}
+          setLoading(false);
+        } catch {
+          /* ignore */
+        }
       });
-    } catch {}
+      es.onerror = () => {
+        /* el poll cubre si SSE está caído */
+      };
+    } catch {
+      /* ignore */
+    }
 
-    const id = setInterval(loadEvents, 15000);
+    // SSE a menudo 503 detrás de Docker; poll corto para que el historial no quede congelado
+    pollTimer = setInterval(() => {
+      if (!tenantId) return;
+      api<{ events: EventRow[] }>(withTenant("/api/events?type=dahua_access", tenantId))
+        .then((d) => {
+          setEvents(d.events || []);
+          setError(null);
+        })
+        .catch(() => null);
+    }, 2500);
+
     return () => {
       if (es) es.close();
-      clearInterval(id);
+      if (pollTimer) clearInterval(pollTimer);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId]);
 
   const handleClearHistory = async () => {
