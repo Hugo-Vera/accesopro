@@ -10,18 +10,35 @@
 #   bash /opt/accesopro/scripts/update-ubuntu.sh
 #
 # Tip: en .env poné ACCESOPRO_OWNER=<usuario-linux> para no dejar .git de root.
+#
+# El compile (`compose build`) deja el dashboard en línea. El corte de :3000
+# es solo el `up -d` final (API healthy + web, ~30–90 s).
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
+export DOCKER_BUILDKIT=1
+export COMPOSE_DOCKER_CLI_BUILD=1
 
 INSTALL_DIR="${ACCESOPRO_DIR:-/opt/accesopro}"
 BRANCH="${ACCESOPRO_BRANCH:-master}"
 PROFILE="${ACCESOPRO_PROFILE:-dahua}"
+DATA_DIR="$INSTALL_DIR/apps/api/data"
+STATUS_FILE="$DATA_DIR/update.status"
+LOG_FILE="$DATA_DIR/update.log"
 
 need_root() {
   if [[ "$(id -u)" -eq 0 ]]; then "$@"
   else sudo "$@"
   fi
 }
+
+mkdir -p "$DATA_DIR"
+touch "$LOG_FILE"
+exec > >(tee -a "$LOG_FILE") 2>&1
+echo running > "$STATUS_FILE"
+on_err() {
+  echo error > "$STATUS_FILE" || true
+}
+trap on_err ERR
 
 # Dueño del árbol en el host (self-update del API corre como root y rompe .git).
 repo_owner() {
@@ -42,7 +59,6 @@ fix_repo_ownership() {
   local owner
   owner="$(repo_owner)"
   [[ -n "$owner" && "$owner" != "root" ]] || return 0
-  # Si .git no es escribible por el usuario actual, o corrimos como root: devolver al dueño del host
   if [[ "$(id -u)" -eq 0 ]] || [[ ! -w "$INSTALL_DIR/.git/objects" ]]; then
     echo "    Reparando permisos git → $owner:$owner"
     need_root chown -R "$owner:$owner" "$INSTALL_DIR"
@@ -61,6 +77,11 @@ compose() {
   fi
 }
 
+profile_args=()
+if [[ "$PROFILE" != "core" ]]; then
+  profile_args=(--profile dahua)
+fi
+
 echo "==> Actualizando AccesoPro en $INSTALL_DIR"
 cd "$INSTALL_DIR"
 fix_repo_ownership
@@ -74,11 +95,9 @@ ensure_safe_git_dir() {
   git config --global --add safe.directory "$dir" 2>/dev/null || true
 }
 ensure_safe_git_dir "$INSTALL_DIR"
-# Misma carpeta vista desde el host (/opt/...) y desde el bind-mount del API (/host/...)
 ensure_safe_git_dir "/opt/accesopro"
 ensure_safe_git_dir "/host/accesopro"
 
-# Preferir git como el dueño del repo (evita objetos root en .git/)
 OWNER="$(repo_owner)"
 run_git() {
   if [[ "$(id -u)" -eq 0 && -n "$OWNER" && "$OWNER" != "root" ]] && command -v runuser >/dev/null 2>&1; then
@@ -95,8 +114,6 @@ run_git checkout "$BRANCH"
 run_git pull --ff-only origin "$BRANCH" || run_git reset --hard "origin/$BRANCH"
 fix_repo_ownership
 
-
-# WEB_ORIGIN con IP LAN si sigue en localhost
 IP="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}' || true)"
 IP="${ACCESOPRO_IP:-${IP:-127.0.0.1}}"
 if [[ -f .env ]] && grep -q 'WEB_ORIGIN=http://localhost:3000' .env; then
@@ -104,20 +121,20 @@ if [[ -f .env ]] && grep -q 'WEB_ORIGIN=http://localhost:3000' .env; then
   echo "    WEB_ORIGIN → http://${IP}:3000"
 fi
 
-case "$PROFILE" in
-  core) compose up -d --build ;;
-  dahua) compose --profile dahua up -d --build ;;
-  *) compose --profile dahua up -d --build ;;
-esac
+echo "==> Compilando imágenes (el dashboard :3000 sigue en línea)"
+compose "${profile_args[@]}" build --parallel
 
-# Asegurar autostart (idempotente)
-if [[ -f "$INSTALL_DIR/scripts/enable-autostart.sh" ]]; then
+echo "==> Recreando contenedores (corte breve de :3000 hasta que el API esté healthy)"
+compose "${profile_args[@]}" up -d --no-build --remove-orphans
+
+if [[ "${ACCESOPRO_SKIP_AUTOSTART:-}" != "1" && -f "$INSTALL_DIR/scripts/enable-autostart.sh" ]]; then
   need_root bash "$INSTALL_DIR/scripts/enable-autostart.sh" || true
 fi
 
 fix_repo_ownership
+echo ok > "$STATUS_FILE"
 
 echo ""
 echo "Listo. Dashboard: http://${IP}:3000"
 echo "Autostart: systemctl status accesopro"
-compose --profile dahua ps
+compose "${profile_args[@]}" ps

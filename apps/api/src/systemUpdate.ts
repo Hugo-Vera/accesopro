@@ -14,6 +14,8 @@ const execFileAsync = promisify(execFile);
 const REPO = process.env.ACCESOPRO_REPO ?? "Hugo-Vera/accesopro";
 const BRANCH = process.env.ACCESOPRO_BRANCH ?? "master";
 const HOST_DIR = process.env.ACCESOPRO_HOST_DIR ?? "";
+const HOST_PATH = process.env.ACCESOPRO_HOST_PATH || "/opt/accesopro";
+const UPDATER_NAME = "accesopro-updater";
 const ALLOW =
   process.env.ACCESOPRO_ALLOW_SELF_UPDATE === "1" ||
   process.env.ACCESOPRO_ALLOW_SELF_UPDATE === "true";
@@ -95,6 +97,141 @@ function appendLog(line: string) {
   state.log = `${state.log}${line}\n`.slice(-12000);
 }
 
+function dataDir() {
+  if (HOST_DIR) return join(HOST_DIR, "apps/api/data");
+  return join(process.cwd(), "data");
+}
+
+function writeStatusFile(status: "running" | "ok" | "error", error?: string | null) {
+  try {
+    mkdirSync(dataDir(), { recursive: true });
+    writeFileSync(join(dataDir(), "update.status"), `${status}\n`);
+    if (error) writeFileSync(join(dataDir(), "update.error"), error);
+  } catch {
+    /* ignore */
+  }
+}
+
+function readDiskStatus(): { status: string; log: string; error: string | null } {
+  const dir = dataDir();
+  let diskStatus = "";
+  let log = "";
+  let error: string | null = null;
+  try {
+    diskStatus = readFileSync(join(dir, "update.status"), "utf8").trim();
+  } catch {
+    /* missing */
+  }
+  try {
+    log = readFileSync(join(dir, "update.log"), "utf8").slice(-8000);
+  } catch {
+    /* missing */
+  }
+  try {
+    error = readFileSync(join(dir, "update.error"), "utf8").trim() || null;
+  } catch {
+    /* missing */
+  }
+  return { status: diskStatus, log, error };
+}
+
+async function resolveSelfImage(): Promise<string> {
+  const hid = (process.env.HOSTNAME || "").trim();
+  if (hid) {
+    try {
+      const { stdout } = await execFileAsync("docker", ["inspect", "-f", "{{.Config.Image}}", hid], {
+        timeout: 8000,
+      });
+      const img = stdout.trim();
+      if (img) return img;
+    } catch {
+      /* ignore */
+    }
+  }
+  return "accesopro-api";
+}
+
+async function inspectUpdater(): Promise<{ running: boolean; exitCode: number | null; logs: string } | null> {
+  try {
+    const { stdout } = await execFileAsync(
+      "docker",
+      ["inspect", "-f", "{{.State.Running}} {{.State.ExitCode}}", UPDATER_NAME],
+      { timeout: 8000 },
+    );
+    const [runningRaw, codeRaw] = stdout.trim().split(/\s+/);
+    const running = runningRaw === "true";
+    const exitCode = Number(codeRaw);
+    let logs = "";
+    try {
+      const lr = await execFileAsync("docker", ["logs", "--tail", "80", UPDATER_NAME], {
+        timeout: 8000,
+        maxBuffer: 512 * 1024,
+      });
+      logs = `${lr.stdout || ""}${lr.stderr || ""}`.slice(-4000);
+    } catch {
+      /* ignore */
+    }
+    return { running, exitCode: Number.isFinite(exitCode) ? exitCode : null, logs };
+  } catch {
+    return null;
+  }
+}
+
+async function spawnDetachedUpdater(): Promise<string> {
+  await execFileAsync("docker", ["rm", "-f", UPDATER_NAME], { timeout: 15000 }).catch(() => undefined);
+  const image = await resolveSelfImage();
+  const script = join(HOST_PATH, "scripts", "update-ubuntu.sh");
+  const { stdout } = await execFileAsync(
+    "docker",
+    [
+      "run",
+      "-d",
+      "--name",
+      UPDATER_NAME,
+      "-v",
+      "/var/run/docker.sock:/var/run/docker.sock",
+      "-v",
+      `${HOST_PATH}:${HOST_PATH}`,
+      "-e",
+      `ACCESOPRO_DIR=${HOST_PATH}`,
+      "-e",
+      `ACCESOPRO_OWNER=${process.env.ACCESOPRO_OWNER ?? ""}`,
+      "-e",
+      `ACCESOPRO_PROFILE=${process.env.ACCESOPRO_PROFILE ?? "dahua"}`,
+      "-e",
+      `ACCESOPRO_BRANCH=${BRANCH}`,
+      "-e",
+      "ACCESOPRO_SKIP_AUTOSTART=1",
+      "-w",
+      HOST_PATH,
+      "--entrypoint",
+      "bash",
+      image,
+      script,
+    ],
+    { timeout: 30000 },
+  );
+  return stdout.trim();
+}
+
+function publicUpdateView() {
+  const disk = readDiskStatus();
+  let status = state.status;
+  let error = state.error;
+  let log = state.log;
+  if (disk.log) log = disk.log;
+  if (disk.status === "ok") {
+    status = "ok";
+    error = null;
+  } else if (disk.status === "error") {
+    status = "error";
+    error = disk.error || error || "El script de update falló";
+  } else if (disk.status === "running") {
+    if (status !== "ok") status = "running";
+  }
+  return { status, error, log };
+}
+
 async function runHostUpdate() {
   state = {
     status: "running",
@@ -103,25 +240,30 @@ async function runHostUpdate() {
     log: "",
     error: null,
   };
-  appendLog("Iniciando actualización…");
+  writeStatusFile("running");
+  appendLog("Iniciando actualización despegada del API…");
 
   if (!HOST_DIR || !existsSync(HOST_DIR)) {
     state.status = "error";
     state.error = "ACCESOPRO_HOST_DIR no montado (esperado /opt/accesopro en el host)";
     state.finishedAt = Date.now();
+    writeStatusFile("error", state.error);
     appendLog(state.error);
     return;
   }
 
-  const script = join(HOST_DIR, "scripts", "update-ubuntu.sh");
-  const cmd = existsSync(script) ? script : null;
-
   try {
     await ensureSafeGitDir();
     appendLog(`safe.directory → ${HOST_DIR}`);
-    if (cmd) {
-      appendLog(`Ejecutando ${cmd}`);
-      const { stdout, stderr } = await execFileAsync("bash", [cmd], {
+    appendLog(`Host path para Docker: ${HOST_PATH}`);
+    const cid = await spawnDetachedUpdater();
+    appendLog(`Updater suelto ${cid.slice(0, 12) || UPDATER_NAME} (el API se puede recrear sin matar el compile).`);
+    appendLog("Durante el build el dashboard sigue. Al final hay un corte breve de :3000.");
+  } catch (spawnErr) {
+    appendLog(`No se pudo soltar el updater (${spawnErr instanceof Error ? spawnErr.message : String(spawnErr)}). Fallback in-process.`);
+    const script = join(HOST_DIR, "scripts", "update-ubuntu.sh");
+    try {
+      const { stdout, stderr } = await execFileAsync("bash", [script], {
         cwd: HOST_DIR,
         timeout: 20 * 60 * 1000,
         env: {
@@ -129,49 +271,24 @@ async function runHostUpdate() {
           ACCESOPRO_DIR: HOST_DIR,
           ACCESOPRO_PROFILE: process.env.ACCESOPRO_PROFILE ?? "dahua",
           ACCESOPRO_OWNER: process.env.ACCESOPRO_OWNER ?? "",
+          ACCESOPRO_SKIP_AUTOSTART: "1",
           PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
         },
         maxBuffer: 4 * 1024 * 1024,
       });
       if (stdout) appendLog(stdout);
       if (stderr) appendLog(stderr);
-    } else {
-      appendLog("Sin update-ubuntu.sh — git pull + compose");
-      const { stdout: pullOut } = await execFileAsync(
-        "git",
-        ["-C", HOST_DIR, "pull", "--ff-only", "origin", BRANCH],
-        { timeout: 120000 },
-      );
-      appendLog(pullOut || "git pull ok");
-      const composeFiles = ["-f", "docker-compose.yml"];
-      if (existsSync(join(HOST_DIR, "deploy/docker-compose.linux.yml"))) {
-        composeFiles.push("-f", "deploy/docker-compose.linux.yml");
-      }
-      const { stdout: upOut, stderr: upErr } = await execFileAsync(
-        "docker",
-        ["compose", ...composeFiles, "--profile", "dahua", "up", "-d", "--build"],
-        { cwd: HOST_DIR, timeout: 20 * 60 * 1000, maxBuffer: 4 * 1024 * 1024 },
-      );
-      if (upOut) appendLog(upOut);
-      if (upErr) appendLog(upErr);
+      state.status = "ok";
+      state.finishedAt = Date.now();
+      writeStatusFile("ok");
+      appendLog("Actualización terminada. Recargá el dashboard.");
+    } catch (err) {
+      state.status = "error";
+      state.finishedAt = Date.now();
+      state.error = err instanceof Error ? err.message : String(err);
+      writeStatusFile("error", state.error);
+      appendLog(`ERROR: ${state.error}`);
     }
-    state.status = "ok";
-    state.finishedAt = Date.now();
-    appendLog("Actualización terminada. Recargá el dashboard en unos segundos.");
-    try {
-      mkdirSync(join(HOST_DIR, "apps/api/data"), { recursive: true });
-      writeFileSync(
-        join(HOST_DIR, "apps/api/data", "last-update.json"),
-        JSON.stringify({ at: new Date().toISOString(), ok: true }, null, 2),
-      );
-    } catch {
-      /* ignore */
-    }
-  } catch (err) {
-    state.status = "error";
-    state.finishedAt = Date.now();
-    state.error = err instanceof Error ? err.message : String(err);
-    appendLog(`ERROR: ${state.error}`);
   }
 }
 
@@ -198,11 +315,12 @@ systemApi.get("/system/version", async (c) => {
     updateAvailable,
     selfUpdateEnabled: ALLOW && Boolean(HOST_DIR),
     hostDir: HOST_DIR || null,
+    hostPath: HOST_PATH,
     update: {
-      status: state.status,
+      status: publicUpdateView().status,
       startedAt: state.startedAt,
       finishedAt: state.finishedAt,
-      error: state.error,
+      error: publicUpdateView().error,
     },
   });
 });
@@ -213,7 +331,25 @@ systemApi.get("/system/update-status", async (c) => {
     const denied = await denyUnlessCapability(user, "core.config");
     if (denied) return denied;
   }
-  return c.json({ ...state, logTail: state.log.slice(-4000) });
+  const view = publicUpdateView();
+  const up = await inspectUpdater();
+  let status = view.status;
+  let error = view.error;
+  let log = view.log;
+  if (up?.running) status = "running";
+  if (up && !up.running && up.exitCode !== 0 && up.exitCode != null && status !== "ok") {
+    status = "error";
+    error = error || `updater exit ${up.exitCode}`;
+  }
+  if (up && !up.running && up.exitCode === 0) status = "ok";
+  if (up?.logs) log = up.logs;
+  return c.json({
+    ...state,
+    status,
+    error,
+    log,
+    logTail: log.slice(-4000),
+  });
 });
 
 systemApi.post("/system/update", async (c) => {
@@ -236,12 +372,17 @@ systemApi.post("/system/update", async (c) => {
   if (state.status === "running") {
     return c.json({ error: "Ya hay una actualización en curso", status: state.status }, 409);
   }
+  const live = await inspectUpdater();
+  if (live?.running) {
+    return c.json({ error: "Ya hay un updater Docker en curso", status: "running" }, 409);
+  }
 
   void runHostUpdate();
   return c.json({
     ok: true,
     started: true,
-    message: "Actualización iniciada. El dashboard puede reiniciarse solo; recargá en 1–2 minutos.",
+    message:
+      "Actualización iniciada en un contenedor aparte. El compile no tumba el dashboard; al final hay un corte breve. Si ves conexión rechazada, esperá 1 minuto y recargá.",
   });
 });
 

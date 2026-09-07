@@ -17,7 +17,9 @@ El Ubuntu **no** se actualiza solo con el push: hace falta el paso 2.
 1. Login admin / plataforma.
 2. **Configuración → Módulos** → bloque **Servidor AccesoPro**.
 3. **Verificar** → **Actualizar servidor**.
-4. Esperar el rebuild; recargar el browser en 1–2 minutos.
+4. El compile (Next.js) tarda **varios minutos** y el dashboard **sigue**. Al recambiar contenedores, `:3000` se cae **30–90 s** (`ERR_CONNECTION_REFUSED`). Esperá y recargá.
+
+**Si el botón todavía es el viejo** (se cae :3000 al toque y no termina): usá **vía B** una vez. Ese `curl` baja el script nuevo; después el botón ya no se suicida con el contenedor API.
 
 Requisitos en `/opt/accesopro/.env`:
 
@@ -58,7 +60,7 @@ El script: `git pull` → `docker compose … --profile dahua up -d --build` →
 | `insufficient permission for adding an object to repository database .git/objects` | Self-update / `sudo` escribió `.git` como **root**; `hugo` no puede hacer `git pull` | `sudo chown -R hugo:hugo /opt/accesopro` y repetir update |
 | `detected dubious ownership in repository at '/host/accesopro'` | Git en el contenedor (root) vs dueño del host | El updater marca `safe.directory`; o `git config --global --add safe.directory /host/accesopro` **dentro** del contenedor API |
 | Botón de update falla la 1ª vez tras cambiar el script | Imagen API vieja / script local viejo | Usar **vía B** con `curl … \| bash` una vez |
-| Historial / toast no avanzan tras rebuild | Agent sin rebuild o poll CGI viejo | Asegurar profile `dahua` y que el contenedor **agent** se recreó |
+| `ERR_CONNECTION_REFUSED` en `:3000` a mitad de update | Rebuild de `web` (o `web` espera a que el API esté healthy) | Esperar 1 min y recargar. El compile largo ya no debería tumbar el sitio |
 
 ## Variables importantes
 

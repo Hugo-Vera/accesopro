@@ -41,6 +41,8 @@ export function ServerUpdatePanel() {
   const [status, setStatus] = useState<UpdateStatus | null>(null);
   const [hintCmd, setHintCmd] = useState<string | null>(null);
 
+  const [sawDisconnect, setSawDisconnect] = useState(false);
+
   const load = useCallback(async () => {
     if (!allowed) return;
     try {
@@ -57,14 +59,27 @@ export function ServerUpdatePanel() {
   }, [load]);
 
   useEffect(() => {
-    if (!modalOpen || status?.status !== "running") return;
+    if (!modalOpen) return;
     const id = setInterval(() => {
       api<UpdateStatus>("/api/system/update-status")
-        .then(setStatus)
-        .catch(() => null);
-    }, 2000);
+        .then((st) => {
+          setStatus(st);
+          if (st.status === "ok" && sawDisconnect) {
+            window.location.reload();
+          }
+        })
+        .catch(() => {
+          setSawDisconnect(true);
+          setStatus({
+            status: "running",
+            error: null,
+            logTail:
+              "Corte breve: Docker está levantando API + web. Si el browser muestra conexión rechazada, esperá ~1 minuto y recargá. No es un fallo del update.",
+          });
+        });
+    }, 3000);
     return () => clearInterval(id);
-  }, [modalOpen, status?.status]);
+  }, [modalOpen, sawDisconnect]);
 
   useEffect(() => {
     const blob = `${status?.error ?? ""}\n${status?.logTail ?? ""}\n${error ?? ""}`;
@@ -87,6 +102,13 @@ export function ServerUpdatePanel() {
     setBusy(true);
     setError(null);
     setHintCmd(null);
+    setSawDisconnect(false);
+    setModalOpen(true);
+    setStatus({
+      status: "running",
+      error: null,
+      logTail: "Lanzando updater suelto. El compile de Next puede tardar varios minutos con el sitio todavía arriba.",
+    });
     try {
       const res = await api<{
         ok?: boolean;
@@ -97,8 +119,6 @@ export function ServerUpdatePanel() {
         command?: string;
       }>("/api/system/update", { method: "POST" });
       if (res.command) setHintCmd(res.command);
-      setModalOpen(true);
-      setStatus({ status: res.started ? "running" : "idle", error: res.error ?? null });
       if (res.started) {
         const st = await api<UpdateStatus>("/api/system/update-status").catch(() => null);
         if (st) setStatus(st);
@@ -126,7 +146,7 @@ export function ServerUpdatePanel() {
         <div>
           <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Servidor AccesoPro</h2>
           <p className="text-sm text-slate-500 dark:text-slate-400">
-            Versión {info?.appVersion ?? "—"} instalada vs GitHub. Actualizá el Ubuntu sin entrar por consola.
+            Versión {info?.appVersion ?? "—"} vs GitHub. El compile deja el sitio en línea; al final hay un corte breve de :3000.
           </p>
         </div>
         <button
@@ -188,7 +208,7 @@ export function ServerUpdatePanel() {
           </p>
         ) : (
           <p className="text-xs text-slate-500 dark:text-slate-400">
-            Requiere permiso de configuración. Durante el update el sitio puede reiniciarse solo.
+            El Next.js tarda varios minutos en compilar (el dashboard sigue). Después Docker recrea API y web: unos 30–90 s sin :3000. Si ves «conexión rechazada», esperá y recargá.
           </p>
         )}
       </div>
@@ -212,7 +232,9 @@ export function ServerUpdatePanel() {
                   {status?.status === "running" ? (
                     <>
                       <RefreshCw className="animate-spin text-indigo-600" size={16} />
-                      <span>En curso… el sitio puede reiniciarse solo.</span>
+                      <span>
+                        En curso. El compile no tumba el sitio. Al recambiar contenedores :3000 se cae un minuto: eso es normal.
+                      </span>
                     </>
                   ) : status?.status === "ok" ? (
                     <>
