@@ -211,7 +211,7 @@ accessPointsApi.post("/access-points", async (c) => {
   if (!name) return c.json({ error: "Nombre obligatorio" }, 400);
   const sector: AccessPointSector = isAccessPointSector(String(body.sector || ""))
     ? (body.sector as AccessPointSector)
-    : "peatonal";
+    : "vehicular";
   const sentido: AccessPointSentido = isAccessPointSentido(String(body.sentido || ""))
     ? (body.sentido as AccessPointSentido)
     : "both";
@@ -412,6 +412,143 @@ async function replaceWiring(
     }
   }
   return null;
+}
+
+export function parseDeviceSentido(v: unknown): "in" | "out" {
+  return String(v || "").trim() === "out" ? "out" : "in";
+}
+
+export function parseDeviceLaneSector(v: unknown): "vehicular" | "peatonal" {
+  return String(v || "").trim() === "peatonal" ? "peatonal" : "vehicular";
+}
+
+function lanePointName(sector: "vehicular" | "peatonal", sentido: "in" | "out") {
+  const lado = sentido === "out" ? "Salida" : "Ingreso";
+  return `${lado} ${sector}`;
+}
+
+async function ensureLanePoint(siteId: string, sector: "vehicular" | "peatonal", sentido: "in" | "out") {
+  const name = lanePointName(sector, sentido);
+  const existing = await db
+    .select()
+    .from(accessPoints)
+    .where(and(eq(accessPoints.siteId, siteId), eq(accessPoints.sentido, sentido), eq(accessPoints.sector, sector)));
+  const preferred =
+    existing.find((p) => p.enabled !== false && p.name === name) ||
+    existing.find((p) => p.enabled !== false) ||
+    existing[0];
+  if (preferred) return preferred;
+  const id = nid();
+  const sortBase = sector === "vehicular" ? 10 : 30;
+  await db.insert(accessPoints).values({
+    id,
+    siteId,
+    name,
+    sector,
+    sentido,
+    sortOrder: sentido === "out" ? sortBase + 10 : sortBase,
+    enabled: true,
+    mapX: null,
+    mapY: null,
+    notes: null,
+    createdAt: new Date(),
+  });
+  const row = await db.select().from(accessPoints).where(eq(accessPoints.id, id)).get();
+  if (!row) throw new Error("No se pudo crear el punto de acceso");
+  return row;
+}
+
+/** Recablea el equipo al carril Entrada o Salida según su ficha. No habla con el ASI. */
+export async function syncDeviceLaneWiring(
+  siteId: string,
+  device: {
+    id: string;
+    name: string;
+    deviceType: string;
+    sentido: "in" | "out";
+    laneSector: "vehicular" | "peatonal";
+    useLive: boolean;
+    useLocalRelay: boolean;
+  },
+  opts?: { actuatorName?: string; kind?: string },
+) {
+  const sentido = parseDeviceSentido(device.sentido);
+  const laneSector = parseDeviceLaneSector(device.laneSector);
+  const point = await ensureLanePoint(siteId, laneSector, sentido);
+
+  await db.delete(accessPointDevices).where(eq(accessPointDevices.dahuaDeviceId, device.id));
+  if (device.deviceType !== "access_controller" && device.deviceType !== "camera_ip") {
+    await db.insert(accessPointDevices).values({
+      accessPointId: point.id,
+      dahuaDeviceId: device.id,
+      role: device.useLive ? "both" : "validator",
+    });
+  }
+
+  const camId = `cam_${device.id}`;
+  await db.delete(accessPointCameras).where(eq(accessPointCameras.cameraId, camId));
+  if (device.deviceType === "camera_ip" && device.useLive) {
+    const cam = await db.select().from(cameras).where(eq(cameras.id, camId)).get();
+    if (cam) {
+      await db.insert(accessPointCameras).values({
+        accessPointId: point.id,
+        cameraId: camId,
+        role: "live",
+        sentido,
+      });
+    }
+  }
+
+  const acts = await db.select().from(actuators).where(eq(actuators.dahuaDeviceId, device.id));
+  const local =
+    acts.find((a) => a.driver === "dahua" && Number(a.dahuaChannel || 1) === 1) ??
+    (device.deviceType === "camera_ip" ? undefined : acts[0]);
+
+  if (device.deviceType === "camera_ip") {
+    return;
+  }
+
+  let act = local;
+  if (!act && device.useLocalRelay) {
+    const id = nid();
+    await db.insert(actuators).values({
+      id,
+      siteId,
+      name: (opts?.actuatorName || device.name).trim(),
+      kind: opts?.kind || (laneSector === "vehicular" ? "barrier" : "door"),
+      driver: "dahua",
+      dahuaDeviceId: device.id,
+      dahuaChannel: 1,
+      pulseMs: 1000,
+      triggerDahua: true,
+      triggerManual: true,
+      engineSentido: sentido,
+      createdAt: new Date(),
+    });
+    act = await db.select().from(actuators).where(eq(actuators.id, id)).get();
+  }
+
+  if (!act) return;
+
+  await db.delete(accessPointActuators).where(eq(accessPointActuators.actuatorId, act.id));
+  await db
+    .update(actuators)
+    .set({
+      name: opts?.actuatorName?.trim() || act.name,
+      kind: opts?.kind || act.kind,
+      triggerManual: device.useLocalRelay,
+      engineSentido: sentido,
+    })
+    .where(eq(actuators.id, act.id));
+
+  if (device.useLocalRelay) {
+    await db.insert(accessPointActuators).values({
+      accessPointId: point.id,
+      actuatorId: act.id,
+      role: "primary",
+      sortOrder: 0,
+    });
+  }
 }
 
 /** Resuelve actuadores a disparar por equipo Dahua (vía cableado; fallback legacy). */

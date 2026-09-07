@@ -16,6 +16,9 @@ export type LiveDevice = {
   model?: string | null;
   location?: string | null;
   rtspUrl?: string | null;
+  sentido?: "in" | "out" | string | null;
+  useLive?: boolean;
+  useLocalRelay?: boolean;
 };
 
 export type LiveLane = "in" | "out";
@@ -66,8 +69,14 @@ export function assignLiveLanes(
   }
 
   for (const d of liveable) {
-    if (!inId) inId = d.id;
-    else if (!outId && d.id !== inId) outId = d.id;
+    if (inId && outId) break;
+    if (inId === d.id || outId === d.id) continue;
+    const g = laneGuess(d);
+    if (g === "out") {
+      if (!outId) outId = d.id;
+    } else if (!inId) {
+      inId = d.id;
+    }
   }
 
   return { inId, outId };
@@ -263,11 +272,10 @@ export function DahuaLivePanel({
       >
         {emptyOut ? (
           <div className="grid max-w-[220px] place-items-center px-3 text-center">
-            <p className="text-[12px] font-semibold text-slate-300">Lector de salida</p>
+            <p className="text-[12px] font-semibold text-slate-300">Sin lector de salida</p>
             <p className="mt-1.5 text-[11px] leading-snug text-[#6b8498]">
-              Elegí un equipo arriba: queda como lector de salida (live + historial). En prueba podés
-              usar el mismo ASI que en ingreso. En producción cableá un segundo ASI a un punto con
-              sentido salida.
+              Cargá el segundo ASI desde Dispositivos, ficha Salida (Live y relé local). Un equipo no
+              cubre los dos sentidos.
             </p>
           </div>
         ) : !streamEnabled ? (

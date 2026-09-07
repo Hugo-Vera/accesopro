@@ -22,8 +22,8 @@ Respaldo: si el attach se cae, RecordFinder pide 5–12 registros **nuevos** vs 
 | Toast anti-F5 (watermark + sessionStorage) | `useOpsEvents` |
 | Sync incremental ASI↔DB (`/agent/sync-state`) | `agent.ts` + `main.py` |
 | Updater suelto + `compose build` con sitio arriba | `systemUpdate.ts`, `update-ubuntu.sh` |
-| 1 ASI lab: Salida hereda relés de Ingreso | `HomeDashboard` `sharedReader` |
-| Live OUT no abre 2º RTSP si es el mismo ASI | `streamEnabled={!sharedReader}` |
+| 1 ASI = Entrada; Salida espera el 2º ASI | ficha `sentido` + `HomeDashboard` |
+| Live OUT apagado si no hay lector de salida | `streamEnabled={Boolean(outDeviceId)}` |
 
 ## Orden de trabajo (práctica)
 
@@ -36,7 +36,7 @@ Live fluido + toast al instante. Verificar en el barrio:
 1. F5 en `/dashboard`: **sin** toast.
 2. Pasar la cara: toast + fila IN en **menos de ~1 s**; live no se congela.
 3. F5 otra vez: el toast no vuelve; el historial sí.
-4. Módulos: versión **0.2.4**.
+4. Módulos: versión **0.2.5**.
 
 Ubuntu: el botón de update **viejo** se suicida. Primera vez:
 
@@ -48,13 +48,11 @@ curl -fsSL https://raw.githubusercontent.com/Hugo-Vera/accesopro/master/scripts/
 
 ### 1 — Cableado (barrio 2 ASI)
 
-Sin esto, IN/OUT es heurística de nombre.
+La ficha de Dispositivos (`sentido` Entrada|Salida, carril vehicular|peatonal, Live, Relé local) recablea `Ingreso vehicular` / `Salida vehicular` (o peatonal si se elige). Un ASI no es los dos sentidos.
 
-1. UI admin de `access_points` (modal Nuevo/Editar, Escape, tema).
-2. Cablear: punto IN ↔ ASI entrada + relé; punto OUT ↔ ASI salida + relé.
-3. Quitar dependencia del dropdown salvo override de sesión.
-
-**Done:** el home respeta sentido sin elegir a mano.
+1. UI admin de `access_points` (modal Nuevo/Editar, Escape, tema) para cableados extra.
+2. Segundo ASI = ficha Salida.
+3. Dropdown AccesoCam = override de sesión.
 
 ### 2 — Apertura coherente
 

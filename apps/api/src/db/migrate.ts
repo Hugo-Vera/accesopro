@@ -10,12 +10,14 @@ import {
   cameras,
   dahuaDevices,
 } from "./schema.js";
+import { syncDeviceLaneWiring } from "../accessPoints.js";
 
-async function addColumn(table: string, column: string, def: string) {
+async function addColumn(table: string, column: string, def: string): Promise<boolean> {
   try {
     await client.execute(`ALTER TABLE ${table} ADD COLUMN ${column} ${def}`);
+    return true;
   } catch {
-    // ya existe
+    return false;
   }
 }
 
@@ -123,6 +125,10 @@ export async function ensureSchema() {
   await addColumn("dahua_devices", "last_status", "TEXT NOT NULL DEFAULT 'unknown'");
   await addColumn("dahua_devices", "last_seen_at", "INTEGER");
   await addColumn("dahua_devices", "rtsp_url", "TEXT");
+  const addedSentido = await addColumn("dahua_devices", "sentido", "TEXT NOT NULL DEFAULT 'in'");
+  await addColumn("dahua_devices", "use_live", "INTEGER NOT NULL DEFAULT 1");
+  await addColumn("dahua_devices", "use_local_relay", "INTEGER NOT NULL DEFAULT 1");
+  const addedLaneSector = await addColumn("dahua_devices", "lane_sector", "TEXT NOT NULL DEFAULT 'vehicular'");
   await db.run(sql`
     CREATE TABLE IF NOT EXISTS actuators (
       id TEXT PRIMARY KEY,
@@ -344,6 +350,72 @@ export async function ensureSchema() {
   `);
 
   await backfillAccessPointsFromLegacy();
+  await backfillDeviceLaneFields(addedSentido, addedLaneSector);
+}
+
+async function backfillDeviceLaneFields(guessFromName: boolean, recableSector: boolean) {
+  const rows = await db.select().from(dahuaDevices);
+  const wired = await db.select().from(accessPointDevices);
+  const camWired = await db.select().from(accessPointCameras);
+  const wiredIds = new Set(wired.map((w) => w.dahuaDeviceId));
+  const camWiredIds = new Set(
+    camWired.map((w) => (w.cameraId.startsWith("cam_") ? w.cameraId.slice(4) : w.cameraId)),
+  );
+  for (const d of rows) {
+    const isCam = d.deviceType === "camera_ip";
+    if (isCam && d.useLocalRelay) {
+      await db.update(dahuaDevices).set({ useLocalRelay: false }).where(eq(dahuaDevices.id, d.id));
+    }
+    const blob = `${d.name} ${d.location ?? ""}`.toLowerCase();
+    let sentido = parseDeviceSentidoLocal(d.sentido);
+    if (guessFromName && /salid|egres|\bout\b/.test(blob) && !/ingres|entrad/.test(blob)) {
+      sentido = "out";
+    }
+    let laneSector = parseDeviceLaneSectorLocal(d.laneSector);
+    if (recableSector) {
+      if (/peaton|torniquete|molinete/.test(blob) && !/vehicul|barrera|port[oó]n/.test(blob)) {
+        laneSector = "peatonal";
+      } else {
+        laneSector = "vehicular";
+      }
+    }
+    const useLive = d.useLive !== false;
+    const useLocalRelay = isCam ? false : d.useLocalRelay !== false;
+    if (
+      d.sentido !== sentido ||
+      d.laneSector !== laneSector ||
+      d.useLive !== useLive ||
+      d.useLocalRelay !== useLocalRelay
+    ) {
+      await db
+        .update(dahuaDevices)
+        .set({ sentido, laneSector, useLive, useLocalRelay })
+        .where(eq(dahuaDevices.id, d.id));
+    }
+    const alreadyWired = wiredIds.has(d.id) || (isCam && camWiredIds.has(d.id));
+    if (!recableSector && alreadyWired) continue;
+    try {
+      await syncDeviceLaneWiring(d.siteId, {
+        id: d.id,
+        name: d.name,
+        deviceType: d.deviceType || "asi_facial",
+        sentido,
+        laneSector,
+        useLive,
+        useLocalRelay,
+      });
+    } catch {
+      // no bloquear arranque
+    }
+  }
+}
+
+function parseDeviceSentidoLocal(v: unknown): "in" | "out" {
+  return String(v || "").trim() === "out" ? "out" : "in";
+}
+
+function parseDeviceLaneSectorLocal(v: unknown): "vehicular" | "peatonal" {
+  return String(v || "").trim() === "peatonal" ? "peatonal" : "vehicular";
 }
 
 /** Crea un punto por actuador aún no cableado, y engancha device/cámara legacy. */

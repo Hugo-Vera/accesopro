@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
+import { useEscapeKey } from "@/hooks/useEscapeKey";
 import { api, withTenant } from "@/lib/api";
 import { useDash } from "@/components/DashboardProvider";
 import {
@@ -46,6 +47,10 @@ type Device = {
   lastStatus?: "online" | "offline" | "unknown";
   lastSeenAt?: string | null;
   rtspUrl?: string | null;
+  sentido?: "in" | "out" | string | null;
+  laneSector?: "vehicular" | "peatonal" | string | null;
+  useLive?: boolean;
+  useLocalRelay?: boolean;
 };
 
 type Actuator = {
@@ -78,6 +83,10 @@ type FormState = {
   // Campos Actuador (ASI / VTO / ALPR)
   actuatorName: string;
   kind: string;
+  sentido: "in" | "out";
+  laneSector: "vehicular" | "peatonal";
+  useLive: boolean;
+  useLocalRelay: boolean;
 };
 
 function buildRtspUrl(
@@ -112,7 +121,11 @@ const emptyForm = (): FormState => ({
   customRtsp: false,
   linkActuatorForAlpr: false,
   actuatorName: "",
-  kind: "door",
+  kind: "barrier",
+  sentido: "in",
+  laneSector: "vehicular",
+  useLive: true,
+  useLocalRelay: true,
 });
 
 type TestResult = {
@@ -147,6 +160,9 @@ export function EquipmentPanel() {
 
   const canEdit = can("core.config");
   const canOpen = can("dahua.open") || can("ops.relay");
+
+  useEscapeKey(closeModal, modalMode !== null);
+  useEscapeKey(closeTestingModal, testingDevice !== null);
 
   const t = (path: string) => withTenant(path, tenantId);
 
@@ -204,7 +220,11 @@ export function EquipmentPanel() {
       customRtsp: Boolean(d.rtspUrl && !d.rtspUrl.includes("/cam/realmonitor")),
       linkActuatorForAlpr: Boolean(act),
       actuatorName: act?.name ?? (dt === "camera_ip" ? "Barrera Entrada" : d.name),
-      kind: act?.kind ?? (dt === "camera_ip" ? "barrier" : "door"),
+      kind: act?.kind ?? (d.laneSector === "peatonal" && dt !== "camera_ip" ? "door" : "barrier"),
+      sentido: d.sentido === "out" ? "out" : "in",
+      laneSector: d.laneSector === "peatonal" ? "peatonal" : "vehicular",
+      useLive: d.useLive !== false,
+      useLocalRelay: dt === "camera_ip" ? false : d.useLocalRelay !== false,
     });
     setShowPassword(false);
     setDetectSuccess(null);
@@ -355,10 +375,24 @@ export function EquipmentPanel() {
         port: Number(form.port) || 80,
         username: form.username.trim(),
         password: form.password ? form.password : undefined,
-        // Actuador solo si es biométrico/intercom o si explícitamente se vincula para ALPR
-        actuatorName:
-          !isCam || form.linkActuatorForAlpr ? form.actuatorName.trim() || form.name.trim() : "",
-        kind: !isCam || form.linkActuatorForAlpr ? form.kind : "door",
+        sentido: form.sentido,
+        laneSector: form.laneSector,
+        useLive: form.useLive,
+        useLocalRelay: isCam ? false : form.useLocalRelay,
+        actuatorName: isCam
+          ? form.linkActuatorForAlpr
+            ? form.actuatorName.trim() || form.name.trim()
+            : ""
+          : form.useLocalRelay
+            ? form.actuatorName.trim() || form.name.trim()
+            : "",
+        kind: isCam
+          ? form.linkActuatorForAlpr
+            ? form.kind
+            : "door"
+          : form.useLocalRelay
+            ? form.kind
+            : "door",
       };
 
       if (modalMode === "create") {
@@ -694,10 +728,21 @@ export function EquipmentPanel() {
 
                   {/* Detalles Técnicos */}
                   <div className="mt-3 rounded-xl bg-slate-50 dark:bg-slate-800/30 p-3 text-xs space-y-1.5 border border-slate-100 dark:border-slate-800">
+                    <div className="flex items-center justify-between text-slate-600 dark:text-slate-400">
+                      <span className="text-slate-400 dark:text-slate-500">Portería:</span>
+                      <span className="font-medium text-slate-800 dark:text-slate-200">
+                        {d.sentido === "out" ? "Salida" : "Entrada"}
+                        {" · "}
+                        {d.laneSector === "peatonal" ? "Peatonal" : "Vehicular"}
+                        {d.useLive !== false ? " · Live" : ""}
+                        {!isCam && d.useLocalRelay !== false ? " · Relé local" : ""}
+                      </span>
+                    </div>
+
                     {d.location && (
                       <div className="flex items-center justify-between text-slate-600 dark:text-slate-400">
                         <span className="flex items-center gap-1 text-slate-400 dark:text-slate-500">
-                          <MapPin className="h-3 w-3" /> Sector:
+                          <MapPin className="h-3 w-3" /> Ubicación:
                         </span>
                         <span className="font-medium text-slate-800 dark:text-slate-200">
                           {d.location}
@@ -784,8 +829,14 @@ export function EquipmentPanel() {
       {/* MODAL DE CREACIÓN / EDICIÓN CON CAMPOS CONTEXTUALES Y AUTO-COMPLETADO      */}
       {/* ========================================================================= */}
       {modalMode && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm animate-in fade-in duration-150">
-          <div className="relative flex flex-col w-full max-w-xl rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0f172a] shadow-2xl overflow-hidden animate-in zoom-in-95 duration-150">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm animate-in fade-in duration-150"
+          onClick={closeModal}
+        >
+          <div
+            className="relative flex flex-col w-full max-w-xl rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0f172a] shadow-2xl overflow-hidden animate-in zoom-in-95 duration-150"
+            onClick={(e) => e.stopPropagation()}
+          >
             {/* Modal Header */}
             <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 px-6 py-4">
               <div className="flex items-center gap-3">
@@ -853,6 +904,7 @@ export function EquipmentPanel() {
                                   : form.model,
                         };
                         if (isCam) {
+                          updated.useLocalRelay = false;
                           updated.rtspUrl = buildRtspUrl(
                             form.username,
                             form.password,
@@ -861,6 +913,8 @@ export function EquipmentPanel() {
                             form.rtspChannel,
                             form.rtspSubtype,
                           );
+                        } else if (!form.useLocalRelay && form.deviceType === "camera_ip") {
+                          updated.useLocalRelay = true;
                         }
                         setForm((prev) => ({ ...prev, ...updated }));
                       }}
@@ -1008,11 +1062,107 @@ export function EquipmentPanel() {
                     </label>
                     <input
                       type="text"
-                      placeholder="Ej. Barrera Ingreso Principal Lote 1"
+                      placeholder="Ej. Barrera principal, lote 1"
                       value={form.location}
                       onChange={(e) => setForm({ ...form, location: e.target.value })}
                       className="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#0b0f17] px-3.5 py-2 text-sm text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-600 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                     />
+                  </div>
+
+                  <div className="sm:col-span-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 p-4 space-y-3">
+                    <p className="text-xs font-bold text-slate-800 dark:text-slate-200">Rol en portería</p>
+                    <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                      Un equipo trabaja en Entrada o en Salida, y en carril vehicular o peatonal.
+                      El paquete es 1 ASI + cámara IP opcional. El ASI de salida se carga después,
+                      con esta misma ficha. Los tildes no reprograman el firmware del lector.
+                    </p>
+                    <div>
+                      <p className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1.5">Sentido</p>
+                      <div className="flex flex-wrap gap-2">
+                      {([
+                        ["in", "Entrada"],
+                        ["out", "Salida"],
+                      ] as const).map(([key, label]) => (
+                        <button
+                          key={key}
+                          type="button"
+                          onClick={() => setForm({ ...form, sentido: key })}
+                          className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors ${
+                            form.sentido === key
+                              ? "border-blue-500 bg-blue-50 text-blue-800 dark:border-blue-400 dark:bg-blue-950/50 dark:text-blue-200"
+                              : "border-slate-300 bg-white text-slate-600 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-300"
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                      </div>
+                    </div>
+                    <div>
+                      <p className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1.5">Tipo de carril</p>
+                      <div className="flex flex-wrap gap-2">
+                      {([
+                        ["vehicular", "Vehicular"],
+                        ["peatonal", "Peatonal"],
+                      ] as const).map(([key, label]) => (
+                        <button
+                          key={key}
+                          type="button"
+                          onClick={() =>
+                            setForm({
+                              ...form,
+                              laneSector: key,
+                              kind:
+                                key === "vehicular" && form.kind === "door"
+                                  ? "barrier"
+                                  : key === "peatonal" && form.kind === "barrier"
+                                    ? "door"
+                                    : form.kind,
+                            })
+                          }
+                          className={`rounded-lg border px-3 py-1.5 text-xs font-semibold transition-colors ${
+                            form.laneSector === key
+                              ? "border-blue-500 bg-blue-50 text-blue-800 dark:border-blue-400 dark:bg-blue-950/50 dark:text-blue-200"
+                              : "border-slate-300 bg-white text-slate-600 dark:border-slate-600 dark:bg-slate-900 dark:text-slate-300"
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                      </div>
+                    </div>
+                    <label className="flex items-start gap-2.5 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        className="mt-0.5"
+                        checked={form.useLive}
+                        onChange={(e) => setForm({ ...form, useLive: e.target.checked })}
+                      />
+                      <span>
+                        <span className="block text-xs font-semibold text-slate-800 dark:text-slate-200">Live</span>
+                        <span className="block text-[11px] text-slate-500 dark:text-slate-400">
+                          Video en la consola de ese sentido. No cambia el ASI.
+                        </span>
+                      </span>
+                    </label>
+                    {form.deviceType !== "camera_ip" ? (
+                      <label className="flex items-start gap-2.5 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          className="mt-0.5"
+                          checked={form.useLocalRelay}
+                          onChange={(e) => setForm({ ...form, useLocalRelay: e.target.checked })}
+                        />
+                        <span>
+                          <span className="block text-xs font-semibold text-slate-800 dark:text-slate-200">
+                            Relé local
+                          </span>
+                          <span className="block text-[11px] text-slate-500 dark:text-slate-400">
+                            Botón de portería (openDoor). La cara sigue abriendo la chapa desde el firmware del ASI.
+                          </span>
+                        </span>
+                      </label>
+                    ) : null}
                   </div>
 
                   {/* ========================================================================= */}
@@ -1154,14 +1304,11 @@ export function EquipmentPanel() {
                         )}
                       </div>
                     </div>
-                  ) : (
-                    /* ========================================================================= */
-                    /* SECCIÓN DE ACTUADOR PARA TERMINAL FACIAL ASI Y OTROS HARDWARE             */
-                    /* ========================================================================= */
+                  ) : form.useLocalRelay ? (
                     <>
                       <div>
                         <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                          Actuador Vinculado
+                          Nombre del relé en portería
                         </label>
                         <input
                           type="text"
@@ -1174,7 +1321,7 @@ export function EquipmentPanel() {
 
                       <div>
                         <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                          Tipo de Dispositivo Físico
+                          Tipo de dispositivo físico
                         </label>
                         <select
                           value={form.kind}
@@ -1187,6 +1334,11 @@ export function EquipmentPanel() {
                         </select>
                       </div>
                     </>
+                  ) : (
+                    <p className="sm:col-span-2 text-[11px] text-slate-500 dark:text-slate-400">
+                      Sin relé local: la cara abre la chapa desde el firmware del ASI. El botón de
+                      portería no dispara este equipo.
+                    </p>
                   )}
                 </div>
               </div>
@@ -1238,8 +1390,14 @@ export function EquipmentPanel() {
       {/* MODAL DE PRUEBAS / DIAGNÓSTICO ADAPTADO AL TIPO DE TECNOLOGÍA              */}
       {/* ========================================================================= */}
       {testingDevice && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm animate-in fade-in duration-150">
-          <div className="relative flex flex-col w-full max-w-2xl max-h-[90vh] rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0f172a] shadow-2xl overflow-hidden animate-in zoom-in-95 duration-150">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm animate-in fade-in duration-150"
+          onClick={closeTestingModal}
+        >
+          <div
+            className="relative flex flex-col w-full max-w-2xl max-h-[90vh] rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0f172a] shadow-2xl overflow-hidden animate-in zoom-in-95 duration-150"
+            onClick={(e) => e.stopPropagation()}
+          >
             {/* Header */}
             <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 px-6 py-4">
               <div className="flex items-center gap-3">

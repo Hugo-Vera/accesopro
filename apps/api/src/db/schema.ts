@@ -124,6 +124,12 @@ export const dahuaDevices = sqliteTable("dahua_devices", {
   port: integer("port").notNull().default(80),
   username: text("username").notNull(),
   password: text("password").notNull(),
+  /** in | out — carril de portería. Sin both: un ASI por sentido. */
+  sentido: text("sentido").notNull().default("in"),
+  useLive: integer("use_live", { mode: "boolean" }).notNull().default(true),
+  useLocalRelay: integer("use_local_relay", { mode: "boolean" }).notNull().default(true),
+  /** vehicular | peatonal — tipo de carril; no es la ubicación física. */
+  laneSector: text("lane_sector").notNull().default("vehicular"),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
 });
 
@@ -197,7 +203,7 @@ export const commands = sqliteTable("commands", {
 });
 
 /**
- * Punto de acceso = topología del predio (entrada/salida/peatonal).
+ * Punto de acceso = topología del predio (sector vehicular|peatonal|servicio + sentido).
  * No mezcla módulos: solo agrupa cableados. Los módulos (ALPR, Dahua, visitas)
  * se enganchan vía tablas de vínculo reutilizables.
  */

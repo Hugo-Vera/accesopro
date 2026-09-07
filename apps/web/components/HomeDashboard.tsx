@@ -23,6 +23,36 @@ import { ACTUATOR_POLL_MS, useOpsEvents } from "@/components/ops/useOpsEvents";
 
 type Device = LiveDevice;
 
+function preferLaneReader(wiredIds: string[], laneDevices: Device[]): string | null {
+  const byId = new Map(laneDevices.map((d) => [d.id, d]));
+  const rank = (id: string) => {
+    const d = byId.get(id);
+    if (!d) return 9;
+    if (d.deviceType === "asi_facial" || d.deviceType === "vto_intercom") return 0;
+    if (d.deviceType === "camera_ip") return 1;
+    return 2;
+  };
+  const ids = [...new Set([...wiredIds.filter((id) => byId.has(id)), ...laneDevices.map((d) => d.id)])];
+  ids.sort((a, b) => rank(a) - rank(b));
+  return ids[0] ?? null;
+}
+
+function laneEventDeviceIds(all: Device[], wiredIds: string[], lane: "in" | "out"): string[] {
+  const ids = new Set<string>();
+  for (const d of all) {
+    if (d.deviceType === "access_controller") continue;
+    const sentido = (d.sentido || "in") === "out" ? "out" : "in";
+    if (sentido === lane) ids.add(d.id);
+  }
+  for (const id of wiredIds) {
+    const d = all.find((x) => x.id === id);
+    if (!d || d.deviceType === "access_controller") continue;
+    const sentido = (d.sentido || "in") === "out" ? "out" : "in";
+    if (sentido === lane) ids.add(id);
+  }
+  return [...ids];
+}
+
 export function HomeDashboard() {
   const {
     tenantId,
@@ -84,8 +114,16 @@ export function HomeDashboard() {
   );
 
   const liveableDevices = useMemo(
-    () => devices.filter((d) => d.deviceType !== "access_controller"),
+    () => devices.filter((d) => d.deviceType !== "access_controller" && d.useLive !== false),
     [devices],
+  );
+  const inLaneDevices = useMemo(
+    () => liveableDevices.filter((d) => (d.sentido || "in") !== "out"),
+    [liveableDevices],
+  );
+  const outLaneDevices = useMemo(
+    () => liveableDevices.filter((d) => d.sentido === "out"),
+    [liveableDevices],
   );
 
   const inSlots = useMemo(
@@ -93,32 +131,23 @@ export function HomeDashboard() {
     [manualActs, topology.in.actuatorIds],
   );
 
-  const wiredInId = topology.in.deviceIds[0] ?? null;
-  const wiredOutId = topology.out.deviceIds[0] ?? null;
-  // Mismo fallback que AccesoCam ingreso: si no hay cableado, el primer lector liveable
-  const inDeviceId = lanePick.in ?? wiredInId ?? liveableDevices[0]?.id ?? null;
-  const outDeviceId = lanePick.out ?? wiredOutId ?? null;
+  const wiredInId = preferLaneReader(topology.in.deviceIds, inLaneDevices);
+  const wiredOutId = preferLaneReader(topology.out.deviceIds, outLaneDevices);
+  const inDeviceId = lanePick.in ?? wiredInId;
+  const outDeviceId = lanePick.out ?? wiredOutId;
 
-  // Lab 1 ASI en IN y OUT: Salida hereda relés de Ingreso
-  const sharedReader = Boolean(inDeviceId && outDeviceId && inDeviceId === outDeviceId);
-  const outSlots = useMemo(() => {
-    const ids = sharedReader
-      ? [...new Set([...topology.out.actuatorIds, ...topology.in.actuatorIds])]
-      : topology.out.actuatorIds;
-    return buildLaneRelaySlots(manualActs, ids);
-  }, [manualActs, topology.in.actuatorIds, topology.out.actuatorIds, sharedReader]);
+  const outSlots = useMemo(
+    () => buildLaneRelaySlots(manualActs, topology.out.actuatorIds),
+    [manualActs, topology.out.actuatorIds],
+  );
 
-  const onlyOneReader = liveableDevices.length <= 1;
   const inEvents = useMemo(
-    () => filterEventsForLane(events, inDeviceId, { fallbackAll: onlyOneReader || sharedReader }),
-    [events, inDeviceId, onlyOneReader, sharedReader],
+    () => filterEventsForLane(events, laneEventDeviceIds(devices, topology.in.deviceIds, "in")),
+    [events, devices, topology.in.deviceIds],
   );
   const outEvents = useMemo(
-    () =>
-      filterEventsForLane(events, outDeviceId, {
-        fallbackAll: onlyOneReader || sharedReader,
-      }),
-    [events, outDeviceId, onlyOneReader, sharedReader],
+    () => filterEventsForLane(events, laneEventDeviceIds(devices, topology.out.deviceIds, "out")),
+    [events, devices, topology.out.deviceIds],
   );
 
   const opsStatus: "ok" | "degraded" | "offline" = status.agentOnline
@@ -241,7 +270,7 @@ export function HomeDashboard() {
           lane="in"
           showLive={showLive}
           showActuators={showActuators}
-          devices={devices}
+          devices={inLaneDevices}
           preferredDeviceId={inDeviceId}
           onDeviceChange={(id) => setLanePick((p) => ({ ...p, in: id }))}
           relaySlots={inSlots}
@@ -255,7 +284,7 @@ export function HomeDashboard() {
           <OpsOutColumns
             showLive={showLive}
             showActuators={showActuators}
-            devices={devices}
+            devices={outLaneDevices}
             preferredDeviceId={outDeviceId}
             onDeviceChange={(id) => setLanePick((p) => ({ ...p, out: id }))}
             relaySlots={outSlots}
@@ -263,7 +292,7 @@ export function HomeDashboard() {
             onToggle={onToggleRelay}
             events={outEvents}
             streamLive={streamLive}
-            streamEnabled={!sharedReader}
+            streamEnabled={Boolean(outDeviceId)}
           />
         </div>
       </div>
@@ -294,12 +323,11 @@ export function HomeDashboard() {
           }
           const inHit = topology.in.deviceIds.includes(deviceId) || inDeviceId === deviceId;
           const outHit = topology.out.deviceIds.includes(deviceId) || outDeviceId === deviceId;
-          const poolIds =
-            inHit || sharedReader
-              ? [...new Set([...topology.in.actuatorIds, ...(outHit ? topology.out.actuatorIds : [])])]
-              : outHit
-                ? topology.out.actuatorIds
-                : manualActs.map((a) => a.id);
+          const poolIds = inHit
+            ? topology.in.actuatorIds
+            : outHit
+              ? topology.out.actuatorIds
+              : manualActs.map((a) => a.id);
           const pool = manualActs.filter((a) => poolIds.includes(a.id));
           const target =
             pool.find((a) => a.driver === "dahua" || a.kind === "gate" || a.kind === "underground") ||

@@ -25,6 +25,8 @@ function actuatorLaneGuess(a: Actuator): LiveLane | "both" | null {
 }
 
 function deviceLaneGuess(d: LiveDevice): LiveLane | null {
+  if (d.sentido === "out") return "out";
+  if (d.sentido === "in") return "in";
   const blob = `${d.name} ${d.location ?? ""}`.toLowerCase();
   if (/salid|egres|exit|\bout\b/.test(blob)) return "out";
   if (/entrad|ingres|entry|\bin\b/.test(blob)) return "in";
@@ -45,6 +47,16 @@ export function buildLaneTopology(
     const sentido = p.sentido === "in" || p.sentido === "out" || p.sentido === "both" ? p.sentido : "both";
     for (const w of p.devices) {
       if (w.role !== "live" && w.role !== "both" && w.role !== "validator") continue;
+      const d = devices.find((x) => x.id === w.dahuaDeviceId);
+      const forced = d ? deviceLaneGuess(d) : null;
+      if (forced === "in") {
+        inDev.add(w.dahuaDeviceId);
+        continue;
+      }
+      if (forced === "out") {
+        outDev.add(w.dahuaDeviceId);
+        continue;
+      }
       if (sentido === "in" || sentido === "both") inDev.add(w.dahuaDeviceId);
       if (sentido === "out" || sentido === "both") outDev.add(w.dahuaDeviceId);
     }
@@ -63,10 +75,10 @@ export function buildLaneTopology(
       else if (g === "in") inDev.add(d.id);
     }
     for (const d of liveable) {
-      if (!inDev.has(d.id) && !outDev.has(d.id)) {
-        if (inDev.size === 0) inDev.add(d.id);
-        else if (outDev.size === 0) outDev.add(d.id);
-      }
+      if (inDev.has(d.id) || outDev.has(d.id)) continue;
+      const g = deviceLaneGuess(d) ?? "in";
+      if (g === "out") outDev.add(d.id);
+      else inDev.add(d.id);
     }
   }
 
@@ -119,21 +131,18 @@ export function filterEventsByDevices<T extends { payload?: Record<string, unkno
   });
 }
 
-/** Si no hay match por deviceId, no dejar el historial vacío en prueba. */
+/** Historial del carril: eventos de esos equipos. Sin dump de todos los lectores. */
 export function filterEventsForLane<T extends { payload?: Record<string, unknown> }>(
   events: T[],
-  deviceId: string | null,
+  deviceId: string | string[] | null,
   opts?: { fallbackAll?: boolean },
 ): T[] {
-  if (!deviceId) {
+  const ids = Array.isArray(deviceId) ? deviceId.filter(Boolean) : deviceId ? [deviceId] : [];
+  if (!ids.length) {
     return opts?.fallbackAll ? events : [];
   }
-  const matched = filterEventsByDevices(events, [deviceId]);
+  const matched = filterEventsByDevices(events, ids);
   if (matched.length > 0) return matched;
-  // Payload sin deviceId, id distinto o 2 lectores en lab: mostrar todo si se pide fallback
   if (opts?.fallbackAll) return events;
-  // Sin fallback estricto: si hay eventos pero ninguno matchea, igual mostrarlos
-  // (evita historial vacío por desalineación de IDs tras seed/restore)
-  if (events.length > 0) return events;
   return matched;
 }

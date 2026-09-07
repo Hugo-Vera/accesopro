@@ -3,10 +3,11 @@ import { Hono } from "hono";
 import type { AuthUser } from "./auth.js";
 import { requireAuth } from "./auth.js";
 import { db } from "./db/client.js";
-import { actuators, cameras, commands, dahuaDevices, departments, events, plates } from "./db/schema.js";
+import { accessPointActuators, accessPointCameras, accessPointDevices, actuators, cameras, commands, dahuaDevices, departments, events, plates } from "./db/schema.js";
 import { enqueue, fireActuator, waitCommand } from "./actuatorExec.js";
 import { processEngineAccessEvents } from "./engineBridge.js";
 import { agentOnline, nid, normalizePlate, scopedSite, scopedSiteWithModule } from "./scope.js";
+import { parseDeviceLaneSector, parseDeviceSentido, syncDeviceLaneWiring } from "./accessPoints.js";
 import { denyUnlessCapability } from "./grants.js";
 import { tenantFeatureEnabled } from "./features.js";
 import { engineDetections, engineGet, engineHealth, engineOps, enginePost, enginePut, engineRelay, maskSecrets, safeMediaPath, siteFetch } from "./siteEngine.js";
@@ -274,17 +275,26 @@ hardware.post("/dahua", async (c) => {
     serialNumber?: string;
     location?: string;
     rtspUrl?: string;
+    sentido?: string;
+    laneSector?: string;
+    useLive?: boolean;
+    useLocalRelay?: boolean;
   }>();
   if (!body.name || !body.host || !body.username || !body.password) {
     return c.json({ error: "Faltan nombre, IP, usuario o clave" }, 400);
   }
   const now = new Date();
   const deviceId = nid();
+  const deviceType = body.deviceType || "asi_facial";
+  const sentido = parseDeviceSentido(body.sentido);
+  const laneSector = parseDeviceLaneSector(body.laneSector);
+  const useLive = body.useLive !== false;
+  const useLocalRelay = deviceType === "camera_ip" ? false : body.useLocalRelay !== false;
   await db.insert(dahuaDevices).values({
     id: deviceId,
     siteId: scoped.site.id,
     name: body.name.trim(),
-    deviceType: body.deviceType || "asi_facial",
+    deviceType,
     model: body.model?.trim() || null,
     serialNumber: body.serialNumber?.trim() || null,
     location: body.location?.trim() || null,
@@ -294,27 +304,32 @@ hardware.post("/dahua", async (c) => {
     port: body.port ?? 80,
     username: body.username.trim(),
     password: body.password,
+    sentido,
+    laneSector,
+    useLive,
+    useLocalRelay,
     createdAt: now,
   });
   let actuatorId: string | null = null;
-  if (body.deviceType !== "camera_ip" || body.actuatorName?.trim()) {
+  if (useLocalRelay) {
     actuatorId = nid();
     await db.insert(actuators).values({
       id: actuatorId,
       siteId: scoped.site.id,
       name: (body.actuatorName || body.name).trim(),
-      kind: body.kind ?? "door",
+      kind: body.kind ?? (laneSector === "vehicular" ? "barrier" : "door"),
       driver: "dahua",
       dahuaDeviceId: deviceId,
       dahuaChannel: 1,
       pulseMs: 1000,
       triggerDahua: true,
       triggerManual: true,
+      engineSentido: sentido,
       createdAt: now,
     });
   }
 
-  if (body.deviceType === "camera_ip" && body.rtspUrl?.trim()) {
+  if (deviceType === "camera_ip" && body.rtspUrl?.trim()) {
     await db.insert(cameras).values({
       id: `cam_${deviceId}`,
       siteId: scoped.site.id,
@@ -332,6 +347,20 @@ hardware.post("/dahua", async (c) => {
       },
     });
   }
+
+  await syncDeviceLaneWiring(
+    scoped.site.id,
+    {
+      id: deviceId,
+      name: body.name.trim(),
+      deviceType,
+      sentido,
+      laneSector,
+      useLive,
+      useLocalRelay,
+    },
+    { actuatorName: body.actuatorName, kind: body.kind },
+  );
 
   await enqueue(scoped.site.id, "probe_dahua", { deviceId });
   return c.json({ ok: true, id: deviceId, actuatorId });
@@ -363,6 +392,10 @@ hardware.patch("/dahua/:id", async (c) => {
     serialNumber?: string;
     location?: string;
     rtspUrl?: string;
+    sentido?: string;
+    laneSector?: string;
+    useLive?: boolean;
+    useLocalRelay?: boolean;
   }>();
   const next: Record<string, unknown> = {
     name: body.name?.trim() || row.name,
@@ -376,6 +409,21 @@ hardware.patch("/dahua/:id", async (c) => {
   if (body.serialNumber !== undefined) next.serialNumber = body.serialNumber?.trim() || null;
   if (body.location !== undefined) next.location = body.location?.trim() || null;
   if (body.rtspUrl !== undefined) next.rtspUrl = body.rtspUrl?.trim() || null;
+  const deviceType = String(body.deviceType ?? row.deviceType ?? "asi_facial");
+  const sentido = body.sentido !== undefined ? parseDeviceSentido(body.sentido) : parseDeviceSentido(row.sentido);
+  next.sentido = sentido;
+  const laneSector =
+    body.laneSector !== undefined ? parseDeviceLaneSector(body.laneSector) : parseDeviceLaneSector(row.laneSector);
+  next.laneSector = laneSector;
+  const useLive = body.useLive !== undefined ? Boolean(body.useLive) : row.useLive !== false;
+  next.useLive = useLive;
+  const useLocalRelay =
+    deviceType === "camera_ip"
+      ? false
+      : body.useLocalRelay !== undefined
+        ? Boolean(body.useLocalRelay)
+        : row.useLocalRelay !== false;
+  next.useLocalRelay = useLocalRelay;
 
   await db.update(dahuaDevices).set(next).where(eq(dahuaDevices.id, id));
   if (body.actuatorName?.trim() || body.kind) {
@@ -392,7 +440,7 @@ hardware.patch("/dahua/:id", async (c) => {
   }
 
   // Si es cámara, sincronizar cameras
-  const isCam = (body.deviceType ?? row.deviceType) === "camera_ip";
+  const isCam = deviceType === "camera_ip";
   if (isCam && body.rtspUrl?.trim()) {
     await db.insert(cameras).values({
       id: `cam_${id}`,
@@ -410,6 +458,20 @@ hardware.patch("/dahua/:id", async (c) => {
     });
   }
 
+  await syncDeviceLaneWiring(
+    scoped.site.id,
+    {
+      id,
+      name: String(next.name),
+      deviceType,
+      sentido,
+      laneSector,
+      useLive,
+      useLocalRelay,
+    },
+    { actuatorName: body.actuatorName, kind: body.kind },
+  );
+
   return c.json({ ok: true, id });
 });
 
@@ -419,6 +481,12 @@ hardware.delete("/dahua/:id", async (c) => {
   const scoped = await scopedSiteWithModule(c, "dahua_access");
   if ("error" in scoped) return scoped.error;
   const id = c.req.param("id");
+  const acts = await db.select().from(actuators).where(eq(actuators.dahuaDeviceId, id));
+  for (const a of acts) {
+    await db.delete(accessPointActuators).where(eq(accessPointActuators.actuatorId, a.id));
+  }
+  await db.delete(accessPointDevices).where(eq(accessPointDevices.dahuaDeviceId, id));
+  await db.delete(accessPointCameras).where(eq(accessPointCameras.cameraId, `cam_${id}`));
   await db.delete(actuators).where(eq(actuators.dahuaDeviceId, id));
   await db.delete(cameras).where(eq(cameras.id, `cam_${id}`));
   await db.delete(dahuaDevices).where(and(eq(dahuaDevices.id, id), eq(dahuaDevices.siteId, scoped.site.id)));

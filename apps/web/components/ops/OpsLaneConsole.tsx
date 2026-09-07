@@ -80,7 +80,9 @@ export function OpsLaneConsole({
         emptyHint={
           preferredDeviceId
             ? `Esperando accesos · ${t.lane.toLowerCase()}`
-            : `Elegí un lector en AccesoCam · ${t.lane.toLowerCase()}`
+            : lane === "out"
+              ? "Sin lector de salida configurado"
+              : `Sin lector de ${t.lane.toLowerCase()}`
         }
       />
     </div>
@@ -141,12 +143,12 @@ export function OpsOutColumns({
     <div className="ops-out-cols">
       <header className="ops-lane-head ops-out-cols-head">
         <span className="ops-lane-badge ops-lane-badge--out">Salida</span>
-        {preferredDeviceId ? (
+        {devices.length ? (
           <span className="ops-lane-hint">
-            {streamEnabled ? "Lector activo para historial" : "Mismo ASI que ingreso · sin 2º RTSP"}
+            {streamEnabled ? "Lector activo para historial" : "Sin live en este carril"}
           </span>
         ) : (
-          <span className="ops-lane-hint">Elegí equipo en AccesoCam</span>
+          <span className="ops-lane-hint">Sin lector de salida configurado</span>
         )}
       </header>
 
@@ -158,9 +160,9 @@ export function OpsOutColumns({
             streamLive={streamLive}
             compact
             emptyHint={
-              preferredDeviceId
+              devices.length
                 ? "Esperando accesos · salida"
-                : "Elegí un lector en AccesoCam Salida"
+                : "Sin lector de salida configurado"
             }
           />
         </div>

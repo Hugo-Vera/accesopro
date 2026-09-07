@@ -27,7 +27,7 @@ Orden práctico portería (live/toast/cableado): **`docs/PLAN_PORTERIA.md`**.
 
 | # | Problema | Evidencia | Efecto |
 |---|----------|-----------|--------|
-| P0.1 | Mismo lector en Salida hereda relés de Ingreso | `sharedReader` en `HomeDashboard` | Hecho |
+| P0.1 | Un ASI no cubre IN y OUT | Ficha `sentido` Entrada/Salida; OUT vacío hasta el 2º ASI | Hecho (0.2.5) |
 | P0.2 | `onOpenRelay` no prioriza `dahuaDeviceId` del actuador | Toast abre por pool de sentido, no por vínculo equipo↔relé | Apertura manual falla o abre otro relé |
 | P0.3 | Sin UI admin de cableado | API `accessPoints.ts` existe; cero página web | Topología = heurística de nombre / backfill |
 | P0.4 | QR visita: payload ≠ CardNo ASI | QR = `ACCESOPRO:V1:token`; enroll = `token` crudo | ASI puede no validar el QR mostrado |
