@@ -24,6 +24,12 @@ curl -fsSL https://raw.githubusercontent.com/Hugo-Vera/accesopro/master/scripts/
 
 Queda en `/opt/accesopro`. Dashboard: `http://IP:3000`. Detalle: [`docs/DOCKER.md`](docs/DOCKER.md).
 
+**Actualizar después:** Configuración → Módulos → «Actualizar servidor» (login `admin@accesopro.local`), o:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Hugo-Vera/accesopro/master/scripts/update-ubuntu.sh | bash
+```
+
 ## Estructura del monorepo
 
 ```

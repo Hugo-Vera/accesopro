@@ -27,8 +27,15 @@ services:
       ENGINE_BRIDGE_POLL_MS: ${ENGINE_BRIDGE_POLL_MS:-5000}
       SITE_AGENT_URL: ${SITE_AGENT_URL:-http://agent:8790}
       SITE_AGENT_TOKEN: ${SITE_AGENT_TOKEN:-accesopro-demo-agent}
+      ACCESOPRO_ALLOW_SELF_UPDATE: ${ACCESOPRO_ALLOW_SELF_UPDATE:-1}
+      ACCESOPRO_HOST_DIR: /host/accesopro
+      ACCESOPRO_REPO: ${ACCESOPRO_REPO:-Hugo-Vera/accesopro}
+      ACCESOPRO_BRANCH: ${ACCESOPRO_BRANCH:-master}
     volumes:
       - api_data:/app/apps/api/data
+      # Self-update desde el dashboard (Ubuntu). En Windows Desktop puede fallar el socket: poné ALLOW=0.
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${ACCESOPRO_HOST_DIR:-/opt/accesopro}:/host/accesopro
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:8787/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 15s

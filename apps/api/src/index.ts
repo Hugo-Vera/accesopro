@@ -41,6 +41,7 @@ import {
   serializeFeature,
   setTenantFeature,
 } from "./features.js";
+import { systemApi } from "./systemUpdate.js";
 
 type Env = { Variables: { user: AuthUser } };
 
@@ -321,6 +322,7 @@ app.route("/api", accessPointsApi);
 app.route("/api", hardware);
 app.route("/api/hardware", hardware);
 app.route("/api", usersApi);
+app.route("/api", systemApi);
 app.route("/api/residents", residents);
 app.route("/api", attendanceApi);
 app.route("/api", visitorsApi);

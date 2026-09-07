@@ -2,6 +2,7 @@
 
 import { useDash } from "@/components/DashboardProvider";
 import { PageHeader } from "@/components/PageHeader";
+import { ServerUpdatePanel } from "@/components/ServerUpdatePanel";
 
 export function ConfigPage() {
   const { plan, plans, modules, features, isPlatform, toggleModule, toggleFeature, assignPlan, can } = useDash();
@@ -13,6 +14,8 @@ export function ConfigPage() {
         title="Módulos y Plan"
         subtitle="Gestión del plan comercial, módulos contratados y funciones operativas del barrio."
       />
+
+      <ServerUpdatePanel />
 
       <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
         <div className="mb-6 flex flex-col gap-1 border-b border-slate-200 pb-4 dark:border-slate-800">
