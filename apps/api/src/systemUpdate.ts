@@ -37,9 +37,22 @@ function canUpdate(user: AuthUser): boolean {
   return user.role === "platform_admin";
 }
 
+/** Marca el bind-mount como safe.directory (owner host != root del contenedor). */
+async function ensureSafeGitDir() {
+  if (!HOST_DIR) return;
+  try {
+    await execFileAsync("git", ["config", "--global", "--add", "safe.directory", HOST_DIR], {
+      timeout: 5000,
+    });
+  } catch {
+    /* ignore duplicates / missing git */
+  }
+}
+
 async function localSha(): Promise<string | null> {
   if (HOST_DIR && existsSync(join(HOST_DIR, ".git"))) {
     try {
+      await ensureSafeGitDir();
       const { stdout } = await execFileAsync("git", ["-C", HOST_DIR, "rev-parse", "HEAD"], {
         timeout: 8000,
       });
@@ -103,6 +116,8 @@ async function runHostUpdate() {
   const cmd = existsSync(script) ? script : null;
 
   try {
+    await ensureSafeGitDir();
+    appendLog(`safe.directory → ${HOST_DIR}`);
     if (cmd) {
       appendLog(`Ejecutando ${cmd}`);
       const { stdout, stderr } = await execFileAsync("bash", [cmd], {

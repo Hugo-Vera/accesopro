@@ -33,6 +33,19 @@ compose() {
 echo "==> Actualizando AccesoPro en $INSTALL_DIR"
 cd "$INSTALL_DIR"
 
+# Git 2.35+ rechaza el repo si el dueño del dir (host) != uid del proceso (p.ej. root en el contenedor API).
+ensure_safe_git_dir() {
+  local dir="$1"
+  if git config --global --get-all safe.directory 2>/dev/null | grep -Fxq "$dir"; then
+    return 0
+  fi
+  git config --global --add safe.directory "$dir" 2>/dev/null || true
+}
+ensure_safe_git_dir "$INSTALL_DIR"
+# Misma carpeta vista desde el host (/opt/...) y desde el bind-mount del API (/host/...)
+ensure_safe_git_dir "/opt/accesopro"
+ensure_safe_git_dir "/host/accesopro"
+
 git fetch --depth 1 origin "$BRANCH"
 git checkout "$BRANCH"
 git pull --ff-only origin "$BRANCH" || git reset --hard "origin/$BRANCH"
