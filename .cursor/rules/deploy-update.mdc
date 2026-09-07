@@ -1,0 +1,48 @@
+---
+description: Orden fijo para publicar cambios al Ubuntu (GitHub → update UI/script)
+alwaysApply: true
+---
+
+# Publicar cambios AccesoPro (Ubuntu Docker)
+
+Cada vez que se complete un cambio que deba verse en el servidor Ubuntu (`192.168.191.x` u `/opt/accesopro`), seguir **este orden** — no dejar solo el cambio local.
+
+## Orden obligatorio
+
+1. **Implementar** el cambio en el monorepo (web / api / agent / docs).
+2. **Commit** con mensaje claro (solo si el usuario lo pidió o pidió “subir / actualizar / publicar”).
+3. **Push a `master`** en `https://github.com/Hugo-Vera/accesopro` (origen del Ubuntu).
+4. **Actualizar el Ubuntu** por una de estas vías (preferir A):
+   - **A — Desde el dashboard:** login admin → **Configuración → Módulos** → bloque **Servidor AccesoPro** → **Verificar** → **Actualizar servidor**.
+   - **B — Consola en el Ubuntu:**
+     ```bash
+     curl -fsSL https://raw.githubusercontent.com/Hugo-Vera/accesopro/master/scripts/update-ubuntu.sh | bash
+     ```
+5. **Verificar** en el browser del servidor: `http://IP:3000` + health `8787` / agent `8790` si aplica.
+6. Recordar al usuario: la primera vez tras agregar self-update hace falta un update por consola; después alcanza el botón.
+
+## No hacer
+
+- No asumir que el Ubuntu se actualiza solo con el commit local.
+- No pedir `docker compose down -v` (borra datos) salvo pedido explícito.
+- No mezclar ALPR (`profile alpr`) si el usuario dijo que no es urgente.
+- No inventar otro canal de deploy (FTP ad-hoc) si GitHub + update script/UI está disponible.
+
+## Piezas del mecanismo
+
+| Pieza | Ruta |
+|-------|------|
+| Instalador 1 comando | `scripts/install-ubuntu.sh` |
+| Updater consola | `scripts/update-ubuntu.sh` |
+| Agent LAN Linux | `deploy/docker-compose.linux.yml` |
+| API self-update | `apps/api/src/systemUpdate.ts` |
+| UI botón | `apps/web/components/ServerUpdatePanel.tsx` (Módulos) |
+| Env | `ACCESOPRO_ALLOW_SELF_UPDATE=1`, `ACCESOPRO_HOST_DIR=/opt/accesopro` |
+
+## Al cerrar una tarea de fix/feature desplegable
+
+En la respuesta final, incluir siempre:
+
+1. Qué se subió a GitHub (sí/no).
+2. Cómo actualizar el Ubuntu (**botón** o comando `update-ubuntu.sh`).
+3. Qué probar después del rebuild.

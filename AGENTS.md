@@ -85,6 +85,17 @@ Mapa detallado: `docs/ARCHITECTURE.md`. Estado por módulo: `docs/MODULES.md`. B
 - **Arquitectura de Agente Dahua Concurrente**: En `apps/agent`, la ejecución de comandos interactivos (`_commands_worker`) DEBE correr en un hilo independiente del poller de eventos (`_dahua_poller_worker`) y del heartbeat (`_heartbeat_worker`). Los equipos offline o con falla de autenticación (HTTP 401) deben entrar en enfriamiento (`backoff` de 40s) para no bloquear ni retrasar las pruebas de diagnóstico ni los comandos de apertura inmediata.
 
 
+## Publicar al Ubuntu (orden fijo)
+
+Cada cambio que deba verse en el servidor Docker Ubuntu:
+
+1. Commit + **push a `master`** (`https://github.com/Hugo-Vera/accesopro`).
+2. Actualizar el host: dashboard **Configuración → Módulos → Actualizar servidor**, o  
+   `curl -fsSL https://raw.githubusercontent.com/Hugo-Vera/accesopro/master/scripts/update-ubuntu.sh | bash`
+3. Verificar `http://IP:3000` (no borrar volúmenes).
+
+Detalle: `.cursor/rules/deploy-update.mdc` · `docs/DOCKER.md`.
+
 ## Comandos
 
 ```powershell

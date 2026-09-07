@@ -10,6 +10,17 @@ Instala Docker si hace falta, clona en `/opt/accesopro`, genera `.env` y levanta
 
 Variables: `ACCESOPRO_PROFILE=core|dahua|full`, `ACCESOPRO_DIR=...`, `ACCESOPRO_IP=...`.
 
+### Actualizar (orden fijo tras cada cambio en GitHub)
+
+1. Push a `master`.
+2. En el dashboard: **Configuración → Módulos → Actualizar servidor** (preferido), o:
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/Hugo-Vera/accesopro/master/scripts/update-ubuntu.sh | bash
+   ```
+3. Recargar `http://IP:3000`. Conserva volúmenes (`api_data`).
+
+Self-update: `ACCESOPRO_ALLOW_SELF_UPDATE=1` + montaje `/opt/accesopro` y `docker.sock` (ver `docker-compose.yml`).
+
 ## Qué es “real” vs “simulado”
 
 | Pieza | Simulado (lab) | Real (portería) |
