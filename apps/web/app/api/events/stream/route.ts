@@ -20,8 +20,6 @@ export async function GET(req: NextRequest) {
         Cookie: cookie,
       },
       cache: "no-store",
-      // @ts-expect-error Node fetch duplex tipado incompleto en algunos targets
-      duplex: "half",
     });
 
     if (!upstreamRes.ok) {

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { CheckCircle2, AlertTriangle, X, DoorOpen, ScanFace } from "lucide-react";
 import { markSnapshotFailed, snapshotProxyUrl } from "@/components/ops/parseFacialEvent";
+import { useDash } from "@/components/DashboardProvider";
 import { useEscapeKey } from "@/hooks/useEscapeKey";
 
 export type FacialEventAlert = {
@@ -26,6 +27,7 @@ interface Props {
 }
 
 export function LiveFacialAlertToast({ alert, onDismiss, onOpenRelay }: Props) {
+  const { tenantId } = useDash();
   const onDismissRef = useRef(onDismiss);
   onDismissRef.current = onDismiss;
   const [animKey, setAnimKey] = useState(0);
@@ -80,7 +82,7 @@ export function LiveFacialAlertToast({ alert, onDismiss, onOpenRelay }: Props) {
   if (!mounted || !shown) return null;
 
   const isApproved = shown.approved;
-  const photoProxy = !photoFailed ? snapshotProxyUrl(shown.deviceId, shown.snapshotUrl) : null;
+  const photoProxy = !photoFailed ? snapshotProxyUrl(shown.deviceId, shown.snapshotUrl, tenantId) : null;
 
   const timeStr = shown.createdAt
     ? new Date(shown.createdAt).toLocaleTimeString("es-AR", {

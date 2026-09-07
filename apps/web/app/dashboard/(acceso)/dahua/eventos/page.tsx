@@ -230,7 +230,7 @@ export default function DahuaEventosPage() {
   }
 
   function getSnapshotUrl(deviceId?: string, rawUrl?: string) {
-    return snapshotProxyUrl(deviceId || "", rawUrl);
+    return snapshotProxyUrl(deviceId || "", rawUrl, tenantId);
   }
 
   return (

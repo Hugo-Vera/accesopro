@@ -5,6 +5,7 @@ import Link from "next/link";
 import { createPortal } from "react-dom";
 import { ScanFace, X, CheckCircle2, AlertTriangle } from "lucide-react";
 import { IconUserCheck } from "@/components/DashboardIcons";
+import { useDash } from "@/components/DashboardProvider";
 import {
   markSnapshotFailed,
   parseFacialEvent,
@@ -40,11 +41,13 @@ function methodLabel(method: string) {
 function FeedThumb({
   alert,
   className,
+  tenantId,
 }: {
   alert: FacialEventAlert;
   className?: string;
+  tenantId?: string | null;
 }) {
-  const photoProxy = snapshotProxyUrl(alert.deviceId, alert.snapshotUrl);
+  const photoProxy = snapshotProxyUrl(alert.deviceId, alert.snapshotUrl, tenantId);
   return (
     <div
       className={`relative flex-shrink-0 overflow-hidden bg-slate-900 ${className ?? ""} ${
@@ -79,14 +82,16 @@ function FeedThumb({
 function EventDetailModal({
   alert,
   createdAt,
+  tenantId,
   onClose,
 }: {
   alert: FacialEventAlert;
   createdAt: string | number;
+  tenantId?: string | null;
   onClose: () => void;
 }) {
   const [photoFailed, setPhotoFailed] = useState(false);
-  const photoProxy = !photoFailed ? snapshotProxyUrl(alert.deviceId, alert.snapshotUrl) : null;
+  const photoProxy = !photoFailed ? snapshotProxyUrl(alert.deviceId, alert.snapshotUrl, tenantId) : null;
   const isApproved = alert.approved;
   const accent = isApproved ? "#10b981" : "#f43f5e";
   const accentSoft = isApproved ? "#34d399" : "#fb7185";
@@ -267,6 +272,7 @@ export function LiveFacialFeed({
   emptyHint = "Esperando movimiento en el lector facial",
   compact,
 }: Props) {
+  const { tenantId } = useDash();
   const [selected, setSelected] = useState<{ alert: FacialEventAlert; createdAt: string | number } | null>(
     null,
   );
@@ -317,6 +323,7 @@ export function LiveFacialFeed({
               >
                 <FeedThumb
                   alert={alert}
+                  tenantId={tenantId}
                   className={`self-stretch border-r-2 ${compact ? "w-[44px] min-h-[56px]" : "w-[72px] min-h-[96px]"}`}
                 />
                 <div
@@ -387,6 +394,7 @@ export function LiveFacialFeed({
         <EventDetailModal
           alert={selected.alert}
           createdAt={selected.createdAt}
+          tenantId={tenantId}
           onClose={() => setSelected(null)}
         />
       ) : null}

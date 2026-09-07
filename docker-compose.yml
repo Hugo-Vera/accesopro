@@ -58,6 +58,7 @@ services:
       NODE_ENV: production
       PORT: "3000"
       HOSTNAME: "0.0.0.0"
+      API_INTERNAL_URL: http://api:8787
     depends_on:
       api:
         condition: service_healthy

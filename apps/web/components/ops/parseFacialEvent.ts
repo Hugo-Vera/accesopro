@@ -60,9 +60,11 @@ export function parseFacialEvent(
   };
 }
 
-export function snapshotProxyUrl(deviceId: string, snapshotUrl?: string) {
+export function snapshotProxyUrl(deviceId: string, snapshotUrl?: string, tenantId?: string | null) {
   const url = normalizeSnapshotUrl(snapshotUrl);
   if (!deviceId || !url) return null;
   if (failedSnapshots.has(snapshotKey(deviceId, url))) return null;
-  return `/api/dahua/${deviceId}/record-snapshot?url=${encodeURIComponent(url)}`;
+  const qs = new URLSearchParams({ url });
+  if (tenantId) qs.set("tenantId", tenantId);
+  return `/api/dahua/${deviceId}/record-snapshot?${qs.toString()}`;
 }
