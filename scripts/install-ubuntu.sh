@@ -119,10 +119,9 @@ clone_or_update() {
   fi
 
   if [[ -d "$INSTALL_DIR/.git" ]]; then
-    git -C "$INSTALL_DIR" fetch --depth 1 origin "$BRANCH"
-    git -C "$INSTALL_DIR" checkout "$BRANCH"
-    git -C "$INSTALL_DIR" pull --ff-only origin "$BRANCH" || \
-      git -C "$INSTALL_DIR" reset --hard "origin/$BRANCH"
+    git -C "$INSTALL_DIR" fetch --prune origin "$BRANCH"
+    git -C "$INSTALL_DIR" checkout "$BRANCH" 2>/dev/null || git -C "$INSTALL_DIR" checkout -B "$BRANCH"
+    git -C "$INSTALL_DIR" reset --hard "origin/$BRANCH"
     ok "Repo actualizado ($BRANCH)"
   else
     if [[ -n "$(ls -A "$INSTALL_DIR" 2>/dev/null || true)" ]]; then

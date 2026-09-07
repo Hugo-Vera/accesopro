@@ -25,6 +25,30 @@ DATA_DIR="$INSTALL_DIR/apps/api/data"
 STATUS_FILE="$DATA_DIR/update.status"
 LOG_FILE="$DATA_DIR/update.log"
 
+# El clone de Ubuntu no es un repo de desarrollo: siempre igualar GitHub.
+# `fetch --depth 1` deja master e origin/master divergidos y `pull --ff-only` falla.
+load_env_key() {
+  local key="$1"
+  local line val
+  [[ -f "$INSTALL_DIR/.env" ]] || return 0
+  line="$(grep -E "^${key}=" "$INSTALL_DIR/.env" 2>/dev/null | tail -1 || true)"
+  [[ -n "$line" ]] || return 0
+  val="${line#*=}"
+  val="${val%$'\r'}"
+  val="${val#\"}"
+  val="${val%\"}"
+  val="${val#\'}"
+  val="${val%\'}"
+  if [[ -n "$val" && -z "${!key:-}" ]]; then
+    export "${key}=${val}"
+  fi
+}
+load_env_key ACCESOPRO_OWNER
+load_env_key ACCESOPRO_BRANCH
+load_env_key ACCESOPRO_PROFILE
+BRANCH="${ACCESOPRO_BRANCH:-$BRANCH}"
+PROFILE="${ACCESOPRO_PROFILE:-$PROFILE}"
+
 need_root() {
   if [[ "$(id -u)" -eq 0 ]]; then "$@"
   else sudo "$@"
@@ -83,6 +107,10 @@ if [[ "$PROFILE" != "core" ]]; then
 fi
 
 echo "==> Actualizando AccesoPro en $INSTALL_DIR"
+if [[ "$(id -u)" -eq 0 ]]; then
+  echo "    Nota: estás en root. No uses sudo su + chown \$USER (eso deja .git de root)."
+  echo "    Preferí, como hugo:  sudo chown -R hugo:hugo /opt/accesopro && curl … | bash"
+fi
 cd "$INSTALL_DIR"
 fix_repo_ownership
 
@@ -109,9 +137,11 @@ run_git() {
   fi
 }
 
-run_git fetch --depth 1 origin "$BRANCH"
-run_git checkout "$BRANCH"
-run_git pull --ff-only origin "$BRANCH" || run_git reset --hard "origin/$BRANCH"
+run_git fetch --prune origin "$BRANCH"
+run_git checkout "$BRANCH" 2>/dev/null || run_git checkout -B "$BRANCH"
+# Deploy: igualar GitHub. No merge / no ff-only (el fetch shallow divergía las ramas).
+echo "    git reset --hard origin/${BRANCH}"
+run_git reset --hard "origin/${BRANCH}"
 fix_repo_ownership
 
 IP="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}' || true)"
@@ -122,7 +152,21 @@ if [[ -f .env ]] && grep -q 'WEB_ORIGIN=http://localhost:3000' .env; then
 fi
 
 echo "==> Compilando imágenes (el dashboard :3000 sigue en línea)"
-compose "${profile_args[@]}" build --parallel
+build_ok=0
+for attempt in 1 2 3; do
+  if compose "${profile_args[@]}" build --parallel; then
+    build_ok=1
+    break
+  fi
+  if [[ "$attempt" -lt 3 ]]; then
+    echo "    Build falló (intento ${attempt}/3). Suele ser npm ECONNRESET. Reintento en 20s…"
+    sleep 20
+  fi
+done
+if [[ "$build_ok" -ne 1 ]]; then
+  echo "ERROR: docker compose build falló 3 veces. Reintentá el curl cuando npmjs responda."
+  exit 1
+fi
 
 echo "==> Recreando contenedores (corte breve de :3000 hasta que el API esté healthy)"
 compose "${profile_args[@]}" up -d --no-build --remove-orphans

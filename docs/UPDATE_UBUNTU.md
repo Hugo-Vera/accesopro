@@ -36,10 +36,8 @@ El API monta el host en `/host/accesopro` y usa `docker.sock` (ver `docker-compo
 **Preferí bajar el script desde GitHub** (así no dependés de un `scripts/update-ubuntu.sh` viejo en disco):
 
 ```bash
-# 1) Dueño del árbol = tu usuario (nunca dejes .git de root)
-sudo chown -R "$USER:$USER" /opt/accesopro
-
-# 2) Update oficial
+# Como hugo (NO hagas sudo su: \$USER pasa a ser root y rompe .git)
+sudo chown -R hugo:hugo /opt/accesopro
 curl -fsSL https://raw.githubusercontent.com/Hugo-Vera/accesopro/master/scripts/update-ubuntu.sh | bash
 ```
 
@@ -47,11 +45,12 @@ Equivalente si el repo ya está sano y al día con el script:
 
 ```bash
 cd /opt/accesopro
-git pull --ff-only origin master
+git fetch origin master
+git reset --hard origin/master
 sudo bash scripts/update-ubuntu.sh
 ```
 
-El script: `git pull` → `docker compose … --profile dahua up -d --build` → autostart systemd. **No** borra volúmenes (`api_data`).
+El script: `git reset --hard origin/master` → `compose build` (sitio en línea, reintenta npm) → `up -d --no-build` → autostart systemd. **No** borra volúmenes (`api_data`).
 
 ## Anti-errores (lo que ya nos pasó)
 
@@ -60,7 +59,10 @@ El script: `git pull` → `docker compose … --profile dahua up -d --build` →
 | `insufficient permission for adding an object to repository database .git/objects` | Self-update / `sudo` escribió `.git` como **root**; `hugo` no puede hacer `git pull` | `sudo chown -R hugo:hugo /opt/accesopro` y repetir update |
 | `detected dubious ownership in repository at '/host/accesopro'` | Git en el contenedor (root) vs dueño del host | El updater marca `safe.directory`; o `git config --global --add safe.directory /host/accesopro` **dentro** del contenedor API |
 | Botón de update falla la 1ª vez tras cambiar el script | Imagen API vieja / script local viejo | Usar **vía B** con `curl … \| bash` una vez |
-| `ERR_CONNECTION_REFUSED` en `:3000` a mitad de update | Rebuild de `web` (o `web` espera a que el API esté healthy) | Esperar 1 min y recargar. El compile largo ya no debería tumbar el sitio |
+| `ERR_CONNECTION_REFUSED` en `:3000` a mitad de update | Recambio de contenedores al final (`up -d`) | Esperar 1 min y recargar. El compile largo ya no tumba el sitio |
+| `Not possible to fast-forward` / ramas divergidas | `git fetch --depth 1` + `pull --ff-only` en clone de deploy | El script ahora hace `git reset --hard origin/master` |
+| `npm ci` / `ECONNRESET` a registry.npmjs.org | Red inestable durante el build | Reintenta 3 veces el build; Dockerfile reintenta `npm ci` |
+| `sudo su` + `chown $USER` deja `.git` de root | En root, `$USER` es root | Correr el curl como **hugo**; `ACCESOPRO_OWNER=hugo` en `.env` |
 
 ## Variables importantes
 

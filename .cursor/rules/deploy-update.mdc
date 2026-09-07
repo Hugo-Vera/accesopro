@@ -18,7 +18,8 @@ Playbook completo (anti-errores `.git` / permisos): `docs/UPDATE_UBUNTU.md`.
    - **A — Desde el dashboard:** login admin → **Configuración → Módulos** → bloque **Servidor AccesoPro** → **Verificar** → **Actualizar servidor**.
    - **B — Consola en el Ubuntu** (si el botón falla, 1ª vez, o `insufficient permission` / `dubious ownership`):
      ```bash
-     sudo chown -R "$USER:$USER" /opt/accesopro
+     # Como hugo (no sudo su: en root $USER es root y rompe .git)
+     sudo chown -R hugo:hugo /opt/accesopro
      curl -fsSL https://raw.githubusercontent.com/Hugo-Vera/accesopro/master/scripts/update-ubuntu.sh | bash
      ```
 5. **Verificar** en el browser del servidor: `http://IP:3000` + health `8787` / agent `8790` si aplica.

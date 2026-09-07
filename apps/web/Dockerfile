@@ -3,7 +3,12 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 COPY packages/catalog/package.json ./packages/catalog/
 COPY apps/web/package.json ./apps/web/
-RUN npm ci --workspace=@accesopro/web --include-workspace-root
+RUN npm config set fetch-retries 5 \
+ && npm config set fetch-retry-mintimeout 20000 \
+ && npm config set fetch-retry-maxtimeout 120000 \
+ && (npm ci --workspace=@accesopro/web --include-workspace-root \
+     || npm ci --workspace=@accesopro/web --include-workspace-root \
+     || npm ci --workspace=@accesopro/web --include-workspace-root)
 
 FROM node:20-bookworm-slim AS builder
 WORKDIR /app

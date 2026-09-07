@@ -1,7 +1,7 @@
 {
   "name": "accesopro",
   "private": true,
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "Acceso y seguridad para barrios cerrados",
   "workspaces": [
     "apps/*",

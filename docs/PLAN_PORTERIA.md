@@ -36,12 +36,13 @@ Live fluido + toast al instante. Verificar en el barrio:
 1. F5 en `/dashboard`: **sin** toast.
 2. Pasar la cara: toast + fila IN en **menos de ~1 s**; live no se congela.
 3. F5 otra vez: el toast no vuelve; el historial sí.
-4. Módulos: versión **0.2.2**.
+4. Módulos: versión **0.2.3**.
 
 Ubuntu: el botón de update **viejo** se suicida. Primera vez:
 
 ```bash
-sudo chown -R "$USER:$USER" /opt/accesopro
+# Como hugo (no sudo su)
+sudo chown -R hugo:hugo /opt/accesopro
 curl -fsSL https://raw.githubusercontent.com/Hugo-Vera/accesopro/master/scripts/update-ubuntu.sh | bash
 ```
 

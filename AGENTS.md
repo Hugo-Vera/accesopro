@@ -93,7 +93,7 @@ Cada cambio que deba verse en el servidor Docker Ubuntu:
 1. Commit + **push a `master`** (`https://github.com/Hugo-Vera/accesopro`).
 2. Actualizar el host: dashboard **Configuración → Módulos → Actualizar servidor**, o  
    ```bash
-   sudo chown -R "$USER:$USER" /opt/accesopro   # solo si git falla por dueño root
+   sudo chown -R hugo:hugo /opt/accesopro   # como hugo, no tras sudo su; $USER en root es root
    curl -fsSL https://raw.githubusercontent.com/Hugo-Vera/accesopro/master/scripts/update-ubuntu.sh | bash
    ```
 3. Verificar `http://IP:3000` (no borrar volúmenes).
