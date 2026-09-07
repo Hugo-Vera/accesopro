@@ -219,6 +219,16 @@ compose_up() {
   ok "Contenedores levantados"
 }
 
+enable_autostart() {
+  step "Arranque automático (systemd)"
+  need_root_for systemctl enable --now docker || true
+  if [[ -f "$INSTALL_DIR/scripts/enable-autostart.sh" ]]; then
+    need_root_for bash "$INSTALL_DIR/scripts/enable-autostart.sh" || warn "No se pudo habilitar systemd (podés correrlo después)"
+  else
+    warn "Falta enable-autostart.sh"
+  fi
+}
+
 print_done() {
   local ip
   ip="$(detect_ip)"
@@ -253,6 +263,7 @@ main() {
   write_env
   open_firewall
   compose_up
+  enable_autostart
   print_done
 }
 

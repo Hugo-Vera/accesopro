@@ -21,6 +21,16 @@ Variables: `ACCESOPRO_PROFILE=core|dahua|full`, `ACCESOPRO_DIR=...`, `ACCESOPRO_
 
 Self-update: `ACCESOPRO_ALLOW_SELF_UPDATE=1` + montaje `/opt/accesopro` y `docker.sock` (ver `docker-compose.yml`).
 
+### Arranque automático al encender Ubuntu
+
+```bash
+sudo systemctl enable --now docker
+cd /opt/accesopro && git pull
+sudo bash scripts/enable-autostart.sh
+```
+
+Queda el servicio `accesopro` (systemd) que hace `docker compose up -d` al boot.
+
 ## Qué es “real” vs “simulado”
 
 | Pieza | Simulado (lab) | Real (portería) |

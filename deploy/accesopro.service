@@ -1,0 +1,17 @@
+[Unit]
+Description=AccesoPro (Docker Compose)
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/accesopro
+# Profile dahua = web + api + agent. Ajustá si usás solo core.
+ExecStart=/usr/bin/docker compose -f docker-compose.yml -f deploy/docker-compose.linux.yml --profile dahua up -d
+ExecStop=/usr/bin/docker compose -f docker-compose.yml -f deploy/docker-compose.linux.yml --profile dahua stop
+TimeoutStartSec=0
+
+[Install]
+WantedBy=multi-user.target

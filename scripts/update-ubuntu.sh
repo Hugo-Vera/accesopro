@@ -51,7 +51,12 @@ case "$PROFILE" in
   *) compose --profile dahua up -d --build ;;
 esac
 
+# Asegurar autostart (idempotente)
+if [[ -f "$INSTALL_DIR/scripts/enable-autostart.sh" ]]; then
+  need_root bash "$INSTALL_DIR/scripts/enable-autostart.sh" || true
+fi
+
 echo ""
 echo "Listo. Dashboard: http://${IP}:3000"
-echo "Reinicio agent (backfill historial ASI): docker compose --profile dahua restart agent"
+echo "Autostart: systemctl status accesopro"
 compose --profile dahua ps
