@@ -12,28 +12,42 @@ export async function GET(req: NextRequest) {
   const qs = req.nextUrl.searchParams.toString();
   const upstream = `${apiBase}/api/events/stream${qs ? `?${qs}` : ""}`;
 
-  const cookie = req.headers.get("cookie") ?? "";
-  const upstreamRes = await fetch(upstream, {
-    headers: {
-      Accept: "text/event-stream",
-      Cookie: cookie,
-    },
-    cache: "no-store",
-  });
-
-  if (!upstreamRes.ok || !upstreamRes.body) {
-    return new Response(upstreamRes.statusText || "SSE upstream error", {
-      status: upstreamRes.status || 502,
+  try {
+    const cookie = req.headers.get("cookie") ?? "";
+    const upstreamRes = await fetch(upstream, {
+      headers: {
+        Accept: "text/event-stream",
+        Cookie: cookie,
+      },
+      cache: "no-store",
+      // @ts-expect-error Node fetch duplex tipado incompleto en algunos targets
+      duplex: "half",
     });
-  }
 
-  return new Response(upstreamRes.body, {
-    status: 200,
-    headers: {
-      "Content-Type": "text/event-stream; charset=utf-8",
-      "Cache-Control": "no-cache, no-transform",
-      Connection: "keep-alive",
-      "X-Accel-Buffering": "no",
-    },
-  });
+    if (!upstreamRes.ok) {
+      const text = await upstreamRes.text().catch(() => "");
+      return new Response(text || upstreamRes.statusText || "SSE upstream error", {
+        status: upstreamRes.status >= 400 ? upstreamRes.status : 502,
+        headers: { "Content-Type": "text/plain; charset=utf-8" },
+      });
+    }
+
+    if (!upstreamRes.body) {
+      return new Response("SSE sin cuerpo", { status: 502 });
+    }
+
+    return new Response(upstreamRes.body, {
+      status: 200,
+      headers: {
+        "Content-Type": "text/event-stream; charset=utf-8",
+        "Cache-Control": "no-cache, no-transform",
+        Connection: "keep-alive",
+        "X-Accel-Buffering": "no",
+      },
+    });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : "SSE proxy error";
+    console.error("[sse-proxy]", msg);
+    return new Response(msg, { status: 503, headers: { "Content-Type": "text/plain; charset=utf-8" } });
+  }
 }

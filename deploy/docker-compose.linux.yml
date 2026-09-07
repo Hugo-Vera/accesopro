@@ -1,9 +1,18 @@
 # AccesoPro — agent en network_mode:host (Linux / Ubuntu)
 # El bridge de Docker a veces no llega a los ASI en la LAN.
+# IMPORTANTE: con host network el hostname "agent" NO existe para la API.
+# La API debe llamar al agent vía host.docker.internal:8790.
+#
 # Uso:
 #   docker compose -f docker-compose.yml -f deploy/docker-compose.linux.yml --profile dahua up -d --build
 
 services:
+  api:
+    environment:
+      SITE_AGENT_URL: http://host.docker.internal:8790
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
   agent:
     network_mode: host
     environment:

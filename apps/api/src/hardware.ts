@@ -15,6 +15,11 @@ export { fireActuator } from "./actuatorExec.js";
 
 type Env = { Variables: { user: AuthUser } };
 
+/** Base del site-agent. En Ubuntu (agent host network) debe ser host.docker.internal:8790. */
+function agentBaseUrl(): string {
+  return (process.env.SITE_AGENT_URL ?? "http://127.0.0.1:8790").replace(/\/$/, "");
+}
+
 export const hardware = new Hono<Env>();
 hardware.use("*", requireAuth);
 
@@ -558,7 +563,7 @@ hardware.get("/dahua/:id/snapshot", async (c) => {
   if (!row) return c.json({ error: "Equipo no encontrado" }, 404);
 
   const channel = Number(c.req.query("channel")) || 1;
-  const agentBase = (process.env.SITE_AGENT_URL ?? "http://127.0.0.1:8790").replace(/\/$/, "");
+  const agentBase = agentBaseUrl();
   const agentToken = process.env.SITE_AGENT_TOKEN ?? "accesopro-demo-agent";
   try {
     const res = await fetch(`${agentBase}/dahua/${id}/snapshot?channel=${channel}`, {
@@ -599,19 +604,29 @@ hardware.get("/dahua/:id/record-snapshot", async (c) => {
   const scoped = await scopedSiteWithModule(c, "dahua_access");
   if ("error" in scoped) return scoped.error;
   const id = c.req.param("id");
-  const url = c.req.query("url");
+  // Algunos proxies/rewrites pierden query; aceptar también header/fallback
+  let url = c.req.query("url") || c.req.query("path") || "";
+  try {
+    url = decodeURIComponent(url);
+  } catch {
+    /* keep raw */
+  }
   if (!id || !url) return c.json({ error: "Falta id o url" }, 400);
   const trimmed = url.trim();
   if (!trimmed || trimmed === "undefined" || trimmed === "null") {
     return c.json({ error: "URL de captura inválida" }, 400);
   }
+  // Solo rutas de archivo del ASI (evitar open-proxy)
+  if (!trimmed.startsWith("/SnapShot") && !trimmed.startsWith("/var") && !trimmed.startsWith("/")) {
+    return c.json({ error: "Ruta de captura no permitida" }, 400);
+  }
 
-  const agentBase = (process.env.SITE_AGENT_URL ?? "http://127.0.0.1:8790").replace(/\/$/, "");
+  const agentBase = agentBaseUrl();
   const agentToken = process.env.SITE_AGENT_TOKEN ?? "accesopro-demo-agent";
   try {
     const res = await fetch(`${agentBase}/dahua/${id}/record-snapshot?url=${encodeURIComponent(trimmed)}`, {
       headers: { Authorization: `Bearer ${agentToken}` },
-      signal: AbortSignal.timeout(10000),
+      signal: AbortSignal.timeout(12000),
     });
     if (res.ok) {
       const buf = Buffer.from(await res.arrayBuffer());
@@ -623,9 +638,13 @@ hardware.get("/dahua/:id/record-snapshot", async (c) => {
         },
       });
     }
-    const status = res.status === 404 ? 404 : res.status === 503 ? 503 : 502;
+    // Archivo borrado del ASI / agent offline: 204 para no spamear consola del browser con 4xx
+    if (res.status === 404 || res.status === 400) {
+      return new Response(null, { status: 204, headers: { "Cache-Control": "no-store" } });
+    }
+    const status = res.status === 503 ? 503 : 502;
     return c.json(
-      { error: "Captura no disponible" },
+      { error: "Captura no disponible", agent: agentBase },
       {
         status,
         headers: { "Cache-Control": "no-store" },
@@ -633,7 +652,11 @@ hardware.get("/dahua/:id/record-snapshot", async (c) => {
     );
   } catch (err) {
     return c.json(
-      { error: err instanceof Error ? err.message : "Error al descargar captura" },
+      {
+        error: err instanceof Error ? err.message : "Error al descargar captura",
+        agent: agentBase,
+        hint: "Si el agent corre en network_mode:host, SITE_AGENT_URL debe ser http://host.docker.internal:8790",
+      },
       { status: 502, headers: { "Cache-Control": "no-store" } },
     );
   }
@@ -664,7 +687,7 @@ hardware.get("/dahua/:id/live", async (c) => {
   const subtype = rawSubtype !== undefined && !isNaN(Number(rawSubtype))
     ? Number(rawSubtype)
     : /facial|lector|asi|totem|pedestre/i.test(row.name) ? 2 : 2;
-  const agentBase = (process.env.SITE_AGENT_URL ?? "http://127.0.0.1:8790").replace(/\/$/, "");
+  const agentBase = agentBaseUrl();
   const agentToken = process.env.SITE_AGENT_TOKEN ?? "accesopro-demo-agent";
   try {
     const res = await fetch(
@@ -675,20 +698,30 @@ hardware.get("/dahua/:id/live", async (c) => {
     );
     if (!res.ok || !res.body) {
       const detail = await res.text().catch(() => "");
-      return c.json({ error: detail || "El agent no pudo abrir el live RTSP" }, 502);
+      return c.json(
+        {
+          error: detail || "El agent no pudo abrir el live RTSP",
+          agent: agentBase,
+        },
+        502,
+      );
     }
     return new Response(res.body, {
       status: 200,
       headers: {
         "Content-Type": res.headers.get("Content-Type") || "multipart/x-mixed-replace; boundary=frame",
         "Cache-Control": "no-cache, no-store, must-revalidate",
-        "Connection": "close",
+        Connection: "close",
         "X-Accel-Buffering": "no",
       },
     });
   } catch (err) {
     return c.json(
-      { error: err instanceof Error ? err.message : "No se pudo conectar al agent para live" },
+      {
+        error: err instanceof Error ? err.message : "No se pudo conectar al agent para live",
+        agent: agentBase,
+        hint: "En Ubuntu con agent host-network: SITE_AGENT_URL=http://host.docker.internal:8790",
+      },
       502,
     );
   }
@@ -806,7 +839,7 @@ hardware.get("/dahua/:id/qr-config", async (c) => {
   const scoped = await scopedSiteWithModule(c, "dahua_access");
   if ("error" in scoped) return scoped.error;
   const id = c.req.param("id");
-  const agentBase = (process.env.SITE_AGENT_URL ?? "http://127.0.0.1:8790").replace(/\/$/, "");
+  const agentBase = agentBaseUrl();
   const agentToken = process.env.SITE_AGENT_TOKEN ?? "accesopro-demo-agent";
   try {
     const res = await fetch(`${agentBase}/dahua/${id}/qr-config`, {
@@ -826,7 +859,7 @@ hardware.post("/dahua/:id/qr-config", async (c) => {
   if ("error" in scoped) return scoped.error;
   const id = c.req.param("id");
   const body = await c.req.json<{ transmissionEnable?: boolean; validTime?: number }>();
-  const agentBase = (process.env.SITE_AGENT_URL ?? "http://127.0.0.1:8790").replace(/\/$/, "");
+  const agentBase = agentBaseUrl();
   const agentToken = process.env.SITE_AGENT_TOKEN ?? "accesopro-demo-agent";
   try {
     const res = await fetch(`${agentBase}/dahua/${id}/qr-config`, {
@@ -852,7 +885,7 @@ hardware.get("/dahua/:id/schedules", async (c) => {
   if ("error" in scoped) return scoped.error;
   const id = c.req.param("id");
   const count = Number(c.req.query("count")) || 16;
-  const agentBase = (process.env.SITE_AGENT_URL ?? "http://127.0.0.1:8790").replace(/\/$/, "");
+  const agentBase = agentBaseUrl();
   const agentToken = process.env.SITE_AGENT_TOKEN ?? "accesopro-demo-agent";
   try {
     const res = await fetch(`${agentBase}/dahua/${id}/schedules?count=${count}`, {
@@ -872,7 +905,7 @@ hardware.post("/dahua/:id/schedules", async (c) => {
   if ("error" in scoped) return scoped.error;
   const id = c.req.param("id");
   const body = await c.req.json<{ index: number; enabled?: boolean; days: string[][] }>();
-  const agentBase = (process.env.SITE_AGENT_URL ?? "http://127.0.0.1:8790").replace(/\/$/, "");
+  const agentBase = agentBaseUrl();
   const agentToken = process.env.SITE_AGENT_TOKEN ?? "accesopro-demo-agent";
   try {
     const res = await fetch(`${agentBase}/dahua/${id}/schedules`, {
@@ -899,7 +932,7 @@ hardware.post("/dahua/:id/listen-card", async (c) => {
   if ("error" in scoped) return scoped.error;
   const id = c.req.param("id");
   const body = await c.req.json<{ timeout?: number }>().catch(() => ({ timeout: 15 }));
-  const agentBase = (process.env.SITE_AGENT_URL ?? "http://127.0.0.1:8790").replace(/\/$/, "");
+  const agentBase = agentBaseUrl();
   const agentToken = process.env.SITE_AGENT_TOKEN ?? "accesopro-demo-agent";
   try {
     const res = await fetch(`${agentBase}/dahua/${id}/listen-card`, {
