@@ -22,18 +22,19 @@ _stop = threading.Event()
 _config: dict[str, Any] = {"dahua": [], "actuators": [], "cameras": [], "plates": []}
 
 
+_http = httpx.Client(timeout=5.0, headers=HEADERS)
+
+
 def api_get(path: str) -> dict[str, Any]:
-    with httpx.Client(timeout=8.0) as client:
-        res = client.get(f"{API}{path}", headers=HEADERS)
-        res.raise_for_status()
-        return res.json()
+    res = _http.get(f"{API}{path}")
+    res.raise_for_status()
+    return res.json()
 
 
 def api_post(path: str, payload: dict[str, Any]) -> dict[str, Any]:
-    with httpx.Client(timeout=8.0) as client:
-        res = client.post(f"{API}{path}", headers=HEADERS, json=payload)
-        res.raise_for_status()
-        return res.json()
+    res = _http.post(f"{API}{path}", json=payload)
+    res.raise_for_status()
+    return res.json()
 
 
 def on_plate(camera_id: str, plate: str, confidence: float) -> None:
@@ -227,7 +228,7 @@ def _dispatch_access_event(dev: dict[str, Any], rec: dict[str, Any], *, skip_deb
     debounce_key = f"{dev_id}:{person_identifier}:{is_approved}"
     if not skip_debounce:
         last_event_time = _last_person_access.get(debounce_key, 0)
-        if abs(now - last_event_time) < 3.0:
+        if abs(now - last_event_time) < 1.2:
             # No marcar seen: si el POST no corrió, el poll lo reintenta al vencer el debounce.
             return
     _last_person_access[debounce_key] = now
@@ -716,7 +717,7 @@ def dahua_live(
         headers={
             "Cache-Control": "no-cache, no-store, must-revalidate",
             "Pragma": "no-cache",
-            "Connection": "close",
+            "Connection": "keep-alive",
             "X-Accel-Buffering": "no",
         },
     )

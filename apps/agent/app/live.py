@@ -61,9 +61,9 @@ def iter_mjpeg(
     target_fps: tope de encode (OpenCV come CPU si no se limita). Env: AGENT_LIVE_FPS.
     """
     if jpeg_quality is None:
-        jpeg_quality = _env_int("AGENT_LIVE_JPEG_QUALITY", 42)
+        jpeg_quality = _env_int("AGENT_LIVE_JPEG_QUALITY", 52)
     if target_fps is None:
-        target_fps = _env_float("AGENT_LIVE_FPS", 5.0)
+        target_fps = _env_float("AGENT_LIVE_FPS", 8.0)
 
     sub = int(subtype)
     url = rtsp_url(dev, channel=channel, subtype=sub)

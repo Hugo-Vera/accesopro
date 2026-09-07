@@ -27,7 +27,7 @@ Modelo mental del home `/dashboard`. Si algo falla (toast, historial, relés), c
 
 **Producción:** 2 ASI → cablear cada uno a un punto `in` / `out`. El dropdown queda de respaldo.
 
-## Toast (anti-F5)
+## Toast (anti-F5 + tiempo real)
 
 Al hidratar `/api/events` se guarda `bootMaxCreatedAt` = máximo `createdAt` del listado (reloj del server). También se persiste el último id en `sessionStorage`.
 
@@ -35,6 +35,10 @@ Solo se emite toast si:
 - el id no se vio en esta sesión, **y**
 - `createdAt > bootMaxCreatedAt`, **y**
 - no es el mismo id/timestamp ya marcado en `sessionStorage`.
+
+Camino vivo: ASI attach → POST agent → SSE `access_event` (ping cada 15 s). Poll 1 s solo si el SSE está caído. Live MJPEG: route Next `/api/dahua/:id/live` (sin buffer del rewrite).
+
+Orden de trabajo: **`docs/PLAN_PORTERIA.md`**.
 
 Si la primera carga falla, el poll siguiente hidrata **sin** toast. El agent arranca con el cursor de la DB (`recNo` por equipo): no vuelca el historial del ASI; solo sube el hueco si el stream estuvo caído.
 

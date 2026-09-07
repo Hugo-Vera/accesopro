@@ -1,11 +1,11 @@
 # Pendientes AccesoPro
 
-Lista viva. Inventario completo + plan por fases: **`docs/ROADMAP.md`**.  
-Ops IN/OUT: **`docs/OPS_LANES.md`**. Si algo se completa, actualizar `MODULES.md` / `AGENTS.md` y tachar acá.
+Lista viva. Inventario: **`docs/ROADMAP.md`**. Portería (orden a seguir): **`docs/PLAN_PORTERIA.md`**.  
+Ops IN/OUT: **`docs/OPS_LANES.md`**.
 
 ## Sprint inmediato (P0)
 
-- [ ] Same ASI en Salida: compartir relés de Ingreso (`HomeDashboard` outSlots).
+- [x] Same ASI en Salida: compartir relés de Ingreso (`HomeDashboard` outSlots).
 - [ ] Apertura toast: resolver por `dahuaDeviceId` → pool IN/OUT.
 - [x] Toast anti-F5: watermark `createdAt` + `sessionStorage`; agent prime sin reenviar historial.
 - [ ] UI admin cableado `access_points` (API ya existe).
@@ -25,7 +25,7 @@ Ops IN/OUT: **`docs/OPS_LANES.md`**. Si algo se completa, actualizar `MODULES.md
 - [x] Dos AccesoCam en home: entrada + salida.
 - [x] Asignación por cableado / heurística / override AccesoCam.
 - [x] Actuadores e historial separados por sentido (producción).
-- [ ] Same-device lab: Salida hereda relés de Ingreso (doc vs código).
+- [x] Same-device lab: Salida hereda relés de Ingreso (doc vs código).
 - [ ] UI admin para cablear lector ↔ punto / sentido.
 - [ ] Reloj de permanencia: visita = evento IN → OUT; propietarios sin control de tiempo.
 

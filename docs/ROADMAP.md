@@ -1,7 +1,7 @@
 # AccesoPro — inventario + plan punta a punta
 
-Fecha de revisión: 2026-09-06.  
-Complementa `PENDING.md`, `OPS_LANES.md`, `MODULES.md`. Si se completa un ítem, tacharlo acá y mover estado a `MODULES.md`.
+Fecha de revisión: 2026-09-07.  
+Orden práctico portería (live/toast/cableado): **`docs/PLAN_PORTERIA.md`**.
 
 ---
 
@@ -27,7 +27,7 @@ Complementa `PENDING.md`, `OPS_LANES.md`, `MODULES.md`. Si se completa un ítem,
 
 | # | Problema | Evidencia | Efecto |
 |---|----------|-----------|--------|
-| P0.1 | Mismo lector en Salida **no** hereda relés de Ingreso | `HomeDashboard` `outSlots` solo usa `topology.out.actuatorIds` | Con 1 ASI, Salida sin botón de puerta |
+| P0.1 | Mismo lector en Salida hereda relés de Ingreso | `sharedReader` en `HomeDashboard` | Hecho |
 | P0.2 | `onOpenRelay` no prioriza `dahuaDeviceId` del actuador | Toast abre por pool de sentido, no por vínculo equipo↔relé | Apertura manual falla o abre otro relé |
 | P0.3 | Sin UI admin de cableado | API `accessPoints.ts` existe; cero página web | Topología = heurística de nombre / backfill |
 | P0.4 | QR visita: payload ≠ CardNo ASI | QR = `ACCESOPRO:V1:token`; enroll = `token` crudo | ASI puede no validar el QR mostrado |

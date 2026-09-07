@@ -710,8 +710,8 @@ hardware.get("/dahua/:id/live", async (c) => {
       status: 200,
       headers: {
         "Content-Type": res.headers.get("Content-Type") || "multipart/x-mixed-replace; boundary=frame",
-        "Cache-Control": "no-cache, no-store, must-revalidate",
-        Connection: "close",
+        "Cache-Control": "no-cache, no-store, no-transform, must-revalidate",
+        Connection: "keep-alive",
         "X-Accel-Buffering": "no",
       },
     });

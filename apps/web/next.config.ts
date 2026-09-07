@@ -9,7 +9,7 @@ const nextConfig: NextConfig = {
   output: "standalone",
   outputFileTracingRoot: path.join(path.dirname(fileURLToPath(import.meta.url)), "../.."),
   // Mismo origen (:3000) → API local. Así ZeroTier/LAN no dependen de localhost en el cliente.
-  // fallback = solo si no hay page/route local (el SSE vive en app/api/events/stream)
+  // fallback = solo si no hay page/route local (SSE y live MJPEG tienen route propia)
   async rewrites() {
     return {
       fallback: [

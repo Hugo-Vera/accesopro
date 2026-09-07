@@ -7,8 +7,8 @@ import type { FacialEventAlert } from "@/components/LiveFacialAlertToast";
 
 const ACTUATOR_POLL_MS = 16000;
 /** Con SSE vivo: respaldo liviano. Sin SSE: más agresivo para que el toast no muera. */
-const EVENTS_POLL_SSE_MS = 8000;
-const EVENTS_POLL_FALLBACK_MS = 2500;
+const EVENTS_POLL_SSE_MS = 3500;
+const EVENTS_POLL_FALLBACK_MS = 1000;
 const EVENTS_KEEP = 24;
 
 type Options = {
@@ -174,6 +174,12 @@ export function useOpsEvents({ tenantId, enabled, onAlert }: Options) {
     };
 
     let sseStarted = false;
+    let lastSseAt = 0;
+    const markSseAlive = () => {
+      lastSseAt = Date.now();
+      streamLiveRef.current = true;
+      setStreamLive(true);
+    };
     const connectSse = () => {
       if (closed || sseStarted) return;
       sseStarted = true;
@@ -187,17 +193,14 @@ export function useOpsEvents({ tenantId, enabled, onAlert }: Options) {
         setStreamLive(false);
         return;
       }
-      es.addEventListener("connected", () => {
-        streamLiveRef.current = true;
-        setStreamLive(true);
-      });
+      es.addEventListener("connected", () => markSseAlive());
+      es.addEventListener("ping", () => markSseAlive());
       const onPayload = (raw: string) => {
         try {
           const ev = JSON.parse(raw) as EventRow;
           if (ev?.id) {
+            markSseAlive();
             pushRows([ev], true);
-            streamLiveRef.current = true;
-            setStreamLive(true);
           }
         } catch {
           // ignore
@@ -211,9 +214,20 @@ export function useOpsEvents({ tenantId, enabled, onAlert }: Options) {
         es?.close();
         es = null;
         sseStarted = false;
-        if (!closed) reconnectTimer = setTimeout(connectSse, 4000);
+        if (!closed) reconnectTimer = setTimeout(connectSse, 1200);
       };
     };
+    const sseWatch = setInterval(() => {
+      if (closed || !sseStarted) return;
+      if (lastSseAt && Date.now() - lastSseAt > 22000) {
+        streamLiveRef.current = false;
+        setStreamLive(false);
+        es?.close();
+        es = null;
+        sseStarted = false;
+        if (!closed) connectSse();
+      }
+    }, 4000);
 
     const fetchList = async () => {
       const res = await api<{ events: EventRow[] }>(
@@ -287,6 +301,7 @@ export function useOpsEvents({ tenantId, enabled, onAlert }: Options) {
       es?.close();
       if (pollTimer) clearTimeout(pollTimer);
       if (reconnectTimer) clearTimeout(reconnectTimer);
+      clearInterval(sseWatch);
       streamLiveRef.current = false;
       setStreamLive(false);
     };

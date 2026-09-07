@@ -287,7 +287,7 @@ export function DahuaLivePanel({
             onLoad={() => setError(null)}
             onError={() => {
               setError("Se cortó el live.");
-              setTimeout(() => setTick((n) => n + 1), 2500);
+              setTimeout(() => setTick((n) => n + 1), 1400);
             }}
           />
         ) : (

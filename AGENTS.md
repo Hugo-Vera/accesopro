@@ -46,7 +46,7 @@ API: `GET/PATCH /api/tenants/:id/features`. UI: Configuración → Módulos (blo
 ## Arquitectura híbrida
 
 - **Nube / AccesoPro:** dashboard Next (`apps/web`), API módulos (`apps/api`), Dahua CGI agent (`apps/agent`).
-- Eventos faciales: sync incremental ASI → SQLite (`GET /agent/sync-state` + stream; sin dump del historial del lector al arrancar).
+- Eventos faciales: sync incremental ASI → SQLite (`GET /agent/sync-state` + stream; sin dump del historial del lector al arrancar). Live/toast: `docs/PLAN_PORTERIA.md`.
 - **LAN / AccesoSeguro:** `apps/site` — FastALPR, evidencias, QR DNI, barreras. Corre en :5051. No mezclar ese HTML con el dashboard AccesoPro.
 - RTSP y claves de equipos no salen de la LAN ni van a git (`apps/site/config.yaml` está ignorado).
 

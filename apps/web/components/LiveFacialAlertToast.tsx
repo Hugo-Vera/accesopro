@@ -74,7 +74,7 @@ export function LiveFacialAlertToast({ alert, onDismiss, onOpenRelay }: Props) {
     setAnimKey((k) => k + 1);
     const timer = setTimeout(() => {
       dismiss();
-    }, 60000);
+    }, 12000);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shown?.id]);
@@ -137,7 +137,7 @@ export function LiveFacialAlertToast({ alert, onDismiss, onOpenRelay }: Props) {
             style={{
               height: "100%",
               background: isApproved ? "#059669" : "#e11d48",
-              animation: "apToastBar 60s linear forwards",
+              animation: "apToastBar 12s linear forwards",
             }}
           />
         </div>
