@@ -8,6 +8,7 @@ import { useDash } from "@/components/DashboardProvider";
 import { useEscapeKey } from "@/hooks/useEscapeKey";
 
 type VersionInfo = {
+  appVersion?: string;
   repo: string;
   branch: string;
   localSha: string | null;
@@ -125,7 +126,7 @@ export function ServerUpdatePanel() {
         <div>
           <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Servidor AccesoPro</h2>
           <p className="text-sm text-slate-500 dark:text-slate-400">
-            Versión instalada vs GitHub. Actualizá el Ubuntu sin entrar por consola.
+            Versión {info?.appVersion ?? "—"} instalada vs GitHub. Actualizá el Ubuntu sin entrar por consola.
           </p>
         </div>
         <button
@@ -142,7 +143,7 @@ export function ServerUpdatePanel() {
 
       <div className="grid gap-3 sm:grid-cols-3">
         <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-950/50">
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Local</p>
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Local {info?.appVersion ? `v${info.appVersion}` : ""}</p>
           <p className="mt-1 font-mono text-sm text-slate-900 dark:text-white">{shortSha(info?.localSha ?? null)}</p>
         </div>
         <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-950/50">

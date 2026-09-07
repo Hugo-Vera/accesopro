@@ -1,4 +1,4 @@
-import { and, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { db } from "./db/client.js";
 import { actuators, cameras, commands, dahuaDevices, events, plates, sites } from "./db/schema.js";
@@ -25,6 +25,57 @@ agentRoutes.post("/heartbeat", async (c) => {
   const siteId = c.get("siteId");
   await db.update(sites).set({ lastSeenAt: new Date() }).where(eq(sites.id, siteId));
   return c.json({ ok: true });
+});
+
+/** Evita insertar el mismo RecNo del ASI dos veces (stream + poll / restart). */
+const recentAccessKeys = new Set<string>();
+
+function accessDedupeKey(payload: Record<string, unknown>): string | null {
+  const deviceId = String(payload.deviceId ?? "").trim();
+  const recNo = String(payload.recNo ?? payload.RecNo ?? "").trim();
+  if (deviceId && recNo) return `${deviceId}:rec:${recNo}`;
+  const stamp = String(payload.rawTime ?? payload.CreateTime ?? "").trim();
+  const uid = String(payload.userId ?? payload.UserID ?? payload.personName ?? "").trim();
+  if (deviceId && stamp && uid) return `${deviceId}:t:${uid}:${stamp}`;
+  return null;
+}
+
+function rememberAccessKey(key: string) {
+  recentAccessKeys.add(key);
+  if (recentAccessKeys.size > 800) {
+    const drop = [...recentAccessKeys].slice(0, 400);
+    for (const k of drop) recentAccessKeys.delete(k);
+  }
+}
+
+agentRoutes.get("/sync-state", async (c) => {
+  const siteId = c.get("siteId");
+  const rows = await db
+    .select()
+    .from(events)
+    .where(and(eq(events.siteId, siteId), eq(events.type, "dahua_access")))
+    .orderBy(desc(events.createdAt))
+    .limit(80);
+
+  const devices: Record<string, { recNo: string; rawTime: string; createdAt: number }> = {};
+  for (const row of rows) {
+    let payload: Record<string, unknown> = {};
+    try {
+      payload = JSON.parse(row.payload) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    const deviceId = String(payload.deviceId ?? "").trim();
+    if (!deviceId || devices[deviceId]) continue;
+    const createdAt =
+      row.createdAt instanceof Date ? row.createdAt.getTime() : Number(row.createdAt) || 0;
+    devices[deviceId] = {
+      recNo: String(payload.recNo ?? payload.RecNo ?? "").trim(),
+      rawTime: String(payload.rawTime ?? payload.CreateTime ?? "").trim(),
+      createdAt,
+    };
+  }
+  return c.json({ devices });
 });
 
 agentRoutes.get("/config", async (c) => {
@@ -109,6 +160,37 @@ agentRoutes.post("/events", async (c) => {
   }
 
   if (body.type === "dahua_access") {
+    const dedupeKey = accessDedupeKey(payload);
+    if (dedupeKey && recentAccessKeys.has(dedupeKey)) {
+      return c.json({ ok: true, duplicate: true, openActuatorId: null });
+    }
+    if (dedupeKey) {
+      const recNo = String(payload.recNo ?? payload.RecNo ?? "").trim();
+      const deviceIdHint = String(payload.deviceId ?? "").trim();
+      if (recNo && deviceIdHint) {
+        const recent = await db
+          .select({ payload: events.payload })
+          .from(events)
+          .where(and(eq(events.siteId, siteId), eq(events.type, "dahua_access")))
+          .orderBy(desc(events.createdAt))
+          .limit(40);
+        for (const row of recent) {
+          try {
+            const prev = JSON.parse(row.payload) as Record<string, unknown>;
+            if (
+              String(prev.deviceId ?? "") === deviceIdHint &&
+              String(prev.recNo ?? prev.RecNo ?? "") === recNo
+            ) {
+              rememberAccessKey(dedupeKey);
+              return c.json({ ok: true, duplicate: true, openActuatorId: null });
+            }
+          } catch {
+            /* ignore */
+          }
+        }
+      }
+    }
+
     const failed = String(payload.Status ?? payload.status ?? "1") === "0";
     const method = String(payload.Method ?? payload.methodCode ?? payload.method ?? "");
     const isRemoteUnlock = method === "4" || method === "remote";
@@ -148,6 +230,11 @@ agentRoutes.post("/events", async (c) => {
     payload: JSON.stringify(payload),
     createdAt: eventDate,
   });
+
+  if (body.type === "dahua_access") {
+    const k = accessDedupeKey(payload);
+    if (k) rememberAccessKey(k);
+  }
 
   // Emisión en tiempo real por SSE al frontend con 0ms de latencia
   broadcastRealtimeEvent({

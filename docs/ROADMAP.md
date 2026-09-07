@@ -13,7 +13,7 @@ Complementa `PENDING.md`, `OPS_LANES.md`, `MODULES.md`. Si se completa un ítem,
 | Actuadores CRUD + open (engine / Dahua / IP) | OK |
 | Agent Dahua: eventos + openDoor + personas MVP | OK |
 | Home ops: dual live IN/OUT + historial + autorizaciones | OK (con gaps abajo) |
-| Toast anti-F5 (watermark) | Código listo; validar en runtime |
+| Toast anti-F5 (watermark) | F5 / update no re-tosta; agent prime sin reenviar historial |
 | Portal vecino: ficha, familia, servicios, QR generar/revocar | OK parcial |
 | ALPR vía motor LAN `:5051` + proxy config | OK si motor arriba |
 | Access points API + backfill legacy | OK backend |
@@ -99,7 +99,7 @@ Objetivo: demo 1 ASI sin mentiras.
 
 1. **Same-device OUT**: si `outDeviceId === inDeviceId`, `outSlots` = unión OUT ∪ IN.  
 2. **Resolver apertura**: `dahuaDeviceId` → pool IN (si match) → pool OUT → puerta manual.  
-3. **Validar toast**: F5 sin toast; fichada nueva → un toast. Reiniciar agent si hace falta.  
+3. **Toast anti-F5**: watermark + sessionStorage; agent prime sin reenviar historial.  
 4. **Toast UX**: hora 24h; apertura manual también en aprobado (opcional).  
 5. Checklist manual en `OPS_LANES.md`.
 
@@ -173,7 +173,7 @@ No mezclar Fase F (intercom) con A/B: distinto stack (SIP).
 
 - [ ] 2 sentidos cableados en UI (o 1 ASI lab documentado).  
 - [ ] Facial abre solo relé del punto.  
-- [ ] Toast sin replay al refresh.  
+- [x] Toast sin replay al refresh.  
 - [ ] QR visita abre y registra IN/OUT.  
 - [ ] Portal vecino usable.  
 - [ ] Guardia home usable sin Config.  

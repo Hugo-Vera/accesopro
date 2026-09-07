@@ -42,6 +42,7 @@ import {
   setTenantFeature,
 } from "./features.js";
 import { systemApi } from "./systemUpdate.js";
+import { APP_VERSION } from "./version.js";
 
 type Env = { Variables: { user: AuthUser } };
 
@@ -75,7 +76,7 @@ app.use(
   }),
 );
 
-app.get("/health", (c) => c.json({ ok: true, product: "AccesoPro" }));
+app.get("/health", (c) => c.json({ ok: true, product: "AccesoPro", version: APP_VERSION }));
 
 app.post("/auth/login", async (c) => {
   const body = await c.req.json<{ email?: string; password?: string }>();

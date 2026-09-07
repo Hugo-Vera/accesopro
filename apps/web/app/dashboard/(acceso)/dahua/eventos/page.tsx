@@ -60,7 +60,7 @@ export default function DahuaEventosPage() {
   const loadEvents = () => {
     if (!tenantId) return;
     setLoading(true);
-    api<{ events: EventRow[] }>(withTenant("/api/events?type=dahua_access", tenantId))
+    api<{ events: EventRow[] }>(withTenant("/api/events?type=dahua_access&limit=80", tenantId))
       .then((d) => {
         setEvents(d.events || []);
         setError(null);
@@ -110,13 +110,13 @@ export default function DahuaEventosPage() {
     // SSE a menudo 503 detrás de Docker; poll corto para que el historial no quede congelado
     pollTimer = setInterval(() => {
       if (!tenantId) return;
-      api<{ events: EventRow[] }>(withTenant("/api/events?type=dahua_access", tenantId))
+      api<{ events: EventRow[] }>(withTenant("/api/events?type=dahua_access&limit=80", tenantId))
         .then((d) => {
           setEvents(d.events || []);
           setError(null);
         })
         .catch(() => null);
-    }, 2500);
+    }, 5000);
 
     return () => {
       if (es) es.close();

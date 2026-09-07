@@ -29,11 +29,14 @@ Modelo mental del home `/dashboard`. Si algo falla (toast, historial, relés), c
 
 ## Toast (anti-F5)
 
-Al cargar la página se guarda un watermark `bootMaxCreatedAt` = máximo `createdAt` del listado actual (o `now` si falla la carga).
+Al hidratar `/api/events` se guarda `bootMaxCreatedAt` = máximo `createdAt` del listado (reloj del server). También se persiste el último id en `sessionStorage`.
 
 Solo se emite toast si:
 - el id no se vio en esta sesión, **y**
-- `createdAt > bootMaxCreatedAt`.
+- `createdAt > bootMaxCreatedAt`, **y**
+- no es el mismo id/timestamp ya marcado en `sessionStorage`.
+
+Si la primera carga falla, el poll siguiente hidrata **sin** toast. El agent arranca con el cursor de la DB (`recNo` por equipo): no vuelca el historial del ASI; solo sube el hueco si el stream estuvo caído.
 
 Así un F5 **no** re-tosta el último acceso.
 

@@ -172,6 +172,10 @@ export async function ensureSchema() {
     )
   `);
   await db.run(sql`
+    CREATE INDEX IF NOT EXISTS idx_events_site_type_created
+    ON events (site_id, type, created_at DESC)
+  `);
+  await db.run(sql`
     CREATE TABLE IF NOT EXISTS commands (
       id TEXT PRIMARY KEY,
       site_id TEXT NOT NULL REFERENCES sites(id),

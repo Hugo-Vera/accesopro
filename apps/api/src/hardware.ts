@@ -1209,19 +1209,21 @@ hardware.get("/events", async (c) => {
   const scoped = await scopedSite(c);
   if ("error" in scoped) return scoped.error;
   const type = c.req.query("type");
+  const rawLimit = Number(c.req.query("limit") || 24);
+  const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(Math.trunc(rawLimit), 1), 80) : 24;
   const rows = type
     ? await db
         .select()
         .from(events)
         .where(and(eq(events.siteId, scoped.site.id), eq(events.type, type)))
         .orderBy(desc(events.createdAt))
-        .limit(80)
+        .limit(limit)
     : await db
         .select()
         .from(events)
         .where(eq(events.siteId, scoped.site.id))
         .orderBy(desc(events.createdAt))
-        .limit(80);
+        .limit(limit);
   return c.json({
     events: rows.map((e) => ({
       ...e,

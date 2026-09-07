@@ -5,10 +5,10 @@ import { api, withTenant } from "@/lib/api";
 import { parseFacialEvent, type EventRow } from "@/components/ops/parseFacialEvent";
 import type { FacialEventAlert } from "@/components/LiveFacialAlertToast";
 
-const ACTUATOR_POLL_MS = 12000;
+const ACTUATOR_POLL_MS = 16000;
 /** Con SSE vivo: respaldo liviano. Sin SSE: más agresivo para que el toast no muera. */
-const EVENTS_POLL_SSE_MS = 5000;
-const EVENTS_POLL_FALLBACK_MS = 1500;
+const EVENTS_POLL_SSE_MS = 8000;
+const EVENTS_POLL_FALLBACK_MS = 2500;
 const EVENTS_KEEP = 24;
 
 type Options = {
@@ -19,6 +19,32 @@ type Options = {
 
 /** Evita toast duplicado del mismo evento (HMR / remount). */
 let lastEmittedToastId: string | null = null;
+
+type SeenMark = { id: string; at: number };
+
+function seenKey(tenantId: string) {
+  return `ap:facial-toast:${tenantId}`;
+}
+
+function readSeenMark(tenantId: string): SeenMark | null {
+  try {
+    const raw = sessionStorage.getItem(seenKey(tenantId));
+    if (!raw) return null;
+    const v = JSON.parse(raw) as SeenMark;
+    if (!v?.id) return null;
+    return { id: String(v.id), at: Number(v.at) || 0 };
+  } catch {
+    return null;
+  }
+}
+
+function writeSeenMark(tenantId: string, id: string, at: number) {
+  try {
+    sessionStorage.setItem(seenKey(tenantId), JSON.stringify({ id, at }));
+  } catch {
+    /* modo privado / quota */
+  }
+}
 
 function toMs(v: unknown): number {
   if (typeof v === "number" && Number.isFinite(v)) {
@@ -48,15 +74,25 @@ export function useOpsEvents({ tenantId, enabled, onAlert }: Options) {
   const seenRef = useRef<Set<string>>(new Set());
   const hydratedRef = useRef(false);
   const streamLiveRef = useRef(false);
+  const bootMaxCreatedAtRef = useRef(0);
+  const tenantIdRef = useRef(tenantId);
+  tenantIdRef.current = tenantId;
   const onAlertRef = useRef(onAlert);
   onAlertRef.current = onAlert;
 
   const notifyNew = useCallback((ev: EventRow) => {
-    // Solo ids nuevos (seenRef). No filtrar por reloj: el watermark Date.now()
-    // vs createdAt del server mataba el toast con desfase de reloj / SSE caído.
     const alert = parseFacialEvent(ev);
     if (!alert) return;
+    const ts = toMs(ev.createdAt);
+    // Watermark del listado hidratado (reloj del server, no Date.now() del browser).
+    if (ts && ts <= bootMaxCreatedAtRef.current) return;
+    const tid = tenantIdRef.current;
+    if (tid) {
+      const prev = readSeenMark(tid);
+      if (prev && (prev.id === String(alert.id) || (ts > 0 && ts <= prev.at))) return;
+    }
     if (!emitFacialAlert(alert)) return;
+    if (tid) writeSeenMark(tid, String(alert.id), ts || Date.now());
     onAlertRef.current?.(alert);
   }, []);
 
@@ -67,6 +103,7 @@ export function useOpsEvents({ tenantId, enabled, onAlert }: Options) {
       streamLiveRef.current = false;
       seenRef.current = new Set();
       hydratedRef.current = false;
+      bootMaxCreatedAtRef.current = 0;
       return;
     }
 
@@ -79,6 +116,7 @@ export function useOpsEvents({ tenantId, enabled, onAlert }: Options) {
     seenRef.current = new Set();
     hydratedRef.current = false;
     streamLiveRef.current = false;
+    bootMaxCreatedAtRef.current = 0;
 
     const toRow = (latest: EventRow): EventRow => {
       let payload: Record<string, unknown> = {};
@@ -92,7 +130,7 @@ export function useOpsEvents({ tenantId, enabled, onAlert }: Options) {
       }
       return {
         id: String(latest.id),
-        createdAt: toMs(latest.createdAt) || Date.now(),
+        createdAt: toMs(latest.createdAt),
         payload,
       };
     };
@@ -125,9 +163,61 @@ export function useOpsEvents({ tenantId, enabled, onAlert }: Options) {
       }
     };
 
+    const markHydratedFrom = (rows: EventRow[]) => {
+      const maxTs = rows.reduce((m, r) => Math.max(m, toMs(r.createdAt)), 0);
+      bootMaxCreatedAtRef.current = maxTs;
+      if (rows[0]) {
+        lastEmittedToastId = String(rows[0].id);
+        if (tenantId) writeSeenMark(tenantId, String(rows[0].id), maxTs);
+      }
+      hydratedRef.current = true;
+    };
+
+    let sseStarted = false;
+    const connectSse = () => {
+      if (closed || sseStarted) return;
+      sseStarted = true;
+      try {
+        es = new EventSource(withTenant("/api/events/stream?type=dahua_access", tenantId), {
+          withCredentials: true,
+        });
+      } catch {
+        sseStarted = false;
+        streamLiveRef.current = false;
+        setStreamLive(false);
+        return;
+      }
+      es.addEventListener("connected", () => {
+        streamLiveRef.current = true;
+        setStreamLive(true);
+      });
+      const onPayload = (raw: string) => {
+        try {
+          const ev = JSON.parse(raw) as EventRow;
+          if (ev?.id) {
+            pushRows([ev], true);
+            streamLiveRef.current = true;
+            setStreamLive(true);
+          }
+        } catch {
+          // ignore
+        }
+      };
+      es.addEventListener("access_event", (e: MessageEvent) => onPayload(e.data));
+      es.onmessage = (e: MessageEvent) => onPayload(e.data);
+      es.onerror = () => {
+        streamLiveRef.current = false;
+        setStreamLive(false);
+        es?.close();
+        es = null;
+        sseStarted = false;
+        if (!closed) reconnectTimer = setTimeout(connectSse, 4000);
+      };
+    };
+
     const fetchList = async () => {
       const res = await api<{ events: EventRow[] }>(
-        withTenant("/api/events?type=dahua_access", tenantId),
+        withTenant("/api/events?type=dahua_access&limit=24", tenantId),
       );
       return (res?.events || []).map((e) => ({ ...e, id: String(e.id) }));
     };
@@ -146,8 +236,19 @@ export function useOpsEvents({ tenantId, enabled, onAlert }: Options) {
           try {
             const list = await fetchList();
             if (!closed) {
-              const newcomers = list.filter((e) => e?.id && !seenRef.current.has(String(e.id)));
-              pushRows(newcomers, true);
+              if (!hydratedRef.current) {
+                // Primera carga exitosa = hydrate silencioso (F5 / API tibia).
+                for (const e of list) {
+                  if (e?.id) seenRef.current.add(String(e.id));
+                }
+                const rows = list.map((e) => toRow(e)).sort((a, b) => toMs(b.createdAt) - toMs(a.createdAt));
+                setEvents(rows.slice(0, EVENTS_KEEP));
+                markHydratedFrom(rows);
+                connectSse();
+              } else {
+                const newcomers = list.filter((e) => e?.id && !seenRef.current.has(String(e.id)));
+                pushRows(newcomers, true);
+              }
             }
           } catch (err) {
             console.warn("[ops-events] poll falló", err);
@@ -161,60 +262,21 @@ export function useOpsEvents({ tenantId, enabled, onAlert }: Options) {
 
     const boot = async () => {
       try {
-        const list = (await fetchList()).slice(0, EVENTS_KEEP);
+        const list = await fetchList();
         if (closed) return;
         for (const e of list) {
-          seenRef.current.add(String(e.id));
+          if (e?.id) seenRef.current.add(String(e.id));
         }
-        const rows = list.map((e) => toRow(e));
-        setEvents(rows.sort((a, b) => toMs(b.createdAt) - toMs(a.createdAt)));
-        if (rows[0]) lastEmittedToastId = String(rows[0].id);
+        const rows = list.map((e) => toRow(e)).sort((a, b) => toMs(b.createdAt) - toMs(a.createdAt));
+        setEvents(rows.slice(0, EVENTS_KEEP));
+        markHydratedFrom(rows);
       } catch (err) {
         console.warn("[ops-events] hydrate falló", err);
       }
 
       if (closed) return;
-      hydratedRef.current = true;
       schedulePoll();
-
-      const connectSse = () => {
-        if (closed) return;
-        try {
-          es = new EventSource(withTenant("/api/events/stream?type=dahua_access", tenantId), {
-            withCredentials: true,
-          });
-        } catch {
-          streamLiveRef.current = false;
-          setStreamLive(false);
-          return;
-        }
-        es.addEventListener("connected", () => {
-          streamLiveRef.current = true;
-          setStreamLive(true);
-        });
-        const onPayload = (raw: string) => {
-          try {
-            const ev = JSON.parse(raw) as EventRow;
-            if (ev?.id) {
-              pushRows([ev], true);
-              streamLiveRef.current = true;
-              setStreamLive(true);
-            }
-          } catch {
-            // ignore
-          }
-        };
-        es.addEventListener("access_event", (e: MessageEvent) => onPayload(e.data));
-        es.onmessage = (e: MessageEvent) => onPayload(e.data);
-        es.onerror = () => {
-          streamLiveRef.current = false;
-          setStreamLive(false);
-          es?.close();
-          es = null;
-          if (!closed) reconnectTimer = setTimeout(connectSse, 4000);
-        };
-      };
-      connectSse();
+      if (hydratedRef.current) connectSse();
     };
 
     void boot();

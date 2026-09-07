@@ -7,7 +7,7 @@ Ops IN/OUT: **`docs/OPS_LANES.md`**. Si algo se completa, actualizar `MODULES.md
 
 - [ ] Same ASI en Salida: compartir relés de Ingreso (`HomeDashboard` outSlots).
 - [ ] Apertura toast: resolver por `dahuaDeviceId` → pool IN/OUT.
-- [ ] Validar toast anti-F5 en runtime (código watermark en `useOpsEvents`).
+- [x] Toast anti-F5: watermark `createdAt` + `sessionStorage`; agent prime sin reenviar historial.
 - [ ] UI admin cableado `access_points` (API ya existe).
 - [ ] QR visita: unificar payload vs CardNo ASI + enganchar `scanVisitPass` desde eventos.
 

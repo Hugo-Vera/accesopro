@@ -19,8 +19,6 @@ TOKEN = os.environ.get("SITE_AGENT_TOKEN", "accesopro-demo-agent")
 HEADERS = {"Authorization": f"Bearer {TOKEN}"}
 
 _stop = threading.Event()
-_primed_dahua: set[str] = set()
-_seen_records: set[str] = set()
 _config: dict[str, Any] = {"dahua": [], "actuators": [], "cameras": [], "plates": []}
 
 
@@ -92,6 +90,12 @@ _device_backoffs: dict[str, float] = {}
 _device_initialized: set[str] = set()
 _last_person_access: dict[str, float] = {}
 _seen_records: set[str] = set()
+_stream_live: dict[str, bool] = {}
+_cursors: dict[str, tuple[str, str]] = {}
+_cursors_loaded = False
+_sync_tries = 0
+_last_config_at = 0.0
+_stream_threads: dict[str, threading.Thread] = {}
 
 
 def _normalize_access_rec(rec: dict[str, Any]) -> dict[str, Any]:
@@ -124,6 +128,63 @@ def _record_key(dev_id: str, rec: dict[str, Any]) -> str:
     method = str(rec.get("Method") or "").strip()
     # Stream AccessControl a menudo sin RecNo: no usar solo "dev::" (colisionaba todos).
     return f"{dev_id}:live:{uid}:{status}:{method}:{stamp}:{url}"
+
+
+def _intish(v: Any) -> int:
+    try:
+        return int(str(v).strip() or "0")
+    except (TypeError, ValueError):
+        return 0
+
+
+def _is_newer_than_cursor(dev_id: str, rec: dict[str, Any]) -> bool:
+    cur = _cursors.get(dev_id)
+    if not cur:
+        return False
+    rec_no = _intish(rec.get("RecNo") or rec.get("Index"))
+    stamp = str(rec.get("CreateTime") or rec.get("Time") or rec.get("UTC") or "").strip()
+    cur_no, cur_stamp = cur
+    cno = _intish(cur_no)
+    if rec_no and cno:
+        return rec_no > cno
+    if stamp and cur_stamp:
+        return stamp > cur_stamp
+    return False
+
+
+def _remember_cursor(dev_id: str, rec: dict[str, Any]) -> None:
+    rec_no = str(rec.get("RecNo") or rec.get("Index") or "").strip()
+    stamp = str(rec.get("CreateTime") or rec.get("Time") or rec.get("UTC") or "").strip()
+    prev = _cursors.get(dev_id)
+    if not prev:
+        _cursors[dev_id] = (rec_no, stamp)
+        return
+    if rec_no and _intish(rec_no) >= _intish(prev[0]):
+        _cursors[dev_id] = (rec_no, stamp)
+        return
+    if stamp and prev[1] and stamp > prev[1]:
+        _cursors[dev_id] = (rec_no or prev[0], stamp)
+
+
+def _load_sync_cursors() -> None:
+    global _cursors_loaded, _sync_tries
+    if _cursors_loaded:
+        return
+    try:
+        data = api_get("/agent/sync-state")
+        devices = data.get("devices") or {}
+        for did, cur in devices.items():
+            rec_no = str((cur or {}).get("recNo") or "")
+            stamp = str((cur or {}).get("rawTime") or "")
+            _cursors[str(did)] = (rec_no, stamp)
+            _seen_records.add(_record_key(str(did), {"RecNo": rec_no, "CreateTime": stamp}))
+        _cursors_loaded = True
+        print(f"Sync ASI: cursor de {len(_cursors)} equipo(s) desde la DB")
+    except Exception as exc:  # noqa: BLE001
+        _sync_tries += 1
+        print(f"Sync-state no disponible ({_sync_tries}/5): {exc}")
+        if _sync_tries >= 5:
+            _cursors_loaded = True
 
 
 def _dispatch_access_event(dev: dict[str, Any], rec: dict[str, Any], *, skip_debounce: bool = False) -> None:
@@ -195,6 +256,7 @@ def _dispatch_access_event(dev: dict[str, Any], rec: dict[str, Any], *, skip_deb
         )
         # Solo tras éxito: si falló el POST, el próximo poll reintenta.
         _seen_records.add(key)
+        _remember_cursor(dev_id, rec)
         if len(_seen_records) > 3000:
             # Conservar las claves más recientes aproximando con clear parcial
             _seen_records.clear()
@@ -203,7 +265,7 @@ def _dispatch_access_event(dev: dict[str, Any], rec: dict[str, Any], *, skip_deb
         print(f"Evento Dahua no enviado: {exc}")
 
 
-def _fetch_latest_records(dev: dict[str, Any], count: int = 25) -> list[dict[str, Any]]:
+def _fetch_latest_records(dev: dict[str, Any], count: int = 5) -> list[dict[str, Any]]:
     """Últimos N del ASI (RPC). El CGI find&count=N devuelve los más viejos y congela el historial."""
     client = _client(dev)
     try:
@@ -225,16 +287,20 @@ def _fetch_latest_records(dev: dict[str, Any], count: int = 25) -> list[dict[str
 
 def _poll_dahua() -> None:
     now = time.time()
+    _load_sync_cursors()
     for dev in _config.get("dahua", []):
         if dev.get("deviceType") == "camera_ip":
             continue
         dev_id = dev.get("id")
         if not dev_id:
             continue
+        if _stream_live.get(dev_id):
+            continue
         if _device_backoffs.get(dev_id, 0) > now:
             continue
         try:
-            records = _fetch_latest_records(dev, 25)
+            gap = dev_id not in _device_initialized
+            records = _fetch_latest_records(dev, 12 if gap else 5)
             if dev_id in _device_backoffs:
                 _device_backoffs.pop(dev_id, None)
         except Exception as exc:  # noqa: BLE001
@@ -243,15 +309,21 @@ def _poll_dahua() -> None:
             continue
 
         if not records:
+            if gap:
+                _device_initialized.add(dev_id)
             continue
 
-        if dev_id not in _device_initialized:
+        if gap:
             _device_initialized.add(dev_id)
-            # records ya son los más recientes
-            recent = records[-20:] if len(records) > 20 else list(records)
-            print(f"Dahua {dev.get('name')}: backfill {len(recent)} registros al historial")
-            for rec in recent:
-                _dispatch_access_event(dev, rec, skip_debounce=True)
+            posted = 0
+            for rec in records:
+                rec_n = _normalize_access_rec(rec)
+                if _is_newer_than_cursor(dev_id, rec_n):
+                    _dispatch_access_event(dev, rec_n, skip_debounce=True)
+                    posted += 1
+                else:
+                    _seen_records.add(_record_key(dev_id, rec_n))
+            print(f"Dahua {dev.get('name')}: hueco {posted}/{len(records)} (sin dump de historial)")
             continue
 
         for rec in records:
@@ -410,45 +482,96 @@ def _commands_worker() -> None:
 
 
 def _heartbeat_worker() -> None:
+    global _last_config_at
     while not _stop.is_set():
         try:
             api_post("/agent/heartbeat", {})
-            cfg = api_get("/agent/config")
-            if cfg:
-                _config.update(cfg)
-                alpr.sync(_config.get("cameras") or [])
+            now = time.time()
+            if now - _last_config_at >= 20.0 or not _config.get("dahua"):
+                cfg = api_get("/agent/config")
+                if cfg:
+                    _config.update(cfg)
+                    alpr.sync(_config.get("cameras") or [])
+                    _last_config_at = now
         except Exception as exc:  # noqa: BLE001
             print(f"Heartbeat worker: {exc}")
-        time.sleep(3.5)
+        time.sleep(4.0)
 
 
-def _dahua_stream_worker() -> None:
-    time.sleep(2.0)
+def _dahua_stream_one(dev_id: str) -> None:
     while not _stop.is_set():
-        for dev in _config.get("dahua", []):
-            if dev.get("deviceType") == "camera_ip":
-                continue
-            try:
-                client = _client(dev)
-                for event in client.stream_events():
-                    if _stop.is_set():
-                        break
-                    if isinstance(event, dict):
-                        _dispatch_access_event(dev, event)
-            except Exception as exc:  # noqa: BLE001
-                pass
+        dev = _device(dev_id)
+        if not dev:
+            _stream_live[dev_id] = False
+            time.sleep(3.0)
+            continue
+        try:
+            _stream_live[dev_id] = True
+            for event in _client(dev).stream_events():
+                if _stop.is_set():
+                    break
+                if isinstance(event, dict):
+                    live = _device(dev_id) or dev
+                    _dispatch_access_event(live, event)
+        except Exception:  # noqa: BLE001
+            pass
+        _stream_live[dev_id] = False
         time.sleep(2.0)
 
 
+def _ensure_stream_threads() -> None:
+    live_ids: set[str] = set()
+    for dev in _config.get("dahua", []):
+        if dev.get("deviceType") == "camera_ip":
+            continue
+        did = str(dev.get("id") or "")
+        if not did:
+            continue
+        live_ids.add(did)
+        t = _stream_threads.get(did)
+        if t and t.is_alive():
+            continue
+        th = threading.Thread(target=_dahua_stream_one, args=(did,), daemon=True, name=f"Stream-{did[:8]}")
+        _stream_threads[did] = th
+        th.start()
+    for did in list(_stream_threads):
+        if did not in live_ids:
+            _stream_live.pop(did, None)
+
+
+def _dahua_stream_worker() -> None:
+    time.sleep(1.5)
+    while not _stop.is_set():
+        try:
+            _ensure_stream_threads()
+        except Exception:  # noqa: BLE001
+            pass
+        time.sleep(4.0)
+
+
+def _any_reader_needs_poll() -> bool:
+    found = False
+    for dev in _config.get("dahua", []):
+        if dev.get("deviceType") == "camera_ip":
+            continue
+        did = dev.get("id")
+        if not did:
+            continue
+        found = True
+        if not _stream_live.get(did):
+            return True
+    return found
+
+
 def _dahua_poller_worker() -> None:
-    """Respaldo del stream HTTP; 2.5s equilibra toast vs CPU/CGI."""
-    time.sleep(1.0)
+    """Respaldo del stream: RecordFinder solo si el attach está caído."""
+    time.sleep(1.5)
     while not _stop.is_set():
         try:
             _poll_dahua()
         except Exception as exc:  # noqa: BLE001
             print(f"Poller worker: {exc}")
-        time.sleep(2.5)
+        time.sleep(2.8 if _any_reader_needs_poll() else 8.0)
 
 
 @asynccontextmanager
@@ -467,7 +590,7 @@ async def lifespan(_app: FastAPI):
     alpr.stop()
 
 
-app = FastAPI(title="AccesoPro Site Agent", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="AccesoPro Site Agent", version="0.3.0", lifespan=lifespan)
 
 
 @app.get("/health")
@@ -478,6 +601,7 @@ def health():
         "product": "AccesoPro",
         "cameras": len(_config.get("cameras") or []),
         "dahua": len(_config.get("dahua") or []),
+        "version": "0.3.0",
     }
 
 

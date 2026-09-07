@@ -44,10 +44,22 @@ Variable: `DATABASE_URL=file:./data/accesopro.db` (relativo a `apps/api`).
 | `dahua_devices` | Terminales faciales / IP (credenciales) |
 | `cameras` | RTSP (referencia nube; vínculo ALPR legacy vía `actuator_id`) |
 | `plates` | Lista blanca/negra en API (complementa motor) |
-| `events` | Auditoría: plate, qr_access, visit_scan, … |
+| `events` | Auditoría incremental: `dahua_access`, plate, qr_access, visit_scan. **No** se vuelca el historial completo del ASI. |
 | `commands` | Cola agent + log engine.open |
 
 **Regla modular:** cada entidad vive sola; el **cableado** une. Un facial peatonal no abre barreras vehiculares si no está cableado al mismo punto.
+
+### Sync ASI ↔ AccesoPro (`dahua_access`)
+
+El ASI es la fuente de accesos en vivo. La tabla `events` es la fuente del historial en el dashboard.
+
+1. El agent lee `GET /agent/sync-state`: último `recNo` / `rawTime` por `deviceId` (últimas 80 filas, no el ASI entero).
+2. Stream HTTP `eventManager.attach` es el camino principal (un hilo por lector).
+3. RecordFinder (poll) solo corre si el stream está caído: pide 5–12 registros nuevos respecto del cursor. No reimporta el archivo del equipo.
+4. `POST /agent/events` deduplica por `deviceId`+`recNo` (memoria + DB).
+5. El dashboard hidrata `GET /api/events?limit=24`. La página Eventos usa `limit=80`.
+
+Índice: `idx_events_site_type_created`.
 
 ```
 site 1 ── N access_points

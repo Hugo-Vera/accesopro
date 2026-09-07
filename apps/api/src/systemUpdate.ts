@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { Hono } from "hono";
 import { requireAuth, type AuthUser } from "./auth.js";
 import { denyUnlessCapability } from "./grants.js";
+import { APP_VERSION } from "./version.js";
 
 type Env = { Variables: { user: AuthUser } };
 
@@ -187,6 +188,7 @@ systemApi.get("/system/version", async (c) => {
   const updateAvailable = Boolean(local && remote && local !== remote.sha);
 
   return c.json({
+    appVersion: APP_VERSION,
     repo: REPO,
     branch: BRANCH,
     localSha: local,
