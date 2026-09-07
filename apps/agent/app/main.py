@@ -96,7 +96,9 @@ _cursors: dict[str, tuple[str, str]] = {}
 _cursors_loaded = False
 _sync_tries = 0
 _last_config_at = 0.0
+_last_dispatch_at = 0.0
 _stream_threads: dict[str, threading.Thread] = {}
+_stream_error: dict[str, str] = {}
 
 
 def _normalize_access_rec(rec: dict[str, Any]) -> dict[str, Any]:
@@ -189,6 +191,7 @@ def _load_sync_cursors() -> None:
 
 
 def _dispatch_access_event(dev: dict[str, Any], rec: dict[str, Any], *, skip_debounce: bool = False) -> None:
+    global _last_dispatch_at
     now = time.time()
     rec = _normalize_access_rec(rec)
     if not rec:
@@ -258,6 +261,7 @@ def _dispatch_access_event(dev: dict[str, Any], rec: dict[str, Any], *, skip_deb
         # Solo tras éxito: si falló el POST, el próximo poll reintenta.
         _seen_records.add(key)
         _remember_cursor(dev_id, rec)
+        _last_dispatch_at = now
         if len(_seen_records) > 3000:
             # Conservar las claves más recientes aproximando con clear parcial
             _seen_records.clear()
@@ -286,7 +290,34 @@ def _fetch_latest_records(dev: dict[str, Any], count: int = 5) -> list[dict[str,
         return []
 
 
+def _public_record(rec: dict[str, Any]) -> dict[str, Any]:
+    rec = _normalize_access_rec(rec)
+    return {
+        "recNo": rec.get("RecNo") or rec.get("Index") or "",
+        "userId": rec.get("UserID") or "",
+        "cardName": rec.get("CardName") or rec.get("UserName") or "",
+        "cardNo": rec.get("CardNo") or "",
+        "status": rec.get("Status"),
+        "method": rec.get("Method"),
+        "createTime": rec.get("CreateTime") or rec.get("Time") or rec.get("UTC") or "",
+        "url": rec.get("URL") or rec.get("SnapURL") or "",
+    }
+
+
+def _record_age_seconds(rec: dict[str, Any]) -> float | None:
+    stamp = str(rec.get("CreateTime") or rec.get("Time") or "").strip()[:19]
+    if not stamp:
+        return None
+    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"):
+        try:
+            return abs(time.time() - time.mktime(time.strptime(stamp, fmt)))
+        except Exception:
+            continue
+    return None
+
+
 def _poll_dahua() -> None:
+    """RecordFinder siempre: el attach a veces queda 'vivo' sin entregar eventos."""
     now = time.time()
     _load_sync_cursors()
     for dev in _config.get("dahua", []):
@@ -295,13 +326,11 @@ def _poll_dahua() -> None:
         dev_id = dev.get("id")
         if not dev_id:
             continue
-        if _stream_live.get(dev_id):
-            continue
         if _device_backoffs.get(dev_id, 0) > now:
             continue
         try:
             gap = dev_id not in _device_initialized
-            records = _fetch_latest_records(dev, 12 if gap else 5)
+            records = _fetch_latest_records(dev, 8 if gap else 5)
             if dev_id in _device_backoffs:
                 _device_backoffs.pop(dev_id, None)
         except Exception as exc:  # noqa: BLE001
@@ -316,18 +345,33 @@ def _poll_dahua() -> None:
 
         if gap:
             _device_initialized.add(dev_id)
+            newest = None
             posted = 0
             for rec in records:
                 rec_n = _normalize_access_rec(rec)
-                if _is_newer_than_cursor(dev_id, rec_n):
+                rec_no = _intish(rec_n.get("RecNo") or rec_n.get("Index"))
+                if newest is None or rec_no >= _intish((newest or {}).get("RecNo")):
+                    newest = rec_n
+                age = _record_age_seconds(rec_n)
+                # Solo el pase reciente (agent recién arrancado); no volcar el historial del ASI.
+                if age is not None and age <= 90:
                     _dispatch_access_event(dev, rec_n, skip_debounce=True)
                     posted += 1
                 else:
                     _seen_records.add(_record_key(dev_id, rec_n))
-            print(f"Dahua {dev.get('name')}: hueco {posted}/{len(records)} (sin dump de historial)")
+            if newest:
+                _remember_cursor(dev_id, newest)
+            print(
+                f"Dahua {dev.get('name')}: prime cursor RecNo={newest.get('RecNo') if newest else '-'} "
+                f"recientes={posted}/{len(records)} stream={bool(_stream_live.get(dev_id))}"
+            )
             continue
 
         for rec in records:
+            rec_n = _normalize_access_rec(rec)
+            if _cursors.get(dev_id) and not _is_newer_than_cursor(dev_id, rec_n):
+                _seen_records.add(_record_key(dev_id, rec_n))
+                continue
             _dispatch_access_event(dev, rec)
 
 
@@ -363,7 +407,7 @@ def _run_command(cmd: dict[str, Any]) -> dict[str, Any]:
         dev = _device(payload.get("deviceId"))
         if not dev:
             return {"ok": False, "error": "Equipo no encontrado"}
-        return _client(dev).list_persons(int(payload.get("count") or 200))
+        return _client(dev).list_persons(int(payload.get("count") or 200), fingerprints=False)
     if action == "dahua_person_enroll":
         dev = _device(payload.get("deviceId"))
         if not dev:
@@ -442,6 +486,13 @@ def _run_command(cmd: dict[str, Any]) -> dict[str, Any]:
         enable = bool(payload.get("enabled", True))
         days = payload.get("days") or []
         return _client(dev).set_time_schedule(idx, enable, days)
+    if action == "dahua_access_records":
+        dev = _device(payload.get("deviceId"))
+        if not dev:
+            return {"ok": False, "error": "Equipo no encontrado"}
+        count = int(payload.get("count") or 8)
+        rows = _fetch_latest_records(dev, count)
+        return {"ok": True, "count": len(rows), "records": [_public_record(r) for r in rows]}
     if action == "dahua_card_listen":
         dev = _device(payload.get("deviceId"))
         if not dev:
@@ -455,7 +506,8 @@ def _run_command(cmd: dict[str, Any]) -> dict[str, Any]:
         res = _client(dev).clear_access_records()
         _seen_records.clear()
         _last_person_access.clear()
-        _device_last_times[dev["id"]] = int(time.time())
+        _cursors.pop(dev["id"], None)
+        _device_initialized.discard(dev["id"])
         return res
     return {"ok": False, "error": f"Acción desconocida: {action}"}
 
@@ -507,15 +559,22 @@ def _dahua_stream_one(dev_id: str) -> None:
             time.sleep(3.0)
             continue
         try:
-            _stream_live[dev_id] = True
+            _stream_error.pop(dev_id, None)
+            print(f"Stream attach → {dev.get('name')} {dev.get('host')}")
+            n = 0
             for event in _client(dev).stream_events():
+                _stream_live[dev_id] = True
                 if _stop.is_set():
                     break
                 if isinstance(event, dict):
                     live = _device(dev_id) or dev
                     _dispatch_access_event(live, event)
-        except Exception:  # noqa: BLE001
-            pass
+                    n += 1
+            if n == 0:
+                print(f"Stream {dev.get('name')}: attach cerró sin eventos")
+        except Exception as exc:  # noqa: BLE001
+            _stream_error[dev_id] = str(exc)[:240]
+            print(f"Stream {dev.get('name')}: {exc}")
         _stream_live[dev_id] = False
         time.sleep(2.0)
 
@@ -565,14 +624,14 @@ def _any_reader_needs_poll() -> bool:
 
 
 def _dahua_poller_worker() -> None:
-    """Respaldo del stream: RecordFinder solo si el attach está caído."""
-    time.sleep(1.5)
+    """RecordFinder en paralelo al attach (el stream solo no basta en ASI6214)."""
+    time.sleep(1.2)
     while not _stop.is_set():
         try:
             _poll_dahua()
         except Exception as exc:  # noqa: BLE001
             print(f"Poller worker: {exc}")
-        time.sleep(2.8 if _any_reader_needs_poll() else 8.0)
+        time.sleep(1.6)
 
 
 @asynccontextmanager
@@ -591,7 +650,7 @@ async def lifespan(_app: FastAPI):
     alpr.stop()
 
 
-app = FastAPI(title="AccesoPro Site Agent", version="0.3.0", lifespan=lifespan)
+app = FastAPI(title="AccesoPro Site Agent", version="0.3.1", lifespan=lifespan)
 
 
 @app.get("/health")
@@ -602,7 +661,11 @@ def health():
         "product": "AccesoPro",
         "cameras": len(_config.get("cameras") or []),
         "dahua": len(_config.get("dahua") or []),
-        "version": "0.3.0",
+        "version": "0.3.1",
+        "streamLive": {k: bool(v) for k, v in _stream_live.items()},
+        "streamError": dict(_stream_error),
+        "cursors": {k: {"recNo": a, "rawTime": b} for k, (a, b) in _cursors.items()},
+        "lastDispatchAt": _last_dispatch_at or None,
     }
 
 
@@ -721,6 +784,58 @@ def dahua_live(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@app.get("/dahua/{device_id}/records")
+def dahua_records(
+    device_id: str,
+    count: int = 8,
+    ingest: int = 0,
+    authorization: str | None = Header(default=None),
+    token: str | None = Query(default=None),
+):
+    """Últimos accesos del ASI (RecordFinder). ingest=1 los manda a la API."""
+    _authorize(authorization, token)
+    _ensure_dahua_config()
+    dev = _device(device_id)
+    if not dev:
+        raise HTTPException(status_code=404, detail="Equipo no encontrado")
+    rows = _fetch_latest_records(dev, max(1, min(int(count or 8), 20)))
+    posted = 0
+    if int(ingest or 0):
+        for rec in rows:
+            before = _last_dispatch_at
+            _dispatch_access_event(dev, rec, skip_debounce=True)
+            if _last_dispatch_at != before:
+                posted += 1
+    return {
+        "ok": True,
+        "count": len(rows),
+        "posted": posted,
+        "streamLive": bool(_stream_live.get(device_id)),
+        "streamError": _stream_error.get(device_id),
+        "cursor": (
+            {"recNo": _cursors[device_id][0], "rawTime": _cursors[device_id][1]}
+            if device_id in _cursors
+            else None
+        ),
+        "records": [_public_record(r) for r in rows],
+    }
+
+
+@app.get("/dahua/{device_id}/persons")
+def dahua_persons(
+    device_id: str,
+    count: int = 200,
+    authorization: str | None = Header(default=None),
+    token: str | None = Query(default=None),
+):
+    _authorize(authorization, token)
+    _ensure_dahua_config()
+    dev = _device(device_id)
+    if not dev:
+        raise HTTPException(status_code=404, detail="Equipo no encontrado")
+    return _client(dev).list_persons(int(count or 200), fingerprints=False)
 
 
 @app.get("/dahua/{device_id}/qr-config")

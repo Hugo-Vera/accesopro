@@ -144,57 +144,106 @@ class DahuaClient:
         ctype = res.headers.get("Content-Type", "") or "image/jpeg"
         return res.content, ctype.split(";")[0].strip() or "image/jpeg"
 
-    def _parse_event_content(self, content: str) -> dict[str, Any] | None:
+    def _extract_json_object(self, text: str) -> dict[str, Any] | None:
         import json
-        import re
-        m = re.search(r"data\s*=\s*(\{.*?\})", content, re.DOTALL)
-        if m:
-            try:
-                data = json.loads(m.group(1))
-                if isinstance(data, dict):
-                    return data
-            except Exception:
-                pass
+
+        brace = text.find("{")
+        if brace < 0:
+            return None
+        depth = 0
+        in_str = False
+        esc = False
+        for i in range(brace, len(text)):
+            ch = text[i]
+            if in_str:
+                if esc:
+                    esc = False
+                elif ch == "\\":
+                    esc = True
+                elif ch == '"':
+                    in_str = False
+                continue
+            if ch == '"':
+                in_str = True
+                continue
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+                if depth == 0:
+                    try:
+                        data = json.loads(text[brace : i + 1])
+                    except Exception:
+                        return None
+                    return data if isinstance(data, dict) else None
+        return None
+
+    def _parse_event_content(self, content: str) -> dict[str, Any] | None:
+        blob = content.strip()
+        if not blob or blob.lower().startswith("heartbeat"):
+            return None
+        data = self._extract_json_object(blob)
+        if isinstance(data, dict):
+            inner = data.get("data") if isinstance(data.get("data"), dict) else None
+            if inner is None and isinstance(data.get("Data"), dict):
+                inner = data.get("Data")
+            return {**data, **(inner or {})} if inner else data
         res: dict[str, Any] = {}
-        for part in content.split(";"):
+        for part in blob.replace("\n", ";").split(";"):
             if "=" in part:
                 k, v = part.split("=", 1)
                 res[k.strip()] = v.strip()
         return res if res else None
 
     def stream_events(self):
-        """Abre un stream HTTP multipart continuo contra el terminal Dahua para recibir eventos instantáneos en tiempo real sin polling."""
-        url = f"{self.base}/cgi-bin/eventManager.cgi?action=attach&codes=[AccessControl]"
+        """Attach HTTP del ASI. Respaldo RecordFinder en el poller si esto no entrega eventos."""
+        url = (
+            f"{self.base}/cgi-bin/eventManager.cgi"
+            "?action=attach&codes=[AccessControl,FaceRecognition]&heartbeat=5"
+        )
         for auth in (
             HTTPDigestAuth(self.username, self.password),
             HTTPBasicAuth(self.username, self.password),
         ):
             try:
-                with self.session.get(url, auth=auth, stream=True, timeout=(6.0, None), verify=False) as res:
+                with self.session.get(url, auth=auth, stream=True, timeout=(8.0, None), verify=False) as res:
                     if res.status_code in (401, 403):
                         continue
                     if res.status_code != 200:
-                        break
-                    buf: list[str] = []
-                    for raw_line in res.iter_lines():
-                        if raw_line is None:
+                        raise RuntimeError(f"attach HTTP {res.status_code}")
+                    buf = ""
+                    for chunk in res.iter_content(chunk_size=512):
+                        if not chunk:
                             continue
-                        line = raw_line.decode("utf-8", errors="ignore").strip()
-                        if not line:
-                            continue
-                        if line.startswith("--"):
-                            if buf:
-                                content = " ".join(buf)
-                                buf.clear()
-                                if "AccessControl" in content or "data=" in content:
-                                    ev = self._parse_event_content(content)
+                        buf += chunk.decode("utf-8", errors="ignore")
+                        if len(buf) > 250_000:
+                            buf = buf[-80_000:]
+                        while True:
+                            cut = -1
+                            seplen = 0
+                            for sep in ("\r\n--", "\n--", "\r\n\r\n", "\n\n"):
+                                idx = buf.find(sep)
+                                if idx >= 0 and (cut < 0 or idx < cut):
+                                    cut = idx
+                                    seplen = len(sep)
+                            if cut < 0:
+                                if "data=" in buf and buf.rstrip().endswith("}"):
+                                    ev = self._parse_event_content(buf)
+                                    buf = ""
                                     if ev:
                                         yield ev
-                            continue
-                        buf.append(line)
+                                break
+                            part, buf = buf[:cut], buf[cut + seplen :]
+                            low = part.lower()
+                            if "heartbeat" in low and "data=" not in low:
+                                continue
+                            if "accesscontrol" in low or "facerecognition" in low or "data=" in low or "{" in part:
+                                ev = self._parse_event_content(part)
+                                if ev:
+                                    yield ev
                     return
-            except Exception:
-                pass
+            except Exception as exc:  # noqa: BLE001
+                print(f"Dahua attach {self.base}: {exc}")
 
     def probe(self) -> dict[str, Any]:
         info = self.system_info()
@@ -319,7 +368,7 @@ class DahuaClient:
         except Exception:
             return []
 
-    def list_persons(self, count: int = 200) -> dict[str, Any]:
+    def list_persons(self, count: int = 200, fingerprints: bool = False) -> dict[str, Any]:
         text = self._get(
             f"/cgi-bin/recordFinder.cgi?action=find&name=AccessControlCard&count={int(count) or 200}"
         )
@@ -348,9 +397,14 @@ class DahuaClient:
                         if f.get("UserID"):
                             rpc_faces[str(f["UserID"])] = f
 
-                    for uid in user_ids[:30]:
-                        fp_resp = self._rpc_send("AccessFingerprint.startFind", {"Condition": {"UserID": uid}}, session_id=sid)
-                        rpc_fps[uid] = int(fp_resp.get("params", {}).get("Total") or 0)
+                    if fingerprints:
+                        for uid in user_ids[:30]:
+                            fp_resp = self._rpc_send(
+                                "AccessFingerprint.startFind",
+                                {"Condition": {"UserID": uid}},
+                                session_id=sid,
+                            )
+                            rpc_fps[uid] = int(fp_resp.get("params", {}).get("Total") or 0)
             except Exception:
                 pass
 

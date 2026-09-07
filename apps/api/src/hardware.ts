@@ -542,6 +542,37 @@ hardware.post("/dahua/:id/test", async (c) => {
   return c.json(done);
 });
 
+hardware.get("/dahua/:id/access-records", async (c) => {
+  const scoped = await scopedSiteWithModule(c, "dahua_access");
+  if ("error" in scoped) return scoped.error;
+  const id = c.req.param("id");
+  const count = Number(c.req.query("count") || 8);
+  const ingest = c.req.query("ingest") === "1" || c.req.query("ingest") === "true";
+  if (!agentOnline(scoped.site.lastSeenAt)) {
+    return c.json({ error: "El agent del sitio no está en línea." }, 503);
+  }
+  const agentBase = agentBaseUrl();
+  const agentToken = process.env.SITE_AGENT_TOKEN ?? "accesopro-demo-agent";
+  const qs = new URLSearchParams({
+    count: String(Math.min(Math.max(count || 8, 1), 20)),
+    ingest: ingest ? "1" : "0",
+  });
+  try {
+    const res = await fetch(`${agentBase}/dahua/${id}/records?${qs.toString()}`, {
+      headers: { Authorization: `Bearer ${agentToken}` },
+      signal: AbortSignal.timeout(15000),
+    });
+    if (res.ok) return c.json(await res.json());
+    const errText = await res.text().catch(() => "");
+    return c.json({ error: errText || `Agent HTTP ${res.status}` }, 502);
+  } catch (err) {
+    return c.json(
+      { error: err instanceof Error ? err.message : "No se pudo leer RecordFinder del ASI" },
+      502,
+    );
+  }
+});
+
 hardware.get("/dahua/:id/snapshot", async (c) => {
   const denied = await denyUnlessCapability(c.get("user"), "dahua.live");
   if (denied) return denied;
@@ -746,6 +777,17 @@ hardware.get("/dahua/:id/persons", async (c) => {
     .where(and(eq(dahuaDevices.id, id), eq(dahuaDevices.siteId, scoped.site.id)))
     .get();
   if (!row) return c.json({ error: "Equipo no encontrado" }, 404);
+  const agentBase = agentBaseUrl();
+  const agentToken = process.env.SITE_AGENT_TOKEN ?? "accesopro-demo-agent";
+  try {
+    const res = await fetch(`${agentBase}/dahua/${id}/persons`, {
+      headers: { Authorization: `Bearer ${agentToken}` },
+      signal: AbortSignal.timeout(20000),
+    });
+    if (res.ok) return c.json(await res.json());
+  } catch {
+    /* cola */
+  }
   const cmd = await enqueue(scoped.site.id, "dahua_person_list", { deviceId: id });
   const done = await waitCommand(cmd, 30);
   if (!done.ok) return c.json({ error: done.error || "No se pudo listar" }, 502);
