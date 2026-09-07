@@ -18,6 +18,32 @@ need_root() {
   fi
 }
 
+# Dueño del árbol en el host (self-update del API corre como root y rompe .git).
+repo_owner() {
+  if [[ -n "${ACCESOPRO_OWNER:-}" ]]; then
+    echo "$ACCESOPRO_OWNER"
+    return
+  fi
+  if [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]]; then
+    echo "$SUDO_USER"
+    return
+  fi
+  if [[ -d "$INSTALL_DIR" ]]; then
+    stat -c '%U' "$INSTALL_DIR" 2>/dev/null || true
+  fi
+}
+
+fix_repo_ownership() {
+  local owner
+  owner="$(repo_owner)"
+  [[ -n "$owner" && "$owner" != "root" ]] || return 0
+  # Si .git no es escribible por el usuario actual, o corrimos como root: devolver al dueño del host
+  if [[ "$(id -u)" -eq 0 ]] || [[ ! -w "$INSTALL_DIR/.git/objects" ]]; then
+    echo "    Reparando permisos git → $owner:$owner"
+    need_root chown -R "$owner:$owner" "$INSTALL_DIR"
+  fi
+}
+
 compose() {
   local files=(-f docker-compose.yml)
   if [[ -f deploy/docker-compose.linux.yml ]]; then
@@ -32,6 +58,7 @@ compose() {
 
 echo "==> Actualizando AccesoPro en $INSTALL_DIR"
 cd "$INSTALL_DIR"
+fix_repo_ownership
 
 # Git 2.35+ rechaza el repo si el dueño del dir (host) != uid del proceso (p.ej. root en el contenedor API).
 ensure_safe_git_dir() {
@@ -46,9 +73,23 @@ ensure_safe_git_dir "$INSTALL_DIR"
 ensure_safe_git_dir "/opt/accesopro"
 ensure_safe_git_dir "/host/accesopro"
 
-git fetch --depth 1 origin "$BRANCH"
-git checkout "$BRANCH"
-git pull --ff-only origin "$BRANCH" || git reset --hard "origin/$BRANCH"
+# Preferir git como el dueño del repo (evita objetos root en .git/)
+OWNER="$(repo_owner)"
+run_git() {
+  if [[ "$(id -u)" -eq 0 && -n "$OWNER" && "$OWNER" != "root" ]] && command -v runuser >/dev/null 2>&1; then
+    runuser -u "$OWNER" -- git -C "$INSTALL_DIR" "$@"
+  elif [[ "$(id -u)" -eq 0 && -n "$OWNER" && "$OWNER" != "root" ]]; then
+    su -s /bin/bash "$OWNER" -c 'git -C "$1" "${@:2}"' -- "$INSTALL_DIR" "$@"
+  else
+    git "$@"
+  fi
+}
+
+run_git fetch --depth 1 origin "$BRANCH"
+run_git checkout "$BRANCH"
+run_git pull --ff-only origin "$BRANCH" || run_git reset --hard "origin/$BRANCH"
+fix_repo_ownership
+
 
 # WEB_ORIGIN con IP LAN si sigue en localhost
 IP="$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for(i=1;i<=NF;i++) if($i=="src"){print $(i+1); exit}}' || true)"
@@ -68,6 +109,8 @@ esac
 if [[ -f "$INSTALL_DIR/scripts/enable-autostart.sh" ]]; then
   need_root bash "$INSTALL_DIR/scripts/enable-autostart.sh" || true
 fi
+
+fix_repo_ownership
 
 echo ""
 echo "Listo. Dashboard: http://${IP}:3000"

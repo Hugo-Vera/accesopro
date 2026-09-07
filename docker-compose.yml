@@ -29,6 +29,7 @@ services:
       SITE_AGENT_TOKEN: ${SITE_AGENT_TOKEN:-accesopro-demo-agent}
       ACCESOPRO_ALLOW_SELF_UPDATE: ${ACCESOPRO_ALLOW_SELF_UPDATE:-1}
       ACCESOPRO_HOST_DIR: /host/accesopro
+      ACCESOPRO_OWNER: ${ACCESOPRO_OWNER:-}
       ACCESOPRO_REPO: ${ACCESOPRO_REPO:-Hugo-Vera/accesopro}
       ACCESOPRO_BRANCH: ${ACCESOPRO_BRANCH:-master}
     volumes:
