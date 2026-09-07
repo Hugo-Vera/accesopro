@@ -1,0 +1,12 @@
+# AccesoPro — agent en network_mode:host (Linux / Ubuntu)
+# El bridge de Docker a veces no llega a los ASI en la LAN.
+# Uso:
+#   docker compose -f docker-compose.yml -f deploy/docker-compose.linux.yml --profile dahua up -d --build
+
+services:
+  agent:
+    network_mode: host
+    environment:
+      ACCESOPRO_API_URL: http://127.0.0.1:8787
+      SITE_AGENT_TOKEN: ${SITE_AGENT_TOKEN:-accesopro-demo-agent}
+      UVICORN_WORKERS: "1"

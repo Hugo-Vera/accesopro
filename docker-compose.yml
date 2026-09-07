@@ -116,8 +116,9 @@ services:
     environment:
       ACCESOPRO_API_URL: http://api:8787
       SITE_AGENT_TOKEN: ${SITE_AGENT_TOKEN:-accesopro-demo-agent}
-      # Workers concurrentes: poller, commands y heartbeat en hilos separados
       UVICORN_WORKERS: "1"
+      # 1 = forzar salida a LAN host (útil si el ASI no responde desde el bridge)
+      AGENT_HOST_GATEWAY: ${AGENT_HOST_GATEWAY:-1}
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:

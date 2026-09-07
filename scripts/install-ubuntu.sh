@@ -188,7 +188,15 @@ compose_up() {
       compose_cmd up -d --build
       ;;
     dahua)
-      compose_cmd --profile dahua up -d --build
+      if [[ -f deploy/docker-compose.linux.yml ]]; then
+        if docker info >/dev/null 2>&1; then
+          docker compose -f docker-compose.yml -f deploy/docker-compose.linux.yml --profile dahua up -d --build
+        else
+          need_root_for docker compose -f docker-compose.yml -f deploy/docker-compose.linux.yml --profile dahua up -d --build
+        fi
+      else
+        compose_cmd --profile dahua up -d --build
+      fi
       ;;
     full|alpr)
       if [[ ! -f deploy/site.config.docker.yaml ]]; then

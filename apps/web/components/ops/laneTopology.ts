@@ -119,7 +119,7 @@ export function filterEventsByDevices<T extends { payload?: Record<string, unkno
   });
 }
 
-/** Si no hay match por deviceId, no dejar el historial vacío en prueba (1 solo ASI). */
+/** Si no hay match por deviceId, no dejar el historial vacío en prueba. */
 export function filterEventsForLane<T extends { payload?: Record<string, unknown> }>(
   events: T[],
   deviceId: string | null,
@@ -130,7 +130,10 @@ export function filterEventsForLane<T extends { payload?: Record<string, unknown
   }
   const matched = filterEventsByDevices(events, [deviceId]);
   if (matched.length > 0) return matched;
-  // Payload sin deviceId o id viejo: en fallback mostrar todo (un solo lector)
+  // Payload sin deviceId, id distinto o 2 lectores en lab: mostrar todo si se pide fallback
   if (opts?.fallbackAll) return events;
+  // Sin fallback estricto: si hay eventos pero ninguno matchea, igual mostrarlos
+  // (evita historial vacío por desalineación de IDs tras seed/restore)
+  if (events.length > 0) return events;
   return matched;
 }

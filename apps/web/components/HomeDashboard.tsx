@@ -92,10 +92,6 @@ export function HomeDashboard() {
     () => buildLaneRelaySlots(manualActs, topology.in.actuatorIds),
     [manualActs, topology.in.actuatorIds],
   );
-  const outSlots = useMemo(
-    () => buildLaneRelaySlots(manualActs, topology.out.actuatorIds),
-    [manualActs, topology.out.actuatorIds],
-  );
 
   const wiredInId = topology.in.deviceIds[0] ?? null;
   const wiredOutId = topology.out.deviceIds[0] ?? null;
@@ -103,14 +99,26 @@ export function HomeDashboard() {
   const inDeviceId = lanePick.in ?? wiredInId ?? liveableDevices[0]?.id ?? null;
   const outDeviceId = lanePick.out ?? wiredOutId ?? null;
 
+  // Lab 1 ASI en IN y OUT: Salida hereda relés de Ingreso
+  const sharedReader = Boolean(inDeviceId && outDeviceId && inDeviceId === outDeviceId);
+  const outSlots = useMemo(() => {
+    const ids = sharedReader
+      ? [...new Set([...topology.out.actuatorIds, ...topology.in.actuatorIds])]
+      : topology.out.actuatorIds;
+    return buildLaneRelaySlots(manualActs, ids);
+  }, [manualActs, topology.in.actuatorIds, topology.out.actuatorIds, sharedReader]);
+
   const onlyOneReader = liveableDevices.length <= 1;
   const inEvents = useMemo(
-    () => filterEventsForLane(events, inDeviceId, { fallbackAll: onlyOneReader }),
-    [events, inDeviceId, onlyOneReader],
+    () => filterEventsForLane(events, inDeviceId, { fallbackAll: onlyOneReader || sharedReader }),
+    [events, inDeviceId, onlyOneReader, sharedReader],
   );
   const outEvents = useMemo(
-    () => filterEventsForLane(events, outDeviceId, { fallbackAll: false }),
-    [events, outDeviceId],
+    () =>
+      filterEventsForLane(events, outDeviceId, {
+        fallbackAll: onlyOneReader || sharedReader,
+      }),
+    [events, outDeviceId, onlyOneReader, sharedReader],
   );
 
   const opsStatus: "ok" | "degraded" | "offline" = status.agentOnline
@@ -276,13 +284,21 @@ export function HomeDashboard() {
         alert={facialAlert}
         onDismiss={() => setFacialAlert(null)}
         onOpenRelay={async (deviceId) => {
+          const byDev = manualActs.find(
+            (a) => a.driver === "dahua" && a.dahuaDeviceId && a.dahuaDeviceId === deviceId,
+          );
+          if (byDev) {
+            await fire(byDev.id, "open");
+            return;
+          }
           const inHit = topology.in.deviceIds.includes(deviceId) || inDeviceId === deviceId;
           const outHit = topology.out.deviceIds.includes(deviceId) || outDeviceId === deviceId;
-          const poolIds = inHit
-            ? topology.in.actuatorIds
-            : outHit
-              ? topology.out.actuatorIds
-              : manualActs.map((a) => a.id);
+          const poolIds =
+            inHit || sharedReader
+              ? [...new Set([...topology.in.actuatorIds, ...(outHit ? topology.out.actuatorIds : [])])]
+              : outHit
+                ? topology.out.actuatorIds
+                : manualActs.map((a) => a.id);
           const pool = manualActs.filter((a) => poolIds.includes(a.id));
           const target =
             pool.find((a) => a.driver === "dahua" || a.kind === "gate" || a.kind === "underground") ||

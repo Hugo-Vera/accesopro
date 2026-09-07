@@ -94,38 +94,7 @@ _last_person_access: dict[str, float] = {}
 _seen_records: set[str] = set()
 
 
-def _poll_dahua() -> None:
-    now = time.time()
-    for dev in _config.get("dahua", []):
-        if dev.get("deviceType") == "camera_ip":
-            continue
-        dev_id = dev.get("id")
-        if not dev_id:
-            continue
-        if _device_backoffs.get(dev_id, 0) > now:
-            continue
-        try:
-            records = _client(dev).access_records(30)
-            if dev_id in _device_backoffs:
-                _device_backoffs.pop(dev_id, None)
-        except Exception as exc:  # noqa: BLE001
-            _device_backoffs[dev_id] = now + 40.0
-            print(f"Dahua {dev.get('name')} (pausado 40s): {exc}")
-            continue
-
-        if dev_id not in _device_initialized:
-            for rec in records:
-                stamp = rec.get("CreateTime") or rec.get("Time") or rec.get("UTC") or ""
-                rec_no = rec.get("RecNo") or rec.get("Index") or ""
-                _seen_records.add(f"{dev_id}:{rec_no}:{stamp}")
-            _device_initialized.add(dev_id)
-            continue
-
-        for rec in records:
-            _dispatch_access_event(dev, rec)
-
-
-def _dispatch_access_event(dev: dict[str, Any], rec: dict[str, Any]) -> None:
+def _dispatch_access_event(dev: dict[str, Any], rec: dict[str, Any], *, skip_debounce: bool = False) -> None:
     now = time.time()
     dev_id = dev.get("id") or ""
     stamp = rec.get("CreateTime") or rec.get("Time") or rec.get("UTC") or str(int(now))
@@ -143,12 +112,13 @@ def _dispatch_access_event(dev: dict[str, Any], rec: dict[str, Any]) -> None:
     method_name = "remote" if method_code in ("4", 4) else "facial" if method_code in ("15", 15) else "card" if method_code in ("1", 1) else "fingerprint" if method_code in ("2", 2) else "qr" if method_code in ("6", 6) else "password" if method_code in ("3", 3) else "other"
     person_name = rec.get("CardName") or rec.get("UserID") or ("Apertura remota" if method_name == "remote" else ("Rostro no identificado" if not is_approved else "Usuario Facial"))
 
-    # Debounce de 3 segundos por persona para evitar spam
+    # Debounce de 3 segundos por persona para evitar spam (no en backfill inicial)
     person_identifier = str(rec.get("UserID") or rec.get("CardNo") or rec.get("CardName") or "anon")
     debounce_key = f"{dev_id}:{person_identifier}:{is_approved}"
-    last_event_time = _last_person_access.get(debounce_key, 0)
-    if abs(now - last_event_time) < 3.0:
-        return
+    if not skip_debounce:
+        last_event_time = _last_person_access.get(debounce_key, 0)
+        if abs(now - last_event_time) < 3.0:
+            return
     _last_person_access[debounce_key] = now
 
     try:
@@ -176,6 +146,52 @@ def _dispatch_access_event(dev: dict[str, Any], rec: dict[str, Any]) -> None:
         )
     except Exception as exc:  # noqa: BLE001
         print(f"Evento Dahua no enviado: {exc}")
+
+
+def _record_key(dev_id: str, rec: dict[str, Any]) -> str:
+    stamp = rec.get("CreateTime") or rec.get("Time") or rec.get("UTC") or ""
+    rec_no = rec.get("RecNo") or rec.get("Index") or ""
+    return f"{dev_id}:{rec_no}:{stamp}"
+
+
+def _poll_dahua() -> None:
+    now = time.time()
+    for dev in _config.get("dahua", []):
+        if dev.get("deviceType") == "camera_ip":
+            continue
+        dev_id = dev.get("id")
+        if not dev_id:
+            continue
+        if _device_backoffs.get(dev_id, 0) > now:
+            continue
+        try:
+            records = _client(dev).access_records(30)
+            if dev_id in _device_backoffs:
+                _device_backoffs.pop(dev_id, None)
+        except Exception as exc:  # noqa: BLE001
+            _device_backoffs[dev_id] = now + 40.0
+            print(f"Dahua {dev.get('name')} (pausado 40s): {exc}")
+            continue
+
+        if not isinstance(records, list):
+            records = []
+
+        if dev_id not in _device_initialized:
+            # Traer al historial AccesoPro los últimos del ASI (antes se marcaban vistos y no se enviaban)
+            _device_initialized.add(dev_id)
+            recent = records[-20:] if len(records) > 20 else list(records)
+            recent_keys = {_record_key(dev_id, r) for r in recent}
+            for rec in records:
+                key = _record_key(dev_id, rec)
+                if key not in recent_keys:
+                    _seen_records.add(key)
+            print(f"Dahua {dev.get('name')}: backfill {len(recent)} registros al historial")
+            for rec in recent:
+                _dispatch_access_event(dev, rec, skip_debounce=True)
+            continue
+
+        for rec in records:
+            _dispatch_access_event(dev, rec)
 
 
 def _run_command(cmd: dict[str, Any]) -> dict[str, Any]:
