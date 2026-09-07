@@ -26,20 +26,45 @@ def rtsp_url(dev: dict[str, Any], channel: int = 1, subtype: int = 1, rtsp_port:
     )
 
 
+def _env_float(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None or not str(raw).strip():
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None or not str(raw).strip():
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        return default
+
+
 def iter_mjpeg(
     dev: dict[str, Any],
     channel: int = 1,
     subtype: int = 2,
-    jpeg_quality: int = 52,
+    jpeg_quality: int | None = None,
     max_width: int = 720,
     force_size: tuple[int, int] | None = None,
-    target_fps: float = 8.0,
+    target_fps: float | None = None,
 ) -> Iterator[bytes]:
     """
     force_size: (width, height). Si se indica, reescala cada frame a ese tamaño
     (p.ej. 272×480 del display ASI) para que el live coincida con la pantalla del lector.
-    target_fps: tope de encode (OpenCV en Windows come CPU si no se limita).
+    target_fps: tope de encode (OpenCV come CPU si no se limita). Env: AGENT_LIVE_FPS.
     """
+    if jpeg_quality is None:
+        jpeg_quality = _env_int("AGENT_LIVE_JPEG_QUALITY", 42)
+    if target_fps is None:
+        target_fps = _env_float("AGENT_LIVE_FPS", 5.0)
+
     sub = int(subtype)
     url = rtsp_url(dev, channel=channel, subtype=sub)
     cap = cv2.VideoCapture(url, cv2.CAP_FFMPEG)
@@ -66,8 +91,9 @@ def iter_mjpeg(
     next_emit = 0.0
     try:
         while True:
-            ok, frame = cap.read()
-            if not ok or frame is None:
+            # grab() descarga sin decodificar; retrieve solo cuando vamos a emitir
+            ok = cap.grab()
+            if not ok:
                 fails += 1
                 if fails > 40:
                     raise RuntimeError("Se cortó el RTSP del lector")
@@ -76,7 +102,9 @@ def iter_mjpeg(
             fails = 0
             now = time.monotonic()
             if now < next_emit:
-                # Descartar frames extra sin encodear (ahorra CPU)
+                continue
+            ok, frame = cap.retrieve()
+            if not ok or frame is None:
                 continue
             next_emit = now + min_interval
             h, w = frame.shape[:2]

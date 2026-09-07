@@ -135,13 +135,16 @@ export function OpsOutColumns({
   onToggle,
   events,
   streamLive,
-}: Omit<Props, "lane" | "order">) {
+  streamEnabled = true,
+}: Omit<Props, "lane" | "order"> & { streamEnabled?: boolean }) {
   return (
     <div className="ops-out-cols">
       <header className="ops-lane-head ops-out-cols-head">
         <span className="ops-lane-badge ops-lane-badge--out">Salida</span>
         {preferredDeviceId ? (
-          <span className="ops-lane-hint">Lector activo para historial</span>
+          <span className="ops-lane-hint">
+            {streamEnabled ? "Lector activo para historial" : "Mismo ASI que ingreso · sin 2º RTSP"}
+          </span>
         ) : (
           <span className="ops-lane-hint">Elegí equipo en AccesoCam</span>
         )}
@@ -171,6 +174,7 @@ export function OpsOutColumns({
               lane="out"
               preferredDeviceId={preferredDeviceId}
               onDeviceChange={onDeviceChange}
+              streamEnabled={streamEnabled}
             />
           ) : (
             <div className="grid h-full min-h-[140px] place-items-center bg-slate-900 text-[12px] text-slate-400">

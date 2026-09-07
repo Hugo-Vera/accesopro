@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 import { useDash } from "@/components/DashboardProvider";
 
 type Item = {
@@ -69,7 +69,7 @@ const SECTIONS: Section[] = [
         capability: "dahua.persons",
       },
       {
-        href: "/dashboard/dahua/evidencia",
+        href: "/dashboard/dahua/eventos",
         label: "Evidencia",
         module: "dahua_access",
         feature: "dahua.evidence",
@@ -117,7 +117,6 @@ function bestActiveHref(path: string, hrefs: string[]) {
 
 export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
-  const router = useRouter();
   const [pendingHref, setPendingHref] = useState<string | null>(null);
   const { user, tenantName, isPlatform, isAdmin, status, logout, enabled, featureOn, can } = useDash();
 
@@ -169,8 +168,7 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
                     <Link
                       key={item.href}
                       href={item.href}
-                      prefetch
-                      onMouseEnter={() => router.prefetch(item.href)}
+                      prefetch={false}
                       onClick={() => {
                         setPendingHref(item.href);
                         onNavigate?.();

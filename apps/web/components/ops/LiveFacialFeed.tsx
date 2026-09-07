@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { createPortal } from "react-dom";
 import { ScanFace, X, CheckCircle2, AlertTriangle } from "lucide-react";
@@ -42,12 +42,16 @@ function FeedThumb({
   alert,
   className,
   tenantId,
+  loadPhoto,
 }: {
   alert: FacialEventAlert;
   className?: string;
   tenantId?: string | null;
+  /** Solo pedir al ASI cuando la fila es visible (evita 40×400 al cargar). */
+  loadPhoto: boolean;
 }) {
-  const photoProxy = snapshotProxyUrl(alert.deviceId, alert.snapshotUrl, tenantId);
+  const photoProxy =
+    loadPhoto ? snapshotProxyUrl(alert.deviceId, alert.snapshotUrl, tenantId) : null;
   return (
     <div
       className={`relative flex-shrink-0 overflow-hidden bg-slate-900 ${className ?? ""} ${
@@ -61,6 +65,8 @@ function FeedThumb({
         <img
           src={photoProxy}
           alt={alert.personName}
+          loading="lazy"
+          decoding="async"
           className="h-full w-full object-cover object-top"
           onError={(ev) => {
             markSnapshotFailed(alert.deviceId, alert.snapshotUrl);
@@ -276,6 +282,31 @@ export function LiveFacialFeed({
   const [selected, setSelected] = useState<{ alert: FacialEventAlert; createdAt: string | number } | null>(
     null,
   );
+  const [visibleIds, setVisibleIds] = useState<Set<string>>(() => new Set());
+  const rowRefs = useRef<Map<string, HTMLElement>>(new Map());
+
+  useEffect(() => {
+    if (typeof IntersectionObserver === "undefined") {
+      setVisibleIds(new Set(events.map((e) => String(e.id))));
+      return;
+    }
+    const io = new IntersectionObserver(
+      (entries) => {
+        setVisibleIds((prev) => {
+          const next = new Set(prev);
+          for (const entry of entries) {
+            const id = (entry.target as HTMLElement).dataset.eventId;
+            if (!id) continue;
+            if (entry.isIntersecting) next.add(id);
+          }
+          return next;
+        });
+      },
+      { root: null, rootMargin: "80px 0px", threshold: 0.01 },
+    );
+    for (const el of rowRefs.current.values()) io.observe(el);
+    return () => io.disconnect();
+  }, [events]);
 
   return (
     <div className={`ops-subpanel flex min-h-0 flex-1 flex-col ${compact ? "ops-feed--compact" : ""}`}>
@@ -306,14 +337,22 @@ export function LiveFacialFeed({
             ) : null}
           </div>
         ) : (
-          events.map((e) => {
+          events.map((e, idx) => {
             const alert = parseFacialEvent(e);
             if (!alert) return null;
+            const id = String(e.id);
+            // Primeras 4 filas cargan ya; el resto espera IntersectionObserver
+            const loadPhoto = idx < 4 || visibleIds.has(id);
 
             return (
               <button
                 key={e.id}
                 type="button"
+                data-event-id={id}
+                ref={(node) => {
+                  if (node) rowRefs.current.set(id, node);
+                  else rowRefs.current.delete(id);
+                }}
                 onClick={() => setSelected({ alert, createdAt: e.createdAt })}
                 className={`ops-hist-row flex w-full items-stretch overflow-hidden rounded-lg border text-left shadow-sm transition hover:brightness-[0.98] dark:hover:brightness-110 ${
                   alert.approved
@@ -324,6 +363,7 @@ export function LiveFacialFeed({
                 <FeedThumb
                   alert={alert}
                   tenantId={tenantId}
+                  loadPhoto={loadPhoto}
                   className={`self-stretch border-r-2 ${compact ? "w-[44px] min-h-[56px]" : "w-[72px] min-h-[96px]"}`}
                 />
                 <div

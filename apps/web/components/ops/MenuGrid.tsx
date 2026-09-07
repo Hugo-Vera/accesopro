@@ -106,7 +106,7 @@ export function useOpsMenuTiles({ can, enabled, featureOn, showDevices, showEven
         {
           key: "archivos",
           label: "Evidencia",
-          href: "/dashboard/dahua/evidencia",
+          href: "/dashboard/dahua/eventos",
           icon: <IconFolder className={ICON} />,
           show: featureOn("dahua.evidence") && can("dahua.evidence"),
         },

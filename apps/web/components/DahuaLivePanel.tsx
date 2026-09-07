@@ -83,6 +83,8 @@ export function DahuaLivePanel({
   lane,
   preferredDeviceId,
   onDeviceChange,
+  streamEnabled = true,
+  idleHint,
 }: {
   compact?: boolean;
   minimalChrome?: boolean;
@@ -92,6 +94,9 @@ export function DahuaLivePanel({
   preferredDeviceId?: string | null;
   /** Si se setea, la selección define el lector activo de ese sentido (live + historial). */
   onDeviceChange?: (deviceId: string | null) => void;
+  /** false = no abrir RTSP (p.ej. mismo ASI ya en vivo en el otro carril). */
+  streamEnabled?: boolean;
+  idleHint?: string;
 }) {
   const { tenantId, status } = useDash();
   const wrapRef = useRef<HTMLElement | null>(null);
@@ -100,6 +105,7 @@ export function DahuaLivePanel({
   const [channel] = useState(1);
   const [tick, setTick] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [inView, setInView] = useState(true);
 
   const devices = devicesProp ?? devicesLocal;
   const controlled = typeof onDeviceChange === "function";
@@ -126,13 +132,37 @@ export function DahuaLivePanel({
   const laneTitle = lane ? LANE_LABEL[lane] : null;
 
   const streamSrc = useMemo(() => {
+    if (!streamEnabled || !inView) return null;
     if (!tenantId || !selected?.id || !status.agentOnline) return null;
     const q = withTenant(
       `/api/dahua/${selected.id}/live?channel=${channel}&subtype=${subtype}&_=${tick}`,
       tenantId,
     );
     return `${API}${q}`;
-  }, [tenantId, selected?.id, channel, subtype, tick, status.agentOnline]);
+  }, [
+    streamEnabled,
+    inView,
+    tenantId,
+    selected?.id,
+    channel,
+    subtype,
+    tick,
+    status.agentOnline,
+  ]);
+
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        const hit = entries[0];
+        if (hit) setInView(hit.isIntersecting && hit.intersectionRatio > 0.05);
+      },
+      { root: null, threshold: [0, 0.05, 0.2] },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
 
   useEffect(() => {
     if (devicesProp) return;
@@ -240,6 +270,14 @@ export function DahuaLivePanel({
               sentido salida.
             </p>
           </div>
+        ) : !streamEnabled ? (
+          <div className="grid max-w-[240px] place-items-center px-3 text-center">
+            <p className="text-[12px] font-semibold text-slate-300">Mismo lector</p>
+            <p className="mt-1.5 text-[11px] leading-snug text-[#6b8498]">
+              {idleHint ||
+                "El live ya corre en Ingreso. Acá solo filtra el historial para no abrir un segundo RTSP."}
+            </p>
+          </div>
         ) : streamSrc ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
@@ -265,7 +303,7 @@ export function DahuaLivePanel({
 
       <div className="ops-cam-bottom-hud flex items-center justify-between px-2.5 py-1 text-xs">
         <div className="flex min-w-0 items-center gap-2">
-          {emptyOut ? (
+          {emptyOut || !streamEnabled ? (
             <span className="font-mono text-[9px] font-extrabold text-[#6b8498]">STANDBY</span>
           ) : (
             <span className="flex items-center gap-1 font-mono text-[9px] font-extrabold text-[#3dcf7a]">

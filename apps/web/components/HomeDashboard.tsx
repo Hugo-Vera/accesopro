@@ -263,6 +263,7 @@ export function HomeDashboard() {
             onToggle={onToggleRelay}
             events={outEvents}
             streamLive={streamLive}
+            streamEnabled={!sharedReader}
           />
         </div>
       </div>
