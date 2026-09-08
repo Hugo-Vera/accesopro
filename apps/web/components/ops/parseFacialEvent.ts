@@ -4,6 +4,8 @@ export type EventRow = {
   id: string;
   createdAt: string | number;
   payload: Record<string, unknown>;
+  sentido?: string | null;
+  laneCode?: number | null;
 };
 
 /** Evita reintentar capturas que ya fallaron (HMR / remount / 404 Dahua). */

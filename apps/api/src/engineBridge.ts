@@ -4,6 +4,7 @@ import { db } from "./db/client.js";
 import { actuators, events, sites } from "./db/schema.js";
 import { nid } from "./scope.js";
 import { engineOps } from "./siteEngine.js";
+import { laneCodeOf } from "./accessPoints.js";
 
 type EngineAccessEvent = {
   id?: string | number;
@@ -108,8 +109,11 @@ export async function processEngineAccessEvents(site: SiteRow, rawEvents: unknow
       id: nid(),
       siteId: site.id,
       type,
+      sentido,
+      laneCode: laneCodeOf(sentido),
       payload: JSON.stringify({
         sentido,
+        laneCode: laneCodeOf(sentido),
         patente: plate || null,
         dni: dni || null,
         resultado: ev.resultado,

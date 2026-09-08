@@ -131,7 +131,15 @@ export function useOpsEvents({ tenantId, enabled, onAlert }: Options) {
       return {
         id: String(latest.id),
         createdAt: toMs(latest.createdAt),
-        payload,
+        payload: {
+          ...payload,
+          ...(payload.sentido ? {} : latest.sentido ? { sentido: latest.sentido } : {}),
+          ...(payload.laneCode != null
+            ? {}
+            : latest.laneCode != null
+              ? { laneCode: latest.laneCode }
+              : {}),
+        },
       };
     };
 

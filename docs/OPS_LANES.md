@@ -7,7 +7,7 @@ Modelo mental del home `/dashboard`. Si algo falla (toast, historial, relés), c
 | Pieza | Rol |
 |-------|-----|
 | AccesoCam IN/OUT | Live MJPEG del ASI elegido |
-| Historial IN/OUT | Eventos `dahua_access` filtrados por `deviceId` del carril |
+| Historial IN/OUT | Eventos con `lane_code` 1 (entrada) o 2 (salida), sellados al momento del pase |
 | Relés IN/OUT | Actuadores cableados al punto de ese sentido |
 | Toast | Solo eventos **nuevos** posteriores al hydrate de la página |
 | Autorizaciones | Pases/auths de todos los propietarios (pendientes / cerradas) |
@@ -25,7 +25,7 @@ Modelo mental del home `/dashboard`. Si algo falla (toast, historial, relés), c
 - los relés de **ingreso** se comparten en el panel de salida (misma puerta física);
 - el toast «Apertura manual» abre el actuador Dahua ligado a ese equipo (o el de ingreso).
 
-**Producción:** 2 ASI → cablear cada uno a un punto `in` / `out`. El dropdown queda de respaldo.
+**Producción:** 2 ASI → ficha Entrada (carril 1) y ficha Salida (carril 2). Cada pase nuevo se guarda en ese carril. Visita: entra por 1, sale por 2, se calcula permanencia. El dropdown AccesoCam queda de respaldo de live, no cambia el rol.
 
 ## Toast (anti-F5 + tiempo real)
 

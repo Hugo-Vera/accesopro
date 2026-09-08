@@ -18,11 +18,30 @@ export type OwnerPassNotice = {
   createdAt: string | number;
   scannedInAt: string | number | null;
   scannedOutAt: string | number | null;
+  stayMs?: number | null;
   dahuaSynced: boolean;
   lot: string;
   ownerName: string;
   kind?: string;
 };
+
+function formatStay(ms: number | null | undefined) {
+  if (ms == null || !Number.isFinite(ms) || ms < 0) return null;
+  const mins = Math.round(ms / 60000);
+  if (mins < 1) return "menos de 1 min";
+  if (mins < 60) return `${mins} min`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return m ? `${h} h ${m} min` : `${h} h`;
+}
+
+function stayFromRange(inAt: string | number | null | undefined, outAt: string | number | null | undefined) {
+  if (inAt == null || outAt == null) return null;
+  const a = new Date(inAt).getTime();
+  const b = new Date(outAt).getTime();
+  if (!Number.isFinite(a) || !Number.isFinite(b) || b < a) return null;
+  return b - a;
+}
 
 function timeLabel(v: string | number | undefined) {
   if (!v) return "—";
@@ -52,6 +71,7 @@ function statusLabel(p: OwnerPassNotice) {
 
 function NoticeCard({ p }: { p: OwnerPassNotice }) {
   const tone = statusTone(p.status);
+  const stay = formatStay(p.stayMs ?? stayFromRange(p.scannedInAt, p.scannedOutAt));
   return (
     <article className={`ops-auth-card ops-auth-card--${tone}`}>
       <div className="flex items-start gap-1.5">
@@ -69,6 +89,14 @@ function NoticeCard({ p }: { p: OwnerPassNotice }) {
           {p.patente || p.guestDni ? (
             <p className="mt-0.5 truncate font-mono text-[9.5px] text-slate-500">
               {[p.patente, p.guestDni ? `DNI ${p.guestDni}` : null].filter(Boolean).join(" · ")}
+            </p>
+          ) : null}
+          {p.scannedInAt && !p.scannedOutAt ? (
+            <p className="mt-0.5 text-[9.5px] text-slate-500">Ingreso {timeLabel(p.scannedInAt)}</p>
+          ) : null}
+          {stay ? (
+            <p className="mt-0.5 text-[9.5px] font-semibold text-slate-600 dark:text-slate-300">
+              Permanencia {stay}
             </p>
           ) : null}
           <div className="mt-1 flex items-center justify-between gap-1">

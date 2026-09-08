@@ -15,8 +15,21 @@ import {
 } from "./db/schema.js";
 import { nid, scopedSiteWithModule } from "./scope.js";
 import { fireActuator } from "./actuatorExec.js";
+import { laneCodeOf } from "./accessPoints.js";
 import type { AuthUser } from "./auth.js";
 import { denyUnlessCapability } from "./grants.js";
+
+function tsMs(v: Date | number | null | undefined) {
+  if (v == null) return null;
+  return v instanceof Date ? v.getTime() : Number(v);
+}
+
+function stayMsOf(inAt: Date | number | null | undefined, outAt: Date | number | null | undefined) {
+  const a = tsMs(inAt);
+  const b = tsMs(outAt);
+  if (a == null || b == null || b < a) return null;
+  return b - a;
+}
 
 type VisitorsEnv = { Variables: { user: AuthUser } };
 
@@ -213,16 +226,14 @@ visitorsApi.get("/visitors/owner-passes", async (c) => {
     createdAt: Date | number;
     scannedInAt: Date | number | null;
     scannedOutAt: Date | number | null;
+    stayMs: number | null;
     dahuaSynced: boolean;
     lot: string;
     ownerName: string;
     kind?: string;
   };
 
-  const ms = (v: Date | number | null | undefined) => {
-    if (v == null) return null;
-    return v instanceof Date ? v.getTime() : Number(v);
-  };
+  const ms = tsMs;
 
   const notices: Notice[] = [];
 
@@ -254,6 +265,7 @@ visitorsApi.get("/visitors/owner-passes", async (c) => {
       createdAt: r.createdAt,
       scannedInAt: r.scannedInAt,
       scannedOutAt: r.scannedOutAt,
+      stayMs: stayMsOf(r.scannedInAt, r.scannedOutAt),
       dahuaSynced: Boolean(r.dahuaSynced),
       lot: r.lotNumber ? `Lote ${r.lotNumber}` : r.propertyLabel || "Propiedad",
       ownerName: r.ownerName || "Propietario",
@@ -278,6 +290,7 @@ visitorsApi.get("/visitors/owner-passes", async (c) => {
       createdAt: r.createdAt,
       scannedInAt: null,
       scannedOutAt: null,
+      stayMs: null,
       dahuaSynced: false,
       lot: r.lotNumber ? `Lote ${r.lotNumber}` : r.propertyLabel || "Propiedad",
       ownerName: r.ownerName || "Propietario",
@@ -594,6 +607,8 @@ visitorsApi.post("/visitors/checkin", async (c) => {
     id: nid(),
     siteId,
     type: "visitor_checkin",
+    sentido: "in",
+    laneCode: laneCodeOf("in"),
     payload: JSON.stringify({
       visitId,
       personName: `${person!.firstName} ${person!.lastName}`,
@@ -604,6 +619,8 @@ visitorsApi.post("/visitors/checkin", async (c) => {
       propertyId: body.destination.propertyId,
       isVehicular: body.isVehicular,
       timestamp: now.toISOString(),
+      sentido: "in",
+      laneCode: 1,
     }),
     createdAt: now,
   });
@@ -648,10 +665,15 @@ visitorsApi.post("/visitors/records/:id/checkout", async (c) => {
     id: nid(),
     siteId: scoped.site.id,
     type: "visitor_checkout",
+    sentido: "out",
+    laneCode: laneCodeOf("out"),
     payload: JSON.stringify({
       visitId: id,
       personId: record.personId,
       timestamp: now.toISOString(),
+      sentido: "out",
+      laneCode: 2,
+      dwellMs: stayMsOf(record.scannedInAt, now),
     }),
     createdAt: now,
   });

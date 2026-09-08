@@ -58,7 +58,7 @@ Actuador = relé con **nombre libre** (Barrera entrada, Portón cochera, Puerta 
 
 **Puntos de acceso** (`access_points`): topología del predio (sector vehicular/peatonal/servicio + sentido in/out/both). No es un módulo comercial: solo agrupa cableados.
 
-**Live portería:** dos consolas **Ingreso** | **Salida** (live + actuadores cableados a ese sentido + historial del lector). El 2º ASI de salida habilita medir permanencia de visitas; propietarios/permanentes no llevan control de tiempo. Softphone SIP queda pendiente (FreePBX local).
+**Live portería:** dos consolas **Ingreso** | **Salida** (live + actuadores cableados a ese sentido + historial del lector). Carril en eventos: `lane_code` **1** = entrada, **2** = salida (se sella al ingest). El 2º ASI de salida habilita medir permanencia de visitas; propietarios/permanentes no llevan control de tiempo. Softphone SIP queda pendiente (FreePBX local).
 
 **Cableado** (tablas de vínculo, reutilizables):
 - `access_point_actuators` — qué relé abre ese punto

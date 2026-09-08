@@ -131,18 +131,35 @@ export function filterEventsByDevices<T extends { payload?: Record<string, unkno
   });
 }
 
-/** Historial del carril: eventos de esos equipos. Sin dump de todos los lectores. */
-export function filterEventsForLane<T extends { payload?: Record<string, unknown> }>(
+/** Historial del carril: lane_code 1=entrada / 2=salida sellado al ingest. */
+export function filterEventsForLane<T extends { payload?: Record<string, unknown>; laneCode?: number | null; sentido?: string | null }>(
   events: T[],
   deviceId: string | string[] | null,
-  opts?: { fallbackAll?: boolean },
+  opts?: { fallbackAll?: boolean; lane?: "in" | "out" },
 ): T[] {
   const ids = Array.isArray(deviceId) ? deviceId.filter(Boolean) : deviceId ? [deviceId] : [];
-  if (!ids.length) {
-    return opts?.fallbackAll ? events : [];
-  }
-  const matched = filterEventsByDevices(events, ids);
+  const lane = opts?.lane;
+  const matched = events.filter((e) => {
+    const stamped = stampedLane(e);
+    if (lane && stamped) return stamped === lane;
+    if (!ids.length) return false;
+    const id = String(e.payload?.deviceId ?? e.payload?.DeviceID ?? "").trim();
+    return id !== "" && ids.includes(id);
+  });
   if (matched.length > 0) return matched;
   if (opts?.fallbackAll) return events;
   return matched;
+}
+
+function stampedLane(e: {
+  payload?: Record<string, unknown>;
+  laneCode?: number | null;
+  sentido?: string | null;
+}): "in" | "out" | null {
+  const code = Number(e.payload?.laneCode ?? e.laneCode ?? 0);
+  if (code === 1) return "in";
+  if (code === 2) return "out";
+  const s = String(e.payload?.sentido ?? e.sentido ?? "").trim();
+  if (s === "in" || s === "out") return s;
+  return null;
 }

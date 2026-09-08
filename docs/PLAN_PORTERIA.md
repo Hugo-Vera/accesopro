@@ -36,7 +36,7 @@ Live fluido + toast al instante. Verificar en el barrio:
 1. F5 en `/dashboard`: **sin** toast.
 2. Pasar la cara: toast + fila IN en **menos de ~1 s**; live no se congela.
 3. F5 otra vez: el toast no vuelve; el historial sí.
-4. Módulos: versión **0.2.5**.
+4. Módulos: versión **0.2.6**.
 
 Ubuntu: el botón de update **viejo** se suicida. Primera vez:
 
@@ -66,17 +66,17 @@ Orden fijo al abrir desde toast / botón:
 
 ### 3 — QR visita cierra el circuito
 
-Hoy el ASI valida CardNo y AccesoPro no se entera del pase.
+El ASI valida CardNo; AccesoPro marca el pase **sin** volver a disparar relés QR (el lector ya abrió).
 
-1. Unificar payload QR con CardNo enrolado.
-2. Evento `dahua_access` método QR → `scanVisitPass` + `triggerQr`.
-3. Portal: `scannedInAt` / `scannedOutAt`.
+1. CardNo enrolado = token del QR.
+2. Evento `dahua_access` en carril 1 → `scanned_in_at`; carril 2 → `scanned_out_at` + `completed`.
+3. Portal y autorizaciones muestran permanencia (solo visitas).
 
-**Done:** visita con QR aparece en historial IN y en el portal.
+**Done:** visita con QR/cara aparece en historial del carril y el portal marca ingreso/salida.
 
-### 4 — Permanencia (hace falta fase 1)
+### 4 — Permanencia
 
-Reloj de visita = evento IN → evento OUT. Propietarios/permanentes **sin** control de tiempo.
+Reloj de visita = evento IN (lane 1) → evento OUT (lane 2). Propietarios/permanentes **sin** control de tiempo.
 
 ### 5 — Después (no bloquea portería)
 

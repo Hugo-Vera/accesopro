@@ -177,9 +177,16 @@ export async function ensureSchema() {
       created_at INTEGER NOT NULL
     )
   `);
+  await addColumn("events", "sentido", "TEXT");
+  await addColumn("events", "lane_code", "INTEGER");
+  await addColumn("events", "access_point_id", "TEXT");
   await db.run(sql`
     CREATE INDEX IF NOT EXISTS idx_events_site_type_created
     ON events (site_id, type, created_at DESC)
+  `);
+  await db.run(sql`
+    CREATE INDEX IF NOT EXISTS idx_events_site_lane_created
+    ON events (site_id, lane_code, created_at DESC)
   `);
   await db.run(sql`
     CREATE TABLE IF NOT EXISTS commands (

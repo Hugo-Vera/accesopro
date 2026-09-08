@@ -58,7 +58,7 @@ El script: `git reset --hard origin/master` → `compose build` (sitio en línea
 |-------|--------|---------|
 | `insufficient permission for adding an object to repository database .git/objects` | Self-update / `sudo` escribió `.git` como **root**; `hugo` no puede hacer `git pull` | `sudo chown -R hugo:hugo /opt/accesopro` y repetir update |
 | `detected dubious ownership in repository at '/host/accesopro'` | Git en el contenedor (root) vs dueño del host | El updater marca `safe.directory`; o `git config --global --add safe.directory /host/accesopro` **dentro** del contenedor API |
-| Botón de update falla la 1ª vez tras cambiar el script | Imagen API vieja / script local viejo | Usar **vía B** con `curl … \| bash` una vez |
+| Botón «Ya hay una actualización en curso» y no arranca | El API dejó el estado `running` en memoria aunque el updater ya no existe | En 0.2.6 se limpia solo. En 0.2.5: `curl … update-ubuntu.sh` una vez, o recrear el contenedor API |
 | `ERR_CONNECTION_REFUSED` en `:3000` a mitad de update | Recambio de contenedores al final (`up -d`) | Esperar 1 min y recargar. El compile largo ya no tumba el sitio |
 | `Not possible to fast-forward` / ramas divergidas | `git fetch --depth 1` + `pull --ff-only` en clone de deploy | El script ahora hace `git reset --hard origin/master` |
 | `npm ci` / `ECONNRESET` a registry.npmjs.org | Red inestable durante el build | Reintenta 3 veces el build; Dockerfile reintenta `npm ci` |

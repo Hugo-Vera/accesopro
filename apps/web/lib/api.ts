@@ -10,9 +10,15 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
       ...(init?.headers ?? {}),
     },
   });
-  const data = (await res.json()) as T & { error?: string };
+  const data = (await res.json()) as T & { error?: string; hint?: string; command?: string };
   if (!res.ok) {
-    throw new Error(data.error ?? `Error ${res.status}`);
+    const err = new Error(data.error ?? `Error ${res.status}`) as Error & {
+      hint?: string;
+      command?: string;
+    };
+    err.hint = data.hint;
+    err.command = data.command;
+    throw err;
   }
   return data;
 }

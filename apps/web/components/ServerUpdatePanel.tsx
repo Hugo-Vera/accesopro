@@ -124,8 +124,20 @@ export function ServerUpdatePanel() {
         if (st) setStatus(st);
       }
     } catch (err) {
-      const msg = err instanceof Error ? err.message : "Falló el update";
+      const extra = err as Error & { hint?: string; command?: string };
+      const msg = extra instanceof Error ? extra.message : "Falló el update";
       setError(msg);
+      if (extra.command) {
+        setHintCmd([extra.hint, extra.command].filter(Boolean).join("\n"));
+      } else if (/ya hay una actualización|updater Docker/i.test(msg)) {
+        setHintCmd(
+          [
+            "El botón quedó trabado de un intento anterior. En la consola del Ubuntu (como hugo):",
+            "sudo chown -R hugo:hugo /opt/accesopro",
+            "curl -fsSL https://raw.githubusercontent.com/Hugo-Vera/accesopro/master/scripts/update-ubuntu.sh | bash",
+          ].join("\n"),
+        );
+      }
       if (/fetch|network|Failed/i.test(msg)) {
         setModalOpen(true);
         setStatus({
@@ -195,7 +207,7 @@ export function ServerUpdatePanel() {
       <div className="mt-4 flex flex-wrap items-center gap-3">
         <button
           type="button"
-          disabled={busy || (!info?.selfUpdateEnabled && !info?.updateAvailable && !isPlatform)}
+          disabled={busy || !info}
           onClick={() => void onUpdate()}
           className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
         >

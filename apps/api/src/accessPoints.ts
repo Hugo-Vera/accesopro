@@ -422,6 +422,28 @@ export function parseDeviceLaneSector(v: unknown): "vehicular" | "peatonal" {
   return String(v || "").trim() === "peatonal" ? "peatonal" : "vehicular";
 }
 
+/** 1 = entrada, 2 = salida. */
+export function laneCodeOf(sentido: "in" | "out"): 1 | 2 {
+  return sentido === "out" ? 2 : 1;
+}
+
+export async function resolveDeviceLane(deviceId: string) {
+  const device = await db.select().from(dahuaDevices).where(eq(dahuaDevices.id, deviceId)).get();
+  const sentido = parseDeviceSentido(device?.sentido);
+  const laneSector = parseDeviceLaneSector(device?.laneSector);
+  const wire = await db
+    .select()
+    .from(accessPointDevices)
+    .where(eq(accessPointDevices.dahuaDeviceId, deviceId))
+    .get();
+  return {
+    sentido,
+    laneCode: laneCodeOf(sentido),
+    laneSector,
+    accessPointId: wire?.accessPointId ?? null,
+  };
+}
+
 function lanePointName(sector: "vehicular" | "peatonal", sentido: "in" | "out") {
   const lado = sentido === "out" ? "Salida" : "Ingreso";
   return `${lado} ${sector}`;

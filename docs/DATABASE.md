@@ -44,7 +44,7 @@ Variable: `DATABASE_URL=file:./data/accesopro.db` (relativo a `apps/api`).
 | `dahua_devices` | Terminales faciales / IP (credenciales) |
 | `cameras` | RTSP (referencia nube; vínculo ALPR legacy vía `actuator_id`) |
 | `plates` | Lista blanca/negra en API (complementa motor) |
-| `events` | Auditoría incremental: `dahua_access`, plate, qr_access, visit_scan. **No** se vuelca el historial completo del ASI. |
+| `events` | Auditoría incremental: `dahua_access`, plate, qr_access, visit_scan. Columnas de carril: `sentido` (`in`/`out`), `lane_code` (**1** = entrada, **2** = salida), `access_point_id`. Se sellan al ingest con el rol **actual** del equipo; no se reescriben si después se cambia la ficha. **No** se vuelca el historial completo del ASI. |
 | `commands` | Cola agent + log engine.open |
 
 **Regla modular:** cada entidad vive sola; el **cableado** une. Un facial peatonal no abre barreras vehiculares si no está cableado al mismo punto.
@@ -59,7 +59,11 @@ El ASI es la fuente de accesos en vivo. La tabla `events` es la fuente del histo
 4. `POST /agent/events` deduplica por `deviceId`+`recNo` (memoria + DB).
 5. El dashboard hidrata `GET /api/events?limit=24`. La página Eventos usa `limit=80`.
 
-Índice: `idx_events_site_type_created`.
+Índices: `idx_events_site_type_created`, `idx_events_site_lane_created`.
+
+Carril de portería: un solo SQLite. No hay dos bases. El ASI es genérico; al guardar Entrada o Salida en la ficha, los **pases nuevos** llevan `lane_code` 1 o 2. Historial IN lista 1; historial OUT lista 2.
+
+Visita: ingreso en carril 1 (`visit_passes.scanned_in_at`) y egreso en carril 2 (`scanned_out_at`). Permanencia = salida − ingreso. Propietarios y permanentes **no** llevan control de tiempo.
 
 ```
 site 1 ── N access_points

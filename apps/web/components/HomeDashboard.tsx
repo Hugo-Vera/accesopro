@@ -142,11 +142,17 @@ export function HomeDashboard() {
   );
 
   const inEvents = useMemo(
-    () => filterEventsForLane(events, laneEventDeviceIds(devices, topology.in.deviceIds, "in")),
+    () =>
+      filterEventsForLane(events, laneEventDeviceIds(devices, topology.in.deviceIds, "in"), {
+        lane: "in",
+      }),
     [events, devices, topology.in.deviceIds],
   );
   const outEvents = useMemo(
-    () => filterEventsForLane(events, laneEventDeviceIds(devices, topology.out.deviceIds, "out")),
+    () =>
+      filterEventsForLane(events, laneEventDeviceIds(devices, topology.out.deviceIds, "out"), {
+        lane: "out",
+      }),
     [events, devices, topology.out.deviceIds],
   );
 

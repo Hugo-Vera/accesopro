@@ -121,7 +121,7 @@ Objetivo: topología real sin heurística.
 Objetivo: vecino genera QR → ASI lee → abre → portal marca ingreso/salida.
 
 1. Unificar payload: lo que imprime el QR = lo que enrolla el ASI (o parse en agent).  
-2. En agent/`agent.ts`: si CardNo/QR matchea `visit_passes` → `scanVisitPass` + sentido del punto.  
+2. En agent/`agent.ts`: si CardNo matchea `visit_passes` → `markVisitStayByCard` con `lane_code` 1/2 (no re-pulsa QR).  
 3. Abrir actuadores `triggerQr` del punto (no solo facial).  
 4. Portal historial con `scannedInAt` / `scannedOutAt`.  
 5. Permanencia UI (visita IN sin OUT → timer; permanente sin timer).

@@ -80,6 +80,19 @@ type VisitRecordRow = {
   } | null;
 };
 
+function formatStay(inAt: string | number | null, outAt: string | number | null) {
+  if (inAt == null || outAt == null) return null;
+  const a = new Date(inAt).getTime();
+  const b = new Date(outAt).getTime();
+  if (!Number.isFinite(a) || !Number.isFinite(b) || b < a) return null;
+  const mins = Math.round((b - a) / 60000);
+  if (mins < 1) return "menos de 1 min";
+  if (mins < 60) return `${mins} min`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return m ? `${h} h ${m} min` : `${h} h`;
+}
+
 export default function VisitasPage() {
   const { tenantId, can } = useDash();
   const [records, setRecords] = useState<VisitRecordRow[]>([]);
@@ -455,6 +468,7 @@ export default function VisitasPage() {
                                 })
                               : "—"}{" "}
                             {r.scannedOutAt && `→ ${new Date(r.scannedOutAt).toLocaleTimeString("es-AR", { hour: "2-digit", minute: "2-digit" })}`}
+                            {formatStay(r.scannedInAt, r.scannedOutAt) ? ` · ${formatStay(r.scannedInAt, r.scannedOutAt)}` : ""}
                           </p>
                         </td>
 
@@ -634,6 +648,14 @@ export default function VisitasPage() {
                       {selectedRecord.scannedOutAt ? new Date(selectedRecord.scannedOutAt).toLocaleString("es-AR") : "En predio"}
                     </p>
                   </div>
+                  {formatStay(selectedRecord.scannedInAt, selectedRecord.scannedOutAt) ? (
+                    <div className="col-span-2">
+                      <p className="text-[10px] text-slate-400">Permanencia</p>
+                      <p className="font-mono text-slate-800 dark:text-slate-200">
+                        {formatStay(selectedRecord.scannedInAt, selectedRecord.scannedOutAt)}
+                      </p>
+                    </div>
+                  ) : null}
                 </div>
 
                 {selectedRecord.notes && (

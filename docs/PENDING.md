@@ -9,7 +9,7 @@ Ops IN/OUT: **`docs/OPS_LANES.md`**.
 - [ ] Apertura toast: resolver por `dahuaDeviceId` → pool IN/OUT.
 - [x] Toast anti-F5: watermark `createdAt` + `sessionStorage`; agent prime sin reenviar historial.
 - [ ] UI admin cableado `access_points` (API ya existe).
-- [ ] QR visita: unificar payload vs CardNo ASI + enganchar `scanVisitPass` desde eventos.
+- [x] QR visita: CardNo del ASI marca `scanned_in_at` / `scanned_out_at` por carril 1/2 (sin reabrir relés QR).
 
 ## Intercom (SIP)
 
@@ -27,7 +27,7 @@ Ops IN/OUT: **`docs/OPS_LANES.md`**.
 - [x] Actuadores e historial separados por sentido (producción).
 - [x] Same-device lab: Salida hereda relés de Ingreso (doc vs código).
 - [ ] UI admin para cablear lector ↔ punto / sentido.
-- [ ] Reloj de permanencia: visita = evento IN → OUT; propietarios sin control de tiempo.
+- [x] Reloj de permanencia: visita = evento IN → OUT; propietarios sin control de tiempo.
 
 ## Personas y credenciales (`dahua.persons`)
 

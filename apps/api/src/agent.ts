@@ -3,10 +3,11 @@ import { Hono } from "hono";
 import { db } from "./db/client.js";
 import { actuators, cameras, commands, dahuaDevices, events, plates, sites } from "./db/schema.js";
 import { nid, normalizePlate } from "./scope.js";
-import { actuatorsForDahuaDevice } from "./accessPoints.js";
+import { actuatorsForDahuaDevice, resolveDeviceLane } from "./accessPoints.js";
 import { fireActuator } from "./actuatorExec.js";
 import { matchesSentido, sentidoOf } from "./engineBridge.js";
 import { broadcastRealtimeEvent } from "./eventStream.js";
+import { markVisitStayByCard } from "./visitPass.js";
 
 type AgentEnv = { Variables: { siteId: string } };
 
@@ -135,6 +136,10 @@ agentRoutes.post("/events", async (c) => {
   let openActuatorId: string | null = null;
   const payload = { ...body.payload };
   const acts = await db.select().from(actuators).where(eq(actuators.siteId, siteId));
+  const eventDate = new Date();
+  let eventSentido: "in" | "out" | null = null;
+  let eventLaneCode: 1 | 2 | null = null;
+  let eventAccessPointId: string | null = null;
 
   if (body.type === "plate") {
     const plate = normalizePlate(String(payload.plate ?? ""));
@@ -196,6 +201,17 @@ agentRoutes.post("/events", async (c) => {
     const isRemoteUnlock = method === "4" || method === "remote";
     const deviceId = String(payload.deviceId ?? "");
 
+    if (deviceId) {
+      const lane = await resolveDeviceLane(deviceId);
+      eventSentido = lane.sentido;
+      eventLaneCode = lane.laneCode;
+      eventAccessPointId = lane.accessPointId;
+      payload.sentido = lane.sentido;
+      payload.laneCode = lane.laneCode;
+      payload.laneSector = lane.laneSector;
+      if (lane.accessPointId) payload.accessPointId = lane.accessPointId;
+    }
+
     // Evitamos bucle infinito: si ya es una apertura remota (Method 4), no disparamos actuadores.
     // Además, el terminal Dahua ya acciona su propio relé localmente al reconocer la cara;
     // solo se disparan actuadores vinculados distintos (ej. barreras auxiliares de motor LAN u otros relés).
@@ -207,13 +223,26 @@ agentRoutes.post("/events", async (c) => {
         await fireActuator(site, a.id, "open");
       }
     }
+
+    if (!failed && !isRemoteUnlock && eventSentido) {
+      const card = String(payload.cardNo ?? payload.CardNo ?? payload.UserID ?? "").trim();
+      const stay = await markVisitStayByCard(siteId, card, eventSentido, eventDate);
+      if (stay) {
+        payload.accessKind = "visita";
+        payload.visitPassId = stay.passId;
+        if (stay.dwellMs != null) payload.dwellMs = stay.dwellMs;
+      }
+    }
   }
 
   if (body.type === "qr_access" || body.type === "dni_access") {
     const resultado = String(payload.resultado ?? "autorizado");
     const failed = resultado !== "autorizado" && resultado !== "manual";
+    const sentido = sentidoOf(String(payload.sentido ?? "in"));
+    eventSentido = sentido;
+    eventLaneCode = sentido === "out" ? 2 : 1;
+    payload.laneCode = eventLaneCode;
     if (!failed && site) {
-      const sentido = sentidoOf(String(payload.sentido ?? "in"));
       for (const a of acts.filter((x) => x.triggerQr && matchesSentido(x, sentido))) {
         await fireActuator(site, a.id, "open");
       }
@@ -221,7 +250,6 @@ agentRoutes.post("/events", async (c) => {
   }
 
   const eventId = nid();
-  const eventDate = new Date();
 
   await db.insert(events).values({
     id: eventId,
@@ -229,6 +257,9 @@ agentRoutes.post("/events", async (c) => {
     type: body.type,
     payload: JSON.stringify(payload),
     createdAt: eventDate,
+    sentido: eventSentido,
+    laneCode: eventLaneCode,
+    accessPointId: eventAccessPointId,
   });
 
   if (body.type === "dahua_access") {

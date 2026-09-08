@@ -1072,9 +1072,9 @@ export function EquipmentPanel() {
                   <div className="sm:col-span-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/40 p-4 space-y-3">
                     <p className="text-xs font-bold text-slate-800 dark:text-slate-200">Rol en portería</p>
                     <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                      Un equipo trabaja en Entrada o en Salida, y en carril vehicular o peatonal.
-                      El paquete es 1 ASI + cámara IP opcional. El ASI de salida se carga después,
-                      con esta misma ficha. Los tildes no reprograman el firmware del lector.
+                      Un equipo trabaja en Entrada (carril 1) o en Salida (carril 2), y en vehicular o peatonal.
+                      Desde que se guarda este rol, los pases nuevos se anotan en ese carril. Los anteriores
+                      quedan donde se registraron. El ASI de salida se carga después, con esta misma ficha.
                     </p>
                     <div>
                       <p className="text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1.5">Sentido</p>

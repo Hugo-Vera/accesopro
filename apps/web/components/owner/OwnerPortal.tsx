@@ -118,6 +118,19 @@ function fmtDate(v: string | number) {
   return new Date(v).toLocaleString("es-AR", { dateStyle: "short", timeStyle: "short" });
 }
 
+function formatStay(inAt: string | number | null, outAt: string | number | null) {
+  if (inAt == null || outAt == null) return "—";
+  const a = new Date(inAt).getTime();
+  const b = new Date(outAt).getTime();
+  if (!Number.isFinite(a) || !Number.isFinite(b) || b < a) return "—";
+  const mins = Math.round((b - a) / 60000);
+  if (mins < 1) return "menos de 1 min";
+  if (mins < 60) return `${mins} min`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  return m ? `${h} h ${m} min` : `${h} h`;
+}
+
 export function OwnerPortal() {
   const router = useRouter();
   const [tab, setTab] = useState<TabKey>("ficha");
@@ -892,13 +905,14 @@ export function OwnerPortal() {
                     <th className="px-4 py-3">DNI / Patente</th>
                     <th className="px-4 py-3">Vigencia</th>
                     <th className="px-4 py-3">Estado</th>
-                    <th className="px-4 py-3">Ingreso Real</th>
+                    <th className="px-4 py-3">Ingreso / salida</th>
+                    <th className="px-4 py-3">Permanencia</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-slate-700 dark:text-slate-300">
                   {passes.length === 0 ? (
                     <tr>
-                      <td colSpan={5} className="py-8 text-center text-slate-400">
+                      <td colSpan={6} className="py-8 text-center text-slate-400">
                         No hay registros en el historial
                       </td>
                     </tr>
@@ -933,6 +947,10 @@ export function OwnerPortal() {
                         </td>
                         <td className="px-4 py-3 font-mono text-[11px] text-slate-500">
                           {p.scannedInAt ? fmtDate(p.scannedInAt) : "Sin marcar"}
+                          {p.scannedOutAt ? ` → ${fmtDate(p.scannedOutAt)}` : ""}
+                        </td>
+                        <td className="px-4 py-3 font-mono text-[11px] text-slate-500">
+                          {formatStay(p.scannedInAt, p.scannedOutAt)}
                         </td>
                       </tr>
                     ))

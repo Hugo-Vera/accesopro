@@ -188,6 +188,11 @@ export const events = sqliteTable("events", {
   type: text("type").notNull(),
   payload: text("payload").notNull(),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  /** in | out — carril al momento del pase (no el rol actual del ASI). */
+  sentido: text("sentido"),
+  /** 1 = entrada, 2 = salida. */
+  laneCode: integer("lane_code"),
+  accessPointId: text("access_point_id"),
 });
 
 export const commands = sqliteTable("commands", {

@@ -1,7 +1,7 @@
 import { createHmac } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { db } from "./db/client.js";
-import { actuators, events, properties, visitPasses } from "./db/schema.js";
+import { actuators, events, properties, visitPasses, visitRecords } from "./db/schema.js";
 import { fireActuator } from "./actuatorExec.js";
 import { nid } from "./scope.js";
 
@@ -18,6 +18,76 @@ export function parseVisitQrPayload(raw: string): string | null {
   const trimmed = raw.trim();
   if (trimmed.startsWith("ACCESOPRO:V1:")) return trimmed.slice("ACCESOPRO:V1:".length);
   return null;
+}
+
+function ts(v: Date | number | null | undefined): number | null {
+  if (v == null) return null;
+  return v instanceof Date ? v.getTime() : Number(v) || null;
+}
+
+function dwellMs(inAt: Date | number | null | undefined, outAt: Date | number | null | undefined): number | null {
+  const a = ts(inAt);
+  const b = ts(outAt);
+  if (a == null || b == null || b < a) return null;
+  return b - a;
+}
+
+function laneCodeOf(sentido: "in" | "out"): 1 | 2 {
+  return sentido === "out" ? 2 : 1;
+}
+
+/**
+ * Marca ingreso (carril 1) o egreso (carril 2) de una visita por CardNo/token del ASI.
+ * No abre relés: el lector ya pulsó su chapa. Propietarios no matchean pases de visita.
+ */
+export async function markVisitStayByCard(
+  siteId: string,
+  cardRaw: string,
+  sentido: "in" | "out",
+  at: Date,
+): Promise<{ passId: string; guestName: string; dwellMs: number | null } | null> {
+  const card = cardRaw.trim();
+  if (!card) return null;
+  const rows = await db.select().from(visitPasses).where(eq(visitPasses.siteId, siteId));
+  const pass = rows.find((p) => {
+    if (p.dahuaCardNo && p.dahuaCardNo === card) return true;
+    if (p.token === card) return true;
+    if (card.startsWith("v_") && p.id.endsWith(card.slice(2))) return true;
+    return false;
+  });
+  if (!pass) {
+    const recs = await db.select().from(visitRecords).where(eq(visitRecords.siteId, siteId));
+    const rec = recs.find((r) => r.passToken && (r.passToken === card || card.includes(r.passToken)));
+    if (!rec) return null;
+    if (sentido === "in") {
+      if (!rec.scannedInAt) {
+        await db.update(visitRecords).set({ scannedInAt: at, status: "in_site" }).where(eq(visitRecords.id, rec.id));
+      }
+    } else if (!rec.scannedOutAt) {
+      await db
+        .update(visitRecords)
+        .set({ scannedOutAt: at, status: rec.scannedInAt ? "completed" : rec.status })
+        .where(eq(visitRecords.id, rec.id));
+    }
+    return { passId: rec.id, guestName: "", dwellMs: dwellMs(rec.scannedInAt ?? at, sentido === "out" ? at : rec.scannedOutAt) };
+  }
+  if (pass.status === "revoked" || pass.status === "cancelled") return null;
+  if (sentido === "in") {
+    if (!pass.scannedInAt) {
+      await db.update(visitPasses).set({ scannedInAt: at }).where(eq(visitPasses.id, pass.id));
+    }
+  } else if (!pass.scannedOutAt) {
+    await db
+      .update(visitPasses)
+      .set({
+        scannedOutAt: at,
+        status: pass.scannedInAt || pass.status === "active" ? "completed" : pass.status,
+      })
+      .where(eq(visitPasses.id, pass.id));
+  }
+  const inAt = pass.scannedInAt ?? (sentido === "in" ? at : null);
+  const outAt = sentido === "out" ? at : pass.scannedOutAt;
+  return { passId: pass.id, guestName: pass.guestName, dwellMs: dwellMs(inAt, outAt) };
 }
 
 function withinTimeWindow(horaDesde: string | null, horaHasta: string | null, now: Date) {
@@ -73,14 +143,18 @@ export async function scanVisitPass(
     id: nid(),
     siteId: site.id,
     type: "visit_scan",
+    sentido,
+    laneCode: laneCodeOf(sentido),
     payload: JSON.stringify({
       sentido,
+      laneCode: laneCodeOf(sentido),
       token,
       guestName: pass.guestName,
       lotNumber: property?.lotNumber,
       patente: pass.patente,
       actuatorsFired: fired,
       accessKind: "visita",
+      dwellMs: dwellMs(sentido === "in" ? now : pass.scannedInAt, sentido === "out" ? now : pass.scannedOutAt),
     }),
     createdAt: now,
   });

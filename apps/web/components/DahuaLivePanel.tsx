@@ -247,7 +247,6 @@ export function DahuaLivePanel({
               value={selected?.id ?? ""}
               onChange={(e) => pickDevice(e.target.value || null)}
             >
-              {lane === "out" ? <option value="">Sin lector / elegir…</option> : null}
               {rtspDevices.map((d) => {
                 const t = getDeviceTech(d);
                 return (

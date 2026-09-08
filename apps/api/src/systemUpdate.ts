@@ -177,6 +177,32 @@ async function inspectUpdater(): Promise<{ running: boolean; exitCode: number | 
   }
 }
 
+function sleep(ms: number) {
+  return new Promise((r) => setTimeout(r, ms));
+}
+
+async function watchDetachedUpdater() {
+  for (let i = 0; i < 90; i++) {
+    await sleep(10_000);
+    const disk = readDiskStatus();
+    const up = await inspectUpdater();
+    if (disk.status === "ok" || (up && !up.running && up.exitCode === 0)) {
+      state.status = "ok";
+      state.error = null;
+      state.finishedAt = Date.now();
+      appendLog("Updater terminó. Recargá el dashboard.");
+      return;
+    }
+    if (disk.status === "error" || (up && !up.running && up.exitCode != null && up.exitCode !== 0)) {
+      state.status = "error";
+      state.finishedAt = Date.now();
+      state.error = disk.error || `updater exit ${up?.exitCode ?? "?"}`;
+      appendLog(`ERROR: ${state.error}`);
+      return;
+    }
+  }
+}
+
 async function spawnDetachedUpdater(): Promise<string> {
   await execFileAsync("docker", ["rm", "-f", UPDATER_NAME], { timeout: 15000 }).catch(() => undefined);
   const image = await resolveSelfImage();
@@ -259,6 +285,7 @@ async function runHostUpdate() {
     const cid = await spawnDetachedUpdater();
     appendLog(`Updater suelto ${cid.slice(0, 12) || UPDATER_NAME} (el API se puede recrear sin matar el compile).`);
     appendLog("Durante el build el dashboard sigue. Al final hay un corte breve de :3000.");
+    void watchDetachedUpdater();
   } catch (spawnErr) {
     appendLog(`No se pudo soltar el updater (${spawnErr instanceof Error ? spawnErr.message : String(spawnErr)}). Fallback in-process.`);
     const script = join(HOST_DIR, "scripts", "update-ubuntu.sh");
@@ -341,7 +368,7 @@ systemApi.get("/system/update-status", async (c) => {
     status = "error";
     error = error || `updater exit ${up.exitCode}`;
   }
-  if (up && !up.running && up.exitCode === 0) status = "ok";
+  if (up && !up.running && up.exitCode === 0 && status !== "running") status = "ok";
   if (up?.logs) log = up.logs;
   return c.json({
     ...state,
@@ -369,12 +396,14 @@ systemApi.post("/system/update", async (c) => {
       400,
     );
   }
-  if (state.status === "running") {
-    return c.json({ error: "Ya hay una actualización en curso", status: state.status }, 409);
-  }
   const live = await inspectUpdater();
   if (live?.running) {
     return c.json({ error: "Ya hay un updater Docker en curso", status: "running" }, 409);
+  }
+  if (state.status === "running") {
+    // Un intento anterior dejó la memoria en running aunque el contenedor ya no existe.
+    state.status = "idle";
+    state.error = null;
   }
 
   void runHostUpdate();
