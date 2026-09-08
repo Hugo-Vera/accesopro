@@ -216,21 +216,29 @@ agentRoutes.post("/events", async (c) => {
     // Además, el terminal Dahua ya acciona su propio relé localmente al reconocer la cara;
     // solo se disparan actuadores vinculados distintos (ej. barreras auxiliares de motor LAN u otros relés).
     if (!failed && !isRemoteUnlock && site) {
-      const targets = await actuatorsForDahuaDevice(siteId, deviceId);
-      for (const a of targets) {
-        // El ASI ya abre su relé local; no re-encolar el mismo equipo.
-        if (a.driver === "dahua" && a.dahuaDeviceId === deviceId) continue;
-        await fireActuator(site, a.id, "open");
+      try {
+        const targets = await actuatorsForDahuaDevice(siteId, deviceId);
+        for (const a of targets) {
+          // El ASI ya abre su relé local; no re-encolar el mismo equipo.
+          if (a.driver === "dahua" && a.dahuaDeviceId === deviceId) continue;
+          await fireActuator(site, a.id, "open");
+        }
+      } catch {
+        /* el evento se guarda igual */
       }
     }
 
     if (!failed && !isRemoteUnlock && eventSentido) {
-      const card = String(payload.cardNo ?? payload.CardNo ?? payload.UserID ?? "").trim();
-      const stay = await markVisitStayByCard(siteId, card, eventSentido, eventDate);
-      if (stay) {
-        payload.accessKind = "visita";
-        payload.visitPassId = stay.passId;
-        if (stay.dwellMs != null) payload.dwellMs = stay.dwellMs;
+      try {
+        const card = String(payload.cardNo ?? payload.CardNo ?? payload.UserID ?? "").trim();
+        const stay = await markVisitStayByCard(siteId, card, eventSentido, eventDate);
+        if (stay) {
+          payload.accessKind = "visita";
+          payload.visitPassId = stay.passId;
+          if (stay.dwellMs != null) payload.dwellMs = stay.dwellMs;
+        }
+      } catch {
+        /* propietarios / CardNo desconocido: no bloquear el historial */
       }
     }
   }

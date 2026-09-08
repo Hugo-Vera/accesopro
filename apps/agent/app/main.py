@@ -22,7 +22,7 @@ _stop = threading.Event()
 _config: dict[str, Any] = {"dahua": [], "actuators": [], "cameras": [], "plates": []}
 
 
-_http = httpx.Client(timeout=5.0, headers=HEADERS)
+_http = httpx.Client(timeout=httpx.Timeout(20.0, connect=5.0), headers=HEADERS)
 
 
 def api_get(path: str) -> dict[str, Any]:
@@ -133,6 +133,29 @@ def _record_key(dev_id: str, rec: dict[str, Any]) -> str:
     return f"{dev_id}:live:{uid}:{status}:{method}:{stamp}:{url}"
 
 
+def _norm_stamp(v: Any) -> str:
+    """ASI a veces manda epoch Unix (1788…) y a veces 'YYYY-MM-DD HH:MM:SS'."""
+    s = str(v or "").strip()
+    if not s:
+        return ""
+    if s.isdigit() and len(s) >= 10:
+        try:
+            return time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(int(s[:10])))
+        except Exception:
+            return s
+    return s[:19]
+
+
+def _stamp_newer(stamp: str, cur_stamp: str) -> bool:
+    a = _norm_stamp(stamp)
+    b = _norm_stamp(cur_stamp)
+    if a and b:
+        return a > b
+    if stamp and cur_stamp:
+        return str(stamp) > str(cur_stamp)
+    return False
+
+
 def _intish(v: Any) -> int:
     try:
         return int(str(v).strip() or "0")
@@ -143,16 +166,17 @@ def _intish(v: Any) -> int:
 def _is_newer_than_cursor(dev_id: str, rec: dict[str, Any]) -> bool:
     cur = _cursors.get(dev_id)
     if not cur:
-        return False
+        return True
     rec_no = _intish(rec.get("RecNo") or rec.get("Index"))
     stamp = str(rec.get("CreateTime") or rec.get("Time") or rec.get("UTC") or "").strip()
     cur_no, cur_stamp = cur
     cno = _intish(cur_no)
     if rec_no and cno:
-        return rec_no > cno
-    if stamp and cur_stamp:
-        return stamp > cur_stamp
-    return False
+        if rec_no > cno:
+            return True
+        if rec_no < cno:
+            return False
+    return _stamp_newer(stamp, cur_stamp)
 
 
 def _remember_cursor(dev_id: str, rec: dict[str, Any]) -> None:
@@ -202,6 +226,7 @@ def _dispatch_access_event(dev: dict[str, Any], rec: dict[str, Any], *, skip_deb
         return
 
     stamp = rec.get("CreateTime") or rec.get("Time") or rec.get("UTC") or str(int(now))
+    stamp = _norm_stamp(stamp) or str(stamp)
     rec_no = rec.get("RecNo") or rec.get("Index") or ""
     status_code = str(rec.get("Status") if rec.get("Status") is not None else "0")
     is_approved = status_code == "1"
@@ -305,15 +330,13 @@ def _public_record(rec: dict[str, Any]) -> dict[str, Any]:
 
 
 def _record_age_seconds(rec: dict[str, Any]) -> float | None:
-    stamp = str(rec.get("CreateTime") or rec.get("Time") or "").strip()[:19]
+    stamp = _norm_stamp(rec.get("CreateTime") or rec.get("Time") or rec.get("UTC") or "")
     if not stamp:
         return None
-    for fmt in ("%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S"):
-        try:
-            return abs(time.time() - time.mktime(time.strptime(stamp, fmt)))
-        except Exception:
-            continue
-    return None
+    try:
+        return abs(time.time() - time.mktime(time.strptime(stamp[:19], "%Y-%m-%d %H:%M:%S")))
+    except Exception:
+        return None
 
 
 def _poll_dahua() -> None:
@@ -339,8 +362,6 @@ def _poll_dahua() -> None:
             continue
 
         if not records:
-            if gap:
-                _device_initialized.add(dev_id)
             continue
 
         if gap:
@@ -353,8 +374,8 @@ def _poll_dahua() -> None:
                 if newest is None or rec_no >= _intish((newest or {}).get("RecNo")):
                     newest = rec_n
                 age = _record_age_seconds(rec_n)
-                # Solo el pase reciente (agent recién arrancado); no volcar el historial del ASI.
-                if age is not None and age <= 90:
+                # Sin hora parseable: publicar (el ASI a veces manda epoch). Solo omitir si es viejo de verdad.
+                if age is None or age <= 120:
                     _dispatch_access_event(dev, rec_n, skip_debounce=True)
                     posted += 1
                 else:
@@ -650,7 +671,7 @@ async def lifespan(_app: FastAPI):
     alpr.stop()
 
 
-app = FastAPI(title="AccesoPro Site Agent", version="0.3.1", lifespan=lifespan)
+app = FastAPI(title="AccesoPro Site Agent", version="0.3.2", lifespan=lifespan)
 
 
 @app.get("/health")
@@ -661,7 +682,7 @@ def health():
         "product": "AccesoPro",
         "cameras": len(_config.get("cameras") or []),
         "dahua": len(_config.get("dahua") or []),
-        "version": "0.3.1",
+        "version": "0.3.2",
         "streamLive": {k: bool(v) for k, v in _stream_live.items()},
         "streamError": dict(_stream_error),
         "cursors": {k: {"recNo": a, "rawTime": b} for k, (a, b) in _cursors.items()},
