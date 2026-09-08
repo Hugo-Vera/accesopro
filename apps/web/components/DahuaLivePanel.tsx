@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown } from "lucide-react";
-import { withTenant, api } from "@/lib/api";
+import { withTenant, api, apiUrl } from "@/lib/api";
 import { useDash } from "@/components/DashboardProvider";
 import { IconFullscreen, IconRefresh } from "@/components/DashboardIcons";
 
@@ -22,8 +22,6 @@ export type LiveDevice = {
 };
 
 export type LiveLane = "in" | "out";
-
-const API = (process.env.NEXT_PUBLIC_API_URL ?? "").replace(/\/$/, "");
 
 /** Clasifica la tecnología del equipo y define su resolución nativa */
 function getDeviceTech(d: LiveDevice | null) {
@@ -147,7 +145,7 @@ export function DahuaLivePanel({
       `/api/dahua/${selected.id}/live?channel=${channel}&subtype=${subtype}&_=${tick}`,
       tenantId,
     );
-    return `${API}${q}`;
+    return apiUrl(q);
   }, [
     streamEnabled,
     inView,

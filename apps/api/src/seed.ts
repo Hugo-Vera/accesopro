@@ -2,7 +2,7 @@ import bcrypt from "bcryptjs";
 import { eq } from "drizzle-orm";
 import { db } from "./db/client.js";
 import { ensureSchema } from "./db/migrate.js";
-import { actuators, cameras, ownerProfiles, properties, propertyServices, sites, tenants, users, visitAuthorizations } from "./db/schema.js";
+import { accessPointCameras, actuators, cameras, ownerProfiles, properties, propertyServices, sites, tenants, users, visitAuthorizations } from "./db/schema.js";
 import { DEMO_AGENT_TOKEN } from "./scope.js";
 import { assignPlanToTenant, getTenantPlan, syncPlansFromCatalog } from "./plans.js";
 import { applyRoleTemplate, listUserGrants } from "./grants.js";
@@ -117,9 +117,14 @@ async function ensureSiteToken() {
   }
 }
 
-/** No re-sembrar barreras/cámaras de AccesoSeguro. No borra equipos Dahua que el barrio cargó. */
+/** No re-sembrar barreras/cámaras de AccesoSeguro. No borra equipos Dahua/Hikvision que el barrio cargó. */
 async function purgeAccesoSeguroBleed() {
-  await db.delete(cameras);
+  const rows = await db.select({ id: cameras.id }).from(cameras);
+  const bleedIds = rows.map((r) => r.id).filter((id) => !id.startsWith("cam_"));
+  for (const id of bleedIds) {
+    await db.delete(accessPointCameras).where(eq(accessPointCameras.cameraId, id));
+    await db.delete(cameras).where(eq(cameras.id, id));
+  }
   await db.delete(actuators).where(eq(actuators.driver, "engine"));
 }
 

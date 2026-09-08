@@ -3,8 +3,11 @@ import { fileURLToPath } from "node:url";
 import type { NextConfig } from "next";
 
 const apiInternal = (process.env.API_INTERNAL_URL ?? "http://127.0.0.1:8787").replace(/\/$/, "");
+/** Solo Laragon: NEXT_PUBLIC_BASE_PATH=/accesopro. Ubuntu/Docker quedan en /. */
+const basePath = (process.env.NEXT_PUBLIC_BASE_PATH ?? "").replace(/\/$/, "");
 
 const nextConfig: NextConfig = {
+  ...(basePath ? { basePath } : {}),
   transpilePackages: ["@accesopro/catalog"],
   output: "standalone",
   outputFileTracingRoot: path.join(path.dirname(fileURLToPath(import.meta.url)), "../.."),

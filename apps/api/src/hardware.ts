@@ -506,6 +506,8 @@ hardware.post("/dahua/probe-transient", async (c) => {
     port?: number;
     username?: string;
     password?: string;
+    cameraBrand?: string;
+    deviceType?: string;
   }>();
   if (!body.host || !body.username || !body.password) {
     return c.json({ error: "Completá IP, usuario y clave para probar conexión" }, 400);
@@ -515,6 +517,8 @@ hardware.post("/dahua/probe-transient", async (c) => {
     port: Number(body.port) || 80,
     username: body.username.trim(),
     password: body.password,
+    cameraBrand: body.cameraBrand?.trim() || "",
+    deviceType: body.deviceType?.trim() || "camera_ip",
   });
   const done = await waitCommand(cmd, 25);
   return c.json(done);

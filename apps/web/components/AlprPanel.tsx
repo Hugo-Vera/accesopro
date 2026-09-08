@@ -1,10 +1,8 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api, withTenant } from "@/lib/api";
+import { api, apiUrl, withTenant } from "@/lib/api";
 import { useDash } from "@/components/DashboardProvider";
-
-const API = (process.env.NEXT_PUBLIC_API_URL ?? "").replace(/\/$/, "");
 
 type Detection = {
   id: number;
@@ -211,7 +209,7 @@ function SiteImage({
     }
     let objectUrl: string | null = null;
     let cancelled = false;
-    const url = `${API}${withTenant(`/api/alpr/media?p=${encodeURIComponent(path)}`, tenantId)}`;
+    const url = apiUrl(withTenant(`/api/alpr/media?p=${encodeURIComponent(path)}`, tenantId));
     fetch(url, { credentials: "include" })
       .then((res) => (res.ok ? res.blob() : Promise.reject()))
       .then((blob) => {

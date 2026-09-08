@@ -1858,8 +1858,19 @@ function switchCfgSubTab(group, sentido) {
   if (group === 'dni') renderDniForm();
 }
 
+function inferRtspBrand(url, path) {
+  const blob = `${url || ''} ${path || ''}`;
+  if (/Streaming\/Channels|h264\/ch|ISAPI\/Streaming/i.test(blob)) return 'hikvision';
+  return 'dahua';
+}
+
+function hikvisionStreamCode(channel) {
+  const ch = Math.max(1, parseInt(channel, 10) || 1);
+  return String(ch * 100 + 1);
+}
+
 function parseRtsp(url) {
-  let res = { host: '', port: 554, user: '', pass: '', path: '/cam/realmonitor', channel: 1, full: url || '' };
+  let res = { host: '', port: 554, user: '', pass: '', path: '/cam/realmonitor', channel: 1, brand: 'dahua', full: url || '' };
   if (!url || !url.startsWith('rtsp')) { res.host = url || ''; return res; }
   try {
     const u = new URL(url);
@@ -1867,35 +1878,97 @@ function parseRtsp(url) {
     res.user = decodeURIComponent(u.username || ''); res.pass = decodeURIComponent(u.password || '');
     res.path = u.pathname;
     const ch = u.searchParams.get('channel'); if (ch) res.channel = parseInt(ch);
+    const hik = (u.pathname || '').match(/\/Streaming\/Channels\/(\d+)/i);
+    if (hik) {
+      res.brand = 'hikvision';
+      res.path = '/Streaming/Channels';
+      const code = parseInt(hik[1], 10);
+      res.channel = Math.max(1, Math.floor(code / 100));
+    } else {
+      res.brand = inferRtspBrand(url, u.pathname);
+    }
   } catch(e) {}
   return res;
 }
 
-function buildRtsp(host, port, user, pass, path, channel) {
+function brandDefaultPath(brand) {
+  return brand === 'hikvision' ? '/Streaming/Channels' : '/cam/realmonitor';
+}
+
+function buildRtsp(host, port, user, pass, path, channel, brand) {
   if (!host) return '';
   if (!host.includes('.')) return host; // e.g., '0'
-  let creds = '';
-  if (user) creds = encodeURIComponent(user) + (pass ? ':' + encodeURIComponent(pass) : '') + '@';
-  return `rtsp://${creds}${host}:${port || 554}${path}?channel=${channel || 1}&subtype=0`;
+  const useHik = (brand || inferRtspBrand('', path)) === 'hikvision';
+  const u = (user || '').trim() || 'admin';
+  let creds = encodeURIComponent(u);
+  if (pass) creds += ':' + encodeURIComponent(pass);
+  creds += '@';
+  if (useHik) {
+    const code = hikvisionStreamCode(channel);
+    return `rtsp://${creds}${host}:${port || 554}/Streaming/Channels/${code}`;
+  }
+  const p = path || '/cam/realmonitor';
+  return `rtsp://${creds}${host}:${port || 554}${p}?channel=${channel || 1}&subtype=0`;
+}
+
+function syncRtspFromFields(prefix) {
+  const brandEl = rtspField(prefix, 'Brand');
+  const pathEl = rtspField(prefix, 'Path');
+  const hostEl = rtspField(prefix, 'Host');
+  const sourceEl = rtspField(prefix, 'Source');
+  const brand = brandEl?.value || 'dahua';
+  if (pathEl) pathEl.value = brandDefaultPath(brand);
+  if (!hostEl || !sourceEl || !hostEl.value.trim()) return '';
+  const url = buildRtsp(
+    hostEl.value.trim(),
+    rtspField(prefix, 'Port')?.value,
+    rtspField(prefix, 'User')?.value,
+    rtspField(prefix, 'Pass')?.value,
+    pathEl?.value || brandDefaultPath(brand),
+    rtspField(prefix, 'Channel')?.value || 1,
+    brand
+  );
+  sourceEl.value = url;
+  return url;
+}
+
+function onRtspBrandChange(prefix) {
+  syncRtspFromFields(prefix);
 }
 
 // Bind live updates
+function rtspField(prefix, field) {
+  return document.getElementById(`${prefix}${field}`)
+    || (prefix === 'eviIn' ? document.getElementById(`evi${field}In`) : null)
+    || (prefix === 'eviOut' ? document.getElementById(`evi${field}Out`) : null);
+}
+
 function bindFormLiveRtsp(prefix) {
   const updateRtsp = () => {
+    const brandEl = rtspField(prefix, 'Brand');
+    const brand = brandEl?.value || 'dahua';
+    const hostEl = rtspField(prefix, 'Host');
+    const sourceEl = rtspField(prefix, 'Source');
+    if (!hostEl || !sourceEl) return;
     const s = buildRtsp(
-      document.getElementById(`${prefix}Host`).value,
-      document.getElementById(`${prefix}Port`).value,
-      document.getElementById(`${prefix}User`).value,
-      document.getElementById(`${prefix}Pass`).value,
-      document.getElementById(`${prefix}Path`)?.value || '/cam/realmonitor',
-      document.getElementById(`${prefix}Channel`)?.value || 1
+      hostEl.value,
+      rtspField(prefix, 'Port')?.value,
+      rtspField(prefix, 'User')?.value,
+      rtspField(prefix, 'Pass')?.value,
+      rtspField(prefix, 'Path')?.value || '/cam/realmonitor',
+      rtspField(prefix, 'Channel')?.value || 1,
+      brand
     );
-    document.getElementById(`${prefix}Source`).value = s;
+    sourceEl.value = s;
   };
   ['Host','Port','User','Pass','Path','Channel'].forEach(f => {
-    const el = document.getElementById(`${prefix}${f}`);
+    const el = rtspField(prefix, f);
     if (el) el.addEventListener('input', updateRtsp);
   });
+  const brandEl = rtspField(prefix, 'Brand');
+  if (brandEl) {
+    brandEl.addEventListener('change', () => onRtspBrandChange(prefix));
+  }
 }
 
 async function loadRuntimeConfig() {
@@ -2022,6 +2095,8 @@ function renderAlprForm() {
   set('alprHost', p.host); set('alprPort', p.port); set('alprUser', p.user);
   set('alprPass', p.pass); set('alprPath', p.path); set('alprChannel', p.channel);
   set('alprSource', p.full);
+  const brandEl = document.getElementById('alprBrand');
+  if (brandEl) brandEl.value = p.brand || 'dahua';
 
   // Set new HUD properties
   const hudEnabled = s === 'in' ? _cfgData.hud_overlay_enabled_in : _cfgData.hud_overlay_enabled_out;
@@ -2047,7 +2122,13 @@ function renderAlprForm() {
 
 async function saveAlprTab() {
   const s = _cfgSubTabs.alpr;
-  const val = document.getElementById('alprSource').value.trim();
+  const rebuilt = syncRtspFromFields('alpr');
+  const val = (rebuilt || document.getElementById('alprSource').value).trim();
+  if (val.toLowerCase().startsWith('rtsp') && !/@/.test(val)) {
+    alert('La cámara IP necesita usuario y clave en la URL RTSP. Completá Usuario y Contraseña.');
+    return;
+  }
+  document.getElementById('alprSource').value = val;
   
   const motionEnabled = document.getElementById('motionDetectionEnabled').checked;
   const motionThresh = parseFloat(document.getElementById('motionThreshold').value);
@@ -2069,6 +2150,7 @@ async function saveAlprTab() {
     _cfgData.motion_cooldown_sec_out = motionCooldown;
   }
   await saveConfigPartial();
+  refreshVideoFeed(true);
 }
 
 function renderEviForm() {
@@ -2084,6 +2166,8 @@ function renderEviForm() {
   set('eviPathIn', pIn.path);
   set('eviChannelIn', pIn.channel);
   set('eviSourceIn', pIn.full);
+  const brandIn = document.getElementById('eviBrandIn');
+  if (brandIn) brandIn.value = pIn.brand || 'dahua';
   
   const enabledIn = d.snapshot_enabled_in;
   const chkIn = document.getElementById('eviEnabledIn');
@@ -2100,6 +2184,8 @@ function renderEviForm() {
   set('eviPathOut', pOut.path);
   set('eviChannelOut', pOut.channel);
   set('eviSourceOut', pOut.full);
+  const brandOut = document.getElementById('eviBrandOut');
+  if (brandOut) brandOut.value = pOut.brand || 'dahua';
   
   const enabledOut = d.snapshot_enabled_out;
   const chkOut = document.getElementById('eviEnabledOut');

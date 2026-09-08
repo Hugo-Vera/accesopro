@@ -356,6 +356,102 @@ export async function ensureSchema() {
     )
   `);
 
+  await db.run(sql`
+    CREATE TABLE IF NOT EXISTS departments (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      site_id TEXT NOT NULL REFERENCES sites(id),
+      dahua_dept_id TEXT NOT NULL DEFAULT '1',
+      name TEXT NOT NULL,
+      default_period_index INTEGER NOT NULL DEFAULT 255,
+      description TEXT,
+      created_at INTEGER NOT NULL
+    )
+  `);
+  await db.run(sql`
+    CREATE TABLE IF NOT EXISTS visitor_identities (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      dni_number TEXT NOT NULL,
+      tramite_number TEXT,
+      last_name TEXT NOT NULL,
+      first_name TEXT NOT NULL,
+      gender TEXT,
+      birth_date TEXT,
+      issue_date TEXT,
+      address TEXT,
+      raw_pdf417 TEXT,
+      phone TEXT,
+      blacklisted INTEGER NOT NULL DEFAULT 0,
+      blacklist_reason TEXT,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    )
+  `);
+  await db.run(sql`
+    CREATE TABLE IF NOT EXISTS vehicles (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      plate TEXT NOT NULL,
+      brand TEXT,
+      model TEXT,
+      color TEXT,
+      vehicle_type TEXT NOT NULL DEFAULT 'car',
+      notes TEXT,
+      created_at INTEGER NOT NULL
+    )
+  `);
+  await db.run(sql`
+    CREATE TABLE IF NOT EXISTS vehicle_insurances (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      vehicle_id TEXT NOT NULL REFERENCES vehicles(id),
+      company TEXT NOT NULL,
+      policy_number TEXT NOT NULL,
+      valid_from INTEGER,
+      valid_until INTEGER NOT NULL,
+      coverage_type TEXT NOT NULL DEFAULT 'responsabilidad_civil',
+      card_photo_url TEXT,
+      verified_by TEXT,
+      status TEXT NOT NULL DEFAULT 'active',
+      created_at INTEGER NOT NULL
+    )
+  `);
+  await db.run(sql`
+    CREATE TABLE IF NOT EXISTS driver_licenses (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      person_id TEXT NOT NULL REFERENCES visitor_identities(id),
+      license_number TEXT NOT NULL,
+      classes TEXT NOT NULL DEFAULT 'B.1',
+      jurisdiction TEXT,
+      valid_until INTEGER NOT NULL,
+      photo_url TEXT,
+      created_at INTEGER NOT NULL
+    )
+  `);
+  await db.run(sql`
+    CREATE TABLE IF NOT EXISTS visit_records (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      site_id TEXT NOT NULL REFERENCES sites(id),
+      property_id TEXT NOT NULL REFERENCES properties(id),
+      person_id TEXT NOT NULL REFERENCES visitor_identities(id),
+      vehicle_id TEXT REFERENCES vehicles(id),
+      insurance_id TEXT REFERENCES vehicle_insurances(id),
+      license_id TEXT REFERENCES driver_licenses(id),
+      visit_type TEXT NOT NULL DEFAULT 'social',
+      status TEXT NOT NULL DEFAULT 'in_site',
+      authorized_by TEXT NOT NULL,
+      pass_token TEXT,
+      scanned_in_at INTEGER,
+      scanned_out_at INTEGER,
+      notes TEXT,
+      created_by_user_id TEXT REFERENCES users(id),
+      created_at INTEGER NOT NULL
+    )
+  `);
+
   await backfillAccessPointsFromLegacy();
   await backfillDeviceLaneFields(addedSentido, addedLaneSector);
 }

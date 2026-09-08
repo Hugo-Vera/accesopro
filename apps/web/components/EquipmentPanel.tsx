@@ -33,6 +33,7 @@ import {
 } from "lucide-react";
 
 type DeviceType = "asi_facial" | "camera_ip" | "vto_intercom" | "access_controller";
+type CameraBrand = "dahua" | "hikvision";
 
 type Device = {
   id: string;
@@ -73,6 +74,7 @@ type FormState = {
   password: string;
 
   // Campos específicos Cámara IP
+  cameraBrand: CameraBrand;
   rtspPort: string;
   rtspChannel: string;
   rtspSubtype: string;
@@ -89,6 +91,35 @@ type FormState = {
   useLocalRelay: boolean;
 };
 
+function inferCameraBrand(url?: string | null): CameraBrand {
+  const u = (url || "").toLowerCase();
+  if (u.includes("/streaming/channels") || u.includes("/h264/ch") || u.includes("isapi/streaming")) {
+    return "hikvision";
+  }
+  return "dahua";
+}
+
+function isGeneratedRtsp(url?: string | null): boolean {
+  const u = url || "";
+  return u.includes("/cam/realmonitor") || /\/Streaming\/Channels\/\d+/i.test(u);
+}
+
+function hikvisionStreamCode(channel: string, subtype: string): string {
+  const ch = Math.max(1, Number(channel) || 1);
+  const stream = subtype === "1" ? 2 : 1;
+  return String(ch * 100 + stream);
+}
+
+function parseHikvisionChannel(url: string): { channel: string; subtype: string } | null {
+  const m = url.match(/\/Streaming\/Channels\/(\d+)/i);
+  if (!m) return null;
+  const code = Number(m[1]);
+  if (!code) return null;
+  const channel = String(Math.max(1, Math.floor(code / 100)));
+  const subtype = code % 100 === 2 ? "1" : "0";
+  return { channel, subtype };
+}
+
 function buildRtspUrl(
   user: string,
   pass: string,
@@ -96,11 +127,16 @@ function buildRtspUrl(
   rtspPort = "554",
   channel = "1",
   subtype = "0",
+  brand: CameraBrand = "dahua",
 ) {
   const h = host.trim() || "192.168.1.100";
   const p = rtspPort.trim() || "554";
   const u = user.trim() || "admin";
   const pw = pass ? encodeURIComponent(pass) : "clave";
+  if (brand === "hikvision") {
+    const code = hikvisionStreamCode(channel, subtype);
+    return `rtsp://${u}:${pw}@${h}:${p}/Streaming/Channels/${code}`;
+  }
   return `rtsp://${u}:${pw}@${h}:${p}/cam/realmonitor?channel=${channel}&subtype=${subtype}`;
 }
 
@@ -114,6 +150,7 @@ const emptyForm = (): FormState => ({
   port: "80",
   username: "admin",
   password: "",
+  cameraBrand: "dahua",
   rtspPort: "554",
   rtspChannel: "1",
   rtspSubtype: "0",
@@ -201,6 +238,8 @@ export function EquipmentPanel() {
   function openEditModal(d: Device) {
     const act = actuators.find((a) => a.dahuaDeviceId === d.id);
     const dt = d.deviceType || "asi_facial";
+    const brand = inferCameraBrand(d.rtspUrl);
+    const hik = d.rtspUrl ? parseHikvisionChannel(d.rtspUrl) : null;
     setModalMode("edit");
     setEditingDevice(d);
     setForm({
@@ -213,11 +252,12 @@ export function EquipmentPanel() {
       port: String(d.port || 80),
       username: d.username,
       password: "",
+      cameraBrand: brand,
       rtspPort: "554",
-      rtspChannel: "1",
-      rtspSubtype: "0",
-      rtspUrl: d.rtspUrl || (dt === "camera_ip" ? buildRtspUrl(d.username, "", d.host) : ""),
-      customRtsp: Boolean(d.rtspUrl && !d.rtspUrl.includes("/cam/realmonitor")),
+      rtspChannel: hik?.channel ?? "1",
+      rtspSubtype: hik?.subtype ?? "0",
+      rtspUrl: d.rtspUrl || (dt === "camera_ip" ? buildRtspUrl(d.username, "", d.host, "554", "1", "0", brand) : ""),
+      customRtsp: Boolean(d.rtspUrl && !isGeneratedRtsp(d.rtspUrl)),
       linkActuatorForAlpr: Boolean(act),
       actuatorName: act?.name ?? (dt === "camera_ip" ? "Barrera Entrada" : d.name),
       kind: act?.kind ?? (d.laneSector === "peatonal" && dt !== "camera_ip" ? "door" : "barrier"),
@@ -258,6 +298,7 @@ export function EquipmentPanel() {
         next.rtspPort,
         next.rtspChannel,
         next.rtspSubtype,
+        next.cameraBrand,
       );
     }
     setForm(next);
@@ -299,6 +340,8 @@ export function EquipmentPanel() {
             port: Number(form.port) || 80,
             username: form.username.trim(),
             password: form.password,
+            cameraBrand: form.cameraBrand,
+            deviceType: form.deviceType,
           }),
         });
         if (!r.ok) throw new Error(r.error || "No se pudo conectar al equipo");
@@ -662,6 +705,11 @@ export function EquipmentPanel() {
                               {d.model}
                             </span>
                           )}
+                          {isCam && (
+                            <span className="rounded bg-purple-50 dark:bg-purple-950/40 px-1.5 py-0.5 text-[10px] font-semibold text-purple-700 dark:text-purple-300">
+                              {inferCameraBrand(d.rtspUrl) === "hikvision" ? "Hikvision" : "Dahua"}
+                            </span>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -912,6 +960,7 @@ export function EquipmentPanel() {
                             form.rtspPort,
                             form.rtspChannel,
                             form.rtspSubtype,
+                            form.cameraBrand,
                           );
                         } else if (!form.useLocalRelay && form.deviceType === "camera_ip") {
                           updated.useLocalRelay = true;
@@ -921,7 +970,7 @@ export function EquipmentPanel() {
                       className="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#0b0f17] px-3.5 py-2 text-sm text-slate-900 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                     >
                       <option value="asi_facial">Terminal Facial ASI / Control Biométrico (Dahua ASI)</option>
-                      <option value="camera_ip">Cámara IP / Lectura LPR - ANPR</option>
+                      <option value="camera_ip">Cámara IP / Lectura LPR - ANPR (Dahua o Hikvision)</option>
                       <option value="vto_intercom">Intercomunicador / Portero Visor (VTO Dahua)</option>
                       <option value="access_controller">Controlador de Acceso / Relé IP</option>
                     </select>
@@ -1180,6 +1229,37 @@ export function EquipmentPanel() {
                         </span>
                       </div>
 
+                      <div>
+                        <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
+                          Marca de la cámara
+                        </label>
+                        <select
+                          value={form.cameraBrand}
+                          onChange={(e) => {
+                            const cameraBrand = e.target.value as CameraBrand;
+                            handleCameraFieldChange({
+                              cameraBrand,
+                              customRtsp: false,
+                              model:
+                                form.model === "IPC-HFW5241E-Z12E" || form.model === "DS-2CD2T47G2-L" || !form.model
+                                  ? cameraBrand === "hikvision"
+                                    ? "DS-2CD2T47G2-L"
+                                    : "IPC-HFW5241E-Z12E"
+                                  : form.model,
+                            });
+                          }}
+                          className="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#0b0f17] px-2.5 py-1.5 text-xs"
+                        >
+                          <option value="dahua">Dahua (IPC / ITC LPR)</option>
+                          <option value="hikvision">Hikvision (DS / iDS LPR)</option>
+                        </select>
+                        <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
+                          {form.cameraBrand === "hikvision"
+                            ? "RTSP: /Streaming/Channels/101 (principal) o 102 (substream)."
+                            : "RTSP: /cam/realmonitor?channel=1&subtype=0"}
+                        </p>
+                      </div>
+
                       <div className="grid grid-cols-3 gap-3">
                         <div>
                           <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
@@ -1212,8 +1292,12 @@ export function EquipmentPanel() {
                             onChange={(e) => handleCameraFieldChange({ rtspSubtype: e.target.value })}
                             className="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#0b0f17] px-2.5 py-1.5 text-xs"
                           >
-                            <option value="0">0 (Principal HD)</option>
-                            <option value="1">1 (Substream Fluido)</option>
+                            <option value="0">
+                              {form.cameraBrand === "hikvision" ? "Principal (101 / 201)" : "0 (Principal HD)"}
+                            </option>
+                            <option value="1">
+                              {form.cameraBrand === "hikvision" ? "Substream (102 / 202)" : "1 (Substream Fluido)"}
+                            </option>
                           </select>
                         </div>
                       </div>
@@ -1236,12 +1320,13 @@ export function EquipmentPanel() {
                                   form.rtspPort,
                                   form.rtspChannel,
                                   form.rtspSubtype,
+                                  form.cameraBrand,
                                 ),
                               })
                             }
                             className="text-[10px] text-purple-600 hover:text-purple-700 dark:text-purple-400 font-semibold underline"
                           >
-                            Reconstruir URL Dahua
+                            Reconstruir URL {form.cameraBrand === "hikvision" ? "Hikvision" : "Dahua"}
                           </button>
                         </div>
                         <input
@@ -1251,7 +1336,11 @@ export function EquipmentPanel() {
                           onChange={(e) =>
                             setForm({ ...form, rtspUrl: e.target.value, customRtsp: true })
                           }
-                          placeholder="rtsp://admin:clave@192.168.33.200:554/cam/realmonitor?channel=1&subtype=0"
+                          placeholder={
+                            form.cameraBrand === "hikvision"
+                              ? "rtsp://admin:clave@192.168.1.64:554/Streaming/Channels/101"
+                              : "rtsp://admin:clave@192.168.33.200:554/cam/realmonitor?channel=1&subtype=0"
+                          }
                           className="w-full rounded-xl border border-purple-300 dark:border-purple-800 bg-white dark:bg-[#0b0f17] px-3 py-2 text-xs font-mono text-purple-950 dark:text-purple-200 focus:outline-none focus:ring-1 focus:ring-purple-500"
                         />
                       </div>

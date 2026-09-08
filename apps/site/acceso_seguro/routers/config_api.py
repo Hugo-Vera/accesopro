@@ -10,7 +10,7 @@ from sqlalchemy.orm import Session
 from ..auth import get_current_operator, require_rol
 from ..database import get_db
 from ..models import Operador, Deteccion
-from ..services.alpr import get_alpr, ALPRService
+from ..services.alpr import get_alpr, ALPRService, is_usable_camera_source
 from ..config import settings
 
 router = APIRouter(prefix="/api", tags=["config"])
@@ -56,11 +56,17 @@ def set_config(payload: dict, sentido: str = "in", _op: Operador = _supervisor):
     for s in ["in", "out"]:
         get_alpr(s).set_runtime_config(payload, persist=(persist and s == "in"))
 
-    # Solo reiniciar si las fuentes de cámara cambiaron
-    if settings.camera_source_in != old_src_in:
-        get_alpr("in").restart(settings.camera_source_in)
-    if settings.camera_source_out != old_src_out:
-        get_alpr("out").restart(settings.camera_source_out)
+    # Reiniciar si cambió la fuente, o si hay fuente usable y el worker sigue idle
+    svc_in = get_alpr("in")
+    if settings.camera_source_in != old_src_in or (
+        is_usable_camera_source(settings.camera_source_in) and not svc_in.running
+    ):
+        svc_in.restart(settings.camera_source_in)
+    svc_out = get_alpr("out")
+    if settings.camera_source_out != old_src_out or (
+        is_usable_camera_source(settings.camera_source_out) and not svc_out.running
+    ):
+        svc_out.restart(settings.camera_source_out)
 
     # Recargar el estado lógico del relay en caliente
     from ..services.relay import relay

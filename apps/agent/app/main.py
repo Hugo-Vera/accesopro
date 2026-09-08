@@ -12,6 +12,7 @@ from fastapi.responses import Response, StreamingResponse
 
 from .alpr import AlprWorker
 from .dahua import DahuaClient
+from .hikvision import HikvisionClient, looks_like_hikvision
 from .live import iter_mjpeg
 
 API = os.environ.get("ACCESOPRO_API_URL", "http://localhost:8787").rstrip("/")
@@ -66,6 +67,34 @@ def _device(device_id: str) -> dict[str, Any] | None:
 
 def _client(dev: dict[str, Any]) -> DahuaClient:
     return DahuaClient(dev["host"], dev["username"], dev["password"], int(dev.get("port") or 80))
+
+
+def _hik_client(dev: dict[str, Any]) -> HikvisionClient:
+    return HikvisionClient(dev["host"], dev["username"], dev["password"], int(dev.get("port") or 80))
+
+
+def _probe_ipc(dev: dict[str, Any]) -> dict[str, Any]:
+    brand = str(dev.get("cameraBrand") or "").strip().lower()
+    prefer_hik = brand == "hikvision" or looks_like_hikvision(dev)
+    if prefer_hik:
+        try:
+            return _hik_client(dev).probe()
+        except Exception as hik_exc:  # noqa: BLE001
+            if brand == "hikvision":
+                raise
+            try:
+                return _client(dev).probe()
+            except Exception:  # noqa: BLE001
+                raise hik_exc
+    try:
+        return _client(dev).probe()
+    except Exception as dahua_exc:  # noqa: BLE001
+        if str(dev.get("deviceType") or "") == "camera_ip":
+            try:
+                return _hik_client(dev).probe()
+            except Exception:  # noqa: BLE001
+                raise dahua_exc
+        raise
 
 
 def _open(actuator_id: str) -> dict[str, Any]:
@@ -407,7 +436,7 @@ def _run_command(cmd: dict[str, Any]) -> dict[str, Any]:
             dev = payload
         if not dev:
             return {"ok": False, "error": "Equipo no encontrado"}
-        return _client(dev).probe()
+        return _probe_ipc(dev)
     if action == "dahua_door_status":
         dev = _device(payload.get("deviceId"))
         if not dev:
@@ -423,7 +452,10 @@ def _run_command(cmd: dict[str, Any]) -> dict[str, Any]:
         dev = _device(payload.get("deviceId"))
         if not dev:
             return {"ok": False, "error": "Equipo no encontrado"}
-        return _client(dev).snapshot(int(payload.get("channel") or 1))
+        ch = int(payload.get("channel") or 1)
+        if looks_like_hikvision(dev):
+            return _hik_client(dev).snapshot(ch)
+        return _client(dev).snapshot(ch)
     if action == "dahua_person_list":
         dev = _device(payload.get("deviceId"))
         if not dev:
@@ -719,7 +751,10 @@ def dahua_snapshot(
     if not dev:
         raise HTTPException(status_code=404, detail="Equipo no encontrado")
     try:
-        raw, ctype = _client(dev).snapshot_jpeg(int(channel) or 1)
+        if looks_like_hikvision(dev):
+            raw, ctype = _hik_client(dev).snapshot_jpeg(int(channel) or 1)
+        else:
+            raw, ctype = _client(dev).snapshot_jpeg(int(channel) or 1)
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return Response(content=raw, media_type=ctype, headers={"Cache-Control": "no-store"})

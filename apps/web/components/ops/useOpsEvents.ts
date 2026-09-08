@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, withTenant } from "@/lib/api";
+import { api, apiUrl, withTenant } from "@/lib/api";
 import { parseFacialEvent, type EventRow } from "@/components/ops/parseFacialEvent";
 import type { FacialEventAlert } from "@/components/LiveFacialAlertToast";
 
@@ -192,7 +192,7 @@ export function useOpsEvents({ tenantId, enabled, onAlert }: Options) {
       if (closed || sseStarted) return;
       sseStarted = true;
       try {
-        es = new EventSource(withTenant("/api/events/stream?type=dahua_access", tenantId), {
+        es = new EventSource(apiUrl(withTenant("/api/events/stream?type=dahua_access", tenantId)), {
           withCredentials: true,
         });
       } catch {

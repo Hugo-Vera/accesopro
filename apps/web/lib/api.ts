@@ -1,8 +1,14 @@
 // Vacío = mismo origen (Next rewrites a la API). Ideal para LAN / ZeroTier.
-const API = (process.env.NEXT_PUBLIC_API_URL ?? "").replace(/\/$/, "");
+// Con NEXT_PUBLIC_BASE_PATH (Laragon /accesopro) el fetch tiene que ir bajo ese prefijo.
+const BASE = (process.env.NEXT_PUBLIC_BASE_PATH ?? "").replace(/\/$/, "");
+const API = (process.env.NEXT_PUBLIC_API_URL ?? "").replace(/\/$/, "") || BASE;
+
+export function apiUrl(path: string) {
+  return `${API}${path}`;
+}
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API}${path}`, {
+  const res = await fetch(apiUrl(path), {
     ...init,
     credentials: "include",
     headers: {

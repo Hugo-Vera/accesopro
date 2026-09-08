@@ -824,6 +824,13 @@
               <label class="cfg-label"><span>Puerto</span><input id="alprPort" class="cfg-input" type="number" value="554" /></label>
               <label class="cfg-label"><span>Usuario</span><input id="alprUser" class="cfg-input" type="text" placeholder="admin" /></label>
               <label class="cfg-label"><span>Contraseña</span><input id="alprPass" class="cfg-input" type="password" /></label>
+              <label class="cfg-label">
+                <span>Marca</span>
+                <select id="alprBrand" class="cfg-input" onchange="onRtspBrandChange('alpr')">
+                  <option value="dahua">Dahua</option>
+                  <option value="hikvision">Hikvision</option>
+                </select>
+              </label>
               <label class="cfg-label"><span>Ruta / Path</span><input id="alprPath" class="cfg-input" type="text" value="/cam/realmonitor" /></label>
               <label class="cfg-label"><span>Canal</span><input id="alprChannel" class="cfg-input" type="number" value="1" /></label>
               <label class="cfg-label cfg-span-2">
@@ -913,6 +920,13 @@
                 <label class="cfg-label"><span>Puerto</span><input id="eviPortIn" class="cfg-input" type="number" value="554" /></label>
                 <label class="cfg-label"><span>Usuario</span><input id="eviUserIn" class="cfg-input" type="text" /></label>
                 <label class="cfg-label"><span>Contraseña</span><input id="eviPassIn" class="cfg-input" type="password" /></label>
+                <label class="cfg-label">
+                  <span>Marca</span>
+                  <select id="eviBrandIn" class="cfg-input" onchange="onRtspBrandChange('eviIn')">
+                    <option value="dahua">Dahua</option>
+                    <option value="hikvision">Hikvision</option>
+                  </select>
+                </label>
                 <label class="cfg-label"><span>Ruta / Path</span><input id="eviPathIn" class="cfg-input" type="text" value="/cam/realmonitor" /></label>
                 <label class="cfg-label"><span>Canal</span><input id="eviChannelIn" class="cfg-input" type="number" value="1" /></label>
               </div>
@@ -956,6 +970,13 @@
                 <label class="cfg-label"><span>Puerto</span><input id="eviPortOut" class="cfg-input" type="number" value="554" /></label>
                 <label class="cfg-label"><span>Usuario</span><input id="eviUserOut" class="cfg-input" type="text" /></label>
                 <label class="cfg-label"><span>Contraseña</span><input id="eviPassOut" class="cfg-input" type="password" /></label>
+                <label class="cfg-label">
+                  <span>Marca</span>
+                  <select id="eviBrandOut" class="cfg-input" onchange="onRtspBrandChange('eviOut')">
+                    <option value="dahua">Dahua</option>
+                    <option value="hikvision">Hikvision</option>
+                  </select>
+                </label>
                 <label class="cfg-label"><span>Ruta / Path</span><input id="eviPathOut" class="cfg-input" type="text" value="/cam/realmonitor" /></label>
                 <label class="cfg-label"><span>Canal</span><input id="eviChannelOut" class="cfg-input" type="number" value="1" /></label>
               </div>
@@ -1465,7 +1486,7 @@
 
 <div id="toastContainer" style="position: fixed; top: 20px; right: 20px; z-index: 10000; display: flex; flex-direction: column; gap: 10px; pointer-events: none;"></div>
 
-<script src="/static/app.js?v=20260520a"></script>
+<script src="/static/app.js?v=20260908c"></script>
 </body>
 </html>
 

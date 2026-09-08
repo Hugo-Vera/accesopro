@@ -99,13 +99,18 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
       if (me.user.role === "platform_admin") {
         const list = await api<{ tenants: Tenant[] }>("/api/tenants");
         setTenants(list.tenants);
-        id = forTenant ?? tenantId ?? list.tenants[0]?.id ?? null;
+        const stored = typeof window !== "undefined" ? window.localStorage.getItem("ap:tenantId") : null;
+        const storedOk = stored && list.tenants.some((t) => t.id === stored) ? stored : null;
+        id = forTenant ?? tenantId ?? storedOk ?? list.tenants[0]?.id ?? null;
         const catalog = await api<{ plans: PlanRow[] }>("/api/plans");
         setPlans(catalog.plans);
       } else {
         id = me.user.tenantId;
       }
       setTenantId(id);
+      if (id && typeof window !== "undefined") {
+        window.localStorage.setItem("ap:tenantId", id);
+      }
       if (!id) {
         setTenantName(null);
         setLoading(false);

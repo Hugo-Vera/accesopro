@@ -49,6 +49,15 @@ def mark_source_online(source: str | int) -> None:
             del _offline_sources[source]
 
 
+def _safe_float(value: Any, default: float) -> float:
+    if value is None or value == "":
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def is_usable_camera_source(source: str | int | None) -> bool:
     """False para vacio, webcam sin indice util, o plantillas tipo USER:PASS."""
     if source is None:
@@ -308,6 +317,9 @@ class ALPRService:
             logger.warning("[ALPR %s] %s — worker en idle (0 CPU de captura)", self.sentido.upper(), self.last_error)
             self._set_status_frame("Camara no configurada. Configurala en la pestaña Configuracion.")
             return
+        if isinstance(source, str) and source.lower().startswith("rtsp") and "@" not in source:
+            logger.warning("[ALPR %s] RTSP sin usuario/clave — Hikvision/Dahua suelen rechazar el stream", self.sentido.upper())
+            self._set_status_frame("RTSP sin usuario y clave. Completalos en Configuracion > ALPR.")
         self._stop.clear()
         self._thread = threading.Thread(target=self._worker, daemon=True)
         self._active_thread = self._thread
@@ -667,6 +679,7 @@ class ALPRService:
         result = {
             "host": "", "port": 554, "user": "", "password": "",
             "channel": 1, "subtype": 0, "path": "/cam/realmonitor",
+            "brand": "dahua",
             "custom_source": source or "", "use_custom_source": False,
         }
         if not source or source.strip().isdigit():
@@ -684,6 +697,15 @@ class ALPRService:
             qs = urllib.parse.parse_qs(p.query)
             result["channel"] = int(qs.get("channel", ["1"])[0])
             result["subtype"] = int(qs.get("subtype", ["0"])[0])
+            hik = re.search(r"/Streaming/Channels/(\d+)", p.path or "", re.I)
+            if hik:
+                code = int(hik.group(1))
+                result["brand"] = "hikvision"
+                result["path"] = "/Streaming/Channels"
+                result["channel"] = max(1, code // 100)
+                result["subtype"] = 1 if code % 100 == 2 else 0
+            elif re.search(r"/h264/ch|ISAPI/Streaming", p.path or "", re.I):
+                result["brand"] = "hikvision"
         except Exception:
             result["use_custom_source"] = True
         return result
@@ -701,8 +723,15 @@ class ALPRService:
         channel = int(payload.get("channel") or 1)
         subtype = int(payload.get("subtype") or 0)
         path = (payload.get("path") or "/cam/realmonitor").strip()
+        brand = str(payload.get("brand") or "").strip().lower()
         if not path.startswith("/"):
             path = f"/{path}"
+        if "Streaming/Channels" in path or brand == "hikvision":
+            code = max(1, channel) * 100 + (2 if subtype == 1 else 1)
+            path = f"/Streaming/Channels/{code}"
+            query = ""
+        else:
+            query = f"?channel={channel}&subtype={subtype}"
         if user:
             creds = urllib.parse.quote(user, safe="")
             if password:
@@ -710,7 +739,7 @@ class ALPRService:
             creds += "@"
         else:
             creds = ""
-        return f"rtsp://{creds}{host}:{port}{path}?channel={channel}&subtype={subtype}"
+        return f"rtsp://{creds}{host}:{port}{path}{query}"
 
     def get_camera_config(self) -> dict:
         src = self._get_source()
@@ -862,13 +891,13 @@ class ALPRService:
         barrier_changed = False
         with self._lock:
             if "inference_every_n" in payload:
-                self._inference_every_n = max(1, int(payload["inference_every_n"]))
+                self._inference_every_n = max(1, int(payload["inference_every_n"] or 1))
             if "filter_min_ocr_conf" in payload:
-                self._min_ocr_conf = float(payload["filter_min_ocr_conf"])
+                self._min_ocr_conf = _safe_float(payload["filter_min_ocr_conf"], self._min_ocr_conf)
             if "filter_min_detector_conf" in payload:
-                self._min_detector_conf = float(payload["filter_min_detector_conf"])
+                self._min_detector_conf = _safe_float(payload["filter_min_detector_conf"], self._min_detector_conf)
             if "dedup_window_sec" in payload:
-                settings.dedup_window_sec = max(0.0, float(payload["dedup_window_sec"]))
+                settings.dedup_window_sec = max(0.0, _safe_float(payload["dedup_window_sec"], settings.dedup_window_sec))
             if "ocr_device" in payload and payload["ocr_device"] != settings.ocr_device:
                 settings.ocr_device = payload["ocr_device"]
                 device_changed = True
@@ -1016,11 +1045,11 @@ class ALPRService:
                 if self.sentido == "in":
                     self.motion_detection_enabled = settings.motion_detection_enabled_in
             if "motion_threshold_in" in payload:
-                settings.motion_threshold_in = float(payload["motion_threshold_in"])
+                settings.motion_threshold_in = _safe_float(payload["motion_threshold_in"], settings.motion_threshold_in)
                 if self.sentido == "in":
                     self.motion_threshold = settings.motion_threshold_in
             if "motion_cooldown_sec_in" in payload:
-                settings.motion_cooldown_sec_in = float(payload["motion_cooldown_sec_in"])
+                settings.motion_cooldown_sec_in = _safe_float(payload["motion_cooldown_sec_in"], settings.motion_cooldown_sec_in)
                 if self.sentido == "in":
                     self.motion_cooldown_sec = settings.motion_cooldown_sec_in
 
@@ -1030,11 +1059,11 @@ class ALPRService:
                 if self.sentido == "out":
                     self.motion_detection_enabled = settings.motion_detection_enabled_out
             if "motion_threshold_out" in payload:
-                settings.motion_threshold_out = float(payload["motion_threshold_out"])
+                settings.motion_threshold_out = _safe_float(payload["motion_threshold_out"], settings.motion_threshold_out)
                 if self.sentido == "out":
                     self.motion_threshold = settings.motion_threshold_out
             if "motion_cooldown_sec_out" in payload:
-                settings.motion_cooldown_sec_out = float(payload["motion_cooldown_sec_out"])
+                settings.motion_cooldown_sec_out = _safe_float(payload["motion_cooldown_sec_out"], settings.motion_cooldown_sec_out)
                 if self.sentido == "out":
                     self.motion_cooldown_sec = settings.motion_cooldown_sec_out
 

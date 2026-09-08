@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, useMemo } from "react";
-import { api, withTenant } from "@/lib/api";
+import { api, apiUrl, withTenant } from "@/lib/api";
 import { useDash } from "@/components/DashboardProvider";
 import { FeatureGate, PageHeader } from "@/components/PageHeader";
 import {
@@ -76,7 +76,7 @@ export default function DahuaEventosPage() {
     let es: EventSource | null = null;
     let pollTimer: ReturnType<typeof setInterval> | null = null;
     try {
-      es = new EventSource(withTenant("/api/events/stream?type=dahua_access", tenantId), {
+      es = new EventSource(apiUrl(withTenant("/api/events/stream?type=dahua_access", tenantId)), {
         withCredentials: true,
       });
       es.addEventListener("access_event", (event: MessageEvent) => {

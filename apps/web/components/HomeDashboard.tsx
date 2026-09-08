@@ -67,6 +67,8 @@ export function HomeDashboard() {
     setTenant,
     user,
     logout,
+    loading,
+    error: dashError,
   } = useDash();
 
   const [acts, setActs] = useState<Actuator[]>([]);
@@ -243,11 +245,46 @@ export function HomeDashboard() {
   }
 
   if (isPlatform && !tenantId) {
+    if (loading) {
+      return (
+        <div className="grid flex-1 place-items-center text-sm text-slate-500 dark:text-muted">
+          Cargando panel…
+        </div>
+      );
+    }
     return (
       <div className="mx-auto max-w-2xl py-10">
         <p className="font-mono text-[12px] tracking-[0.18em] text-accent">ACCESOPRO</p>
         <h1 className="mt-3 text-3xl font-semibold tracking-tight">Plataforma</h1>
-        <p className="mt-3 text-muted">Elegí un barrio arriba para ver el panel operativo.</p>
+        <p className="mt-3 text-muted">
+          {dashError
+            ? dashError
+            : tenants.length
+              ? "Elegí un barrio para ver el panel operativo."
+              : "No hay barrios cargados. Revisá que la API esté en línea."}
+        </p>
+        {tenants.length > 0 ? (
+          <label className="mt-6 block text-sm">
+            <span className="mb-1.5 block text-slate-500 dark:text-muted">Barrio</span>
+            <select
+              className="w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-slate-800 dark:border-line dark:bg-panel dark:text-slate-200"
+              defaultValue=""
+              onChange={(e) => {
+                if (e.target.value) setTenant(e.target.value);
+              }}
+              aria-label="Barrio"
+            >
+              <option value="" disabled>
+                Seleccionar…
+              </option>
+              {tenants.map((t) => (
+                <option key={t.id} value={t.id}>
+                  {t.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        ) : null}
         <Link href="/dashboard/modulos" className="btn-primary mt-6 inline-flex">
           Planes y módulos
         </Link>

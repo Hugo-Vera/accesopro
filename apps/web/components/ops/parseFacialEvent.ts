@@ -1,4 +1,5 @@
 import type { FacialEventAlert } from "@/components/LiveFacialAlertToast";
+import { apiUrl } from "@/lib/api";
 
 export type EventRow = {
   id: string;
@@ -68,5 +69,5 @@ export function snapshotProxyUrl(deviceId: string, snapshotUrl?: string, tenantI
   if (failedSnapshots.has(snapshotKey(deviceId, url))) return null;
   const qs = new URLSearchParams({ url });
   if (tenantId) qs.set("tenantId", tenantId);
-  return `/api/dahua/${deviceId}/record-snapshot?${qs.toString()}`;
+  return apiUrl(`/api/dahua/${deviceId}/record-snapshot?${qs.toString()}`);
 }

@@ -2,7 +2,7 @@
 
 import { FormEvent, useEffect, useRef, useState, type ReactNode, type SVGProps } from "react";
 import QRCode from "qrcode";
-import { api, withTenant } from "@/lib/api";
+import { api, apiUrl, withTenant } from "@/lib/api";
 import { useDash } from "@/components/DashboardProvider";
 import { useToast } from "@/components/Toast";
 import { useTheme } from "@/components/ThemeProvider";
@@ -293,7 +293,7 @@ function CreatePersonModal({
     setCapturingDahua(true);
     setError(null);
     try {
-      const res = await fetch(t(`/api/dahua/${deviceId}/snapshot`), {
+      const res = await fetch(apiUrl(t(`/api/dahua/${deviceId}/snapshot`)), {
         headers: { "Cache-Control": "no-cache" },
       });
       if (!res.ok) {
@@ -938,7 +938,7 @@ function EditPersonModal({
     setCapturingDahua(true);
     setError(null);
     try {
-      const res = await fetch(t(`/api/dahua/${deviceId}/snapshot`), {
+      const res = await fetch(apiUrl(t(`/api/dahua/${deviceId}/snapshot`)), {
         headers: { "Cache-Control": "no-cache" },
       });
       if (!res.ok) throw new Error(`Error del equipo Dahua (${res.status})`);

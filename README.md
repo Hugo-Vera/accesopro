@@ -2,7 +2,7 @@
 
 Acceso y seguridad para barrios cerrados (Argentina). Módulos tildables: relés con nombre, facial Dahua, QR de visitas, ALPR, pánico y supervisión de fuego sobre el plano del predio.
 
-Documentación: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) · [`docs/MODULES.md`](docs/MODULES.md)
+Documentación: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) · [`docs/MODULES.md`](docs/MODULES.md) · [`docs/DATABASE.md`](docs/DATABASE.md) · [`docs/sql/`](docs/sql/README.md)
 
 ## Instalación en 1 comando (Ubuntu + Docker)
 
@@ -47,6 +47,17 @@ AccesoPro/
 ```
 
 ## Arranque local
+
+### Con Laragon (Nginx :8084)
+
+Laragon solo sirve PHP/archivos. AccesoPro es Node: hay que levantar API + Next.
+
+```powershell
+# Nginx en verde en Laragon, después:
+powershell -ExecutionPolicy Bypass -File scripts\start-laragon.ps1
+```
+
+Abrí **http://localhost:8084/accesopro**. En esta PC el :3000 es GenieACS; el dashboard AccesoPro queda en :3080. Detalle: [`docs/LARAGON.md`](docs/LARAGON.md).
 
 ### Con XAMPP (Apache, sin Docker)
 
