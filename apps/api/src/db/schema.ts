@@ -122,6 +122,10 @@ export const dahuaDevices = sqliteTable("dahua_devices", {
   rtspUrl: text("rtsp_url"),
   host: text("host").notNull(),
   port: integer("port").notNull().default(80),
+  /** Puerto RTSP público (554 de fábrica; en NAT el desvío, ej. 8554). */
+  rtspPort: integer("rtsp_port").notNull().default(554),
+  /** Puerto SmartPSS / SDK (37777 de fábrica; en NAT el desvío). */
+  pssPort: integer("pss_port").notNull().default(37777),
   username: text("username").notNull(),
   password: text("password").notNull(),
   /** in | out — carril de portería. Sin both: un ASI por sentido. */

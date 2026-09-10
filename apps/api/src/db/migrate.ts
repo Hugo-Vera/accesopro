@@ -125,6 +125,8 @@ export async function ensureSchema() {
   await addColumn("dahua_devices", "last_status", "TEXT NOT NULL DEFAULT 'unknown'");
   await addColumn("dahua_devices", "last_seen_at", "INTEGER");
   await addColumn("dahua_devices", "rtsp_url", "TEXT");
+  await addColumn("dahua_devices", "rtsp_port", "INTEGER NOT NULL DEFAULT 554");
+  await addColumn("dahua_devices", "pss_port", "INTEGER NOT NULL DEFAULT 37777");
   const addedSentido = await addColumn("dahua_devices", "sentido", "TEXT NOT NULL DEFAULT 'in'");
   await addColumn("dahua_devices", "use_live", "INTEGER NOT NULL DEFAULT 1");
   await addColumn("dahua_devices", "use_local_relay", "INTEGER NOT NULL DEFAULT 1");

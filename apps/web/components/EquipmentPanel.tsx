@@ -48,6 +48,8 @@ type Device = {
   lastStatus?: "online" | "offline" | "unknown";
   lastSeenAt?: string | null;
   rtspUrl?: string | null;
+  rtspPort?: number | null;
+  pssPort?: number | null;
   sentido?: "in" | "out" | string | null;
   laneSector?: "vehicular" | "peatonal" | string | null;
   useLive?: boolean;
@@ -76,6 +78,7 @@ type FormState = {
   // Campos específicos Cámara IP
   cameraBrand: CameraBrand;
   rtspPort: string;
+  pssPort: string;
   rtspChannel: string;
   rtspSubtype: string;
   rtspUrl: string;
@@ -132,12 +135,35 @@ function buildRtspUrl(
   const h = host.trim() || "192.168.1.100";
   const p = rtspPort.trim() || "554";
   const u = user.trim() || "admin";
-  const pw = pass ? encodeURIComponent(pass) : "clave";
+  const pw = pass ? encodeURIComponent(pass) : "clave"; // placeholder solo si no hay clave cargada
   if (brand === "hikvision") {
     const code = hikvisionStreamCode(channel, subtype);
     return `rtsp://${u}:${pw}@${h}:${p}/Streaming/Channels/${code}`;
   }
   return `rtsp://${u}:${pw}@${h}:${p}/cam/realmonitor?channel=${channel}&subtype=${subtype}`;
+}
+
+function parseRtspPortFromUrl(url?: string | null): string {
+  if (!url) return "554";
+  try {
+    const parsed = new URL(url);
+    return parsed.port || "554";
+  } catch {
+    const m = url.match(/:(\d+)\//);
+    return m?.[1] || "554";
+  }
+}
+
+function withKeptRtspPassword(url: string, previous?: string | null) {
+  if (!url || !url.includes(":clave@") || !previous) return url;
+  try {
+    const next = new URL(url);
+    const old = new URL(previous);
+    if (old.password) next.password = old.password;
+    return next.toString();
+  } catch {
+    return url;
+  }
 }
 
 const emptyForm = (): FormState => ({
@@ -152,6 +178,7 @@ const emptyForm = (): FormState => ({
   password: "",
   cameraBrand: "dahua",
   rtspPort: "554",
+  pssPort: "37777",
   rtspChannel: "1",
   rtspSubtype: "0",
   rtspUrl: "",
@@ -253,10 +280,15 @@ export function EquipmentPanel() {
       username: d.username,
       password: "",
       cameraBrand: brand,
-      rtspPort: "554",
+      rtspPort: String(d.rtspPort || parseRtspPortFromUrl(d.rtspUrl) || 554),
+      pssPort: String(d.pssPort || 37777),
       rtspChannel: hik?.channel ?? "1",
       rtspSubtype: hik?.subtype ?? "0",
-      rtspUrl: d.rtspUrl || (dt === "camera_ip" ? buildRtspUrl(d.username, "", d.host, "554", "1", "0", brand) : ""),
+      rtspUrl:
+        d.rtspUrl ||
+        (dt === "camera_ip"
+          ? buildRtspUrl(d.username, "", d.host, String(d.rtspPort || 554), "1", "0", brand)
+          : ""),
       customRtsp: Boolean(d.rtspUrl && !isGeneratedRtsp(d.rtspUrl)),
       linkActuatorForAlpr: Boolean(act),
       actuatorName: act?.name ?? (dt === "camera_ip" ? "Barrera Entrada" : d.name),
@@ -407,13 +439,35 @@ export function EquipmentPanel() {
     setMsg(null);
     try {
       const isCam = form.deviceType === "camera_ip";
+      const rtspPort = Number(form.rtspPort) || 554;
+      const pssPort = Number(form.pssPort) || 37777;
+      const builtRtsp = withKeptRtspPassword(
+        isCam
+          ? form.rtspUrl.trim()
+          : form.customRtsp && form.rtspUrl.trim()
+            ? form.rtspUrl.trim()
+            : form.host.trim()
+              ? buildRtspUrl(
+                  form.username,
+                  form.password,
+                  form.host,
+                  String(rtspPort),
+                  form.rtspChannel || "1",
+                  form.rtspSubtype || "1",
+                  "dahua",
+                )
+              : "",
+        editingDevice?.rtspUrl,
+      );
       const payload = {
         name: form.name.trim(),
         deviceType: form.deviceType,
         model: form.model.trim() || null,
         serialNumber: form.serialNumber.trim() || null,
         location: form.location.trim() || null,
-        rtspUrl: isCam ? form.rtspUrl.trim() || null : null,
+        rtspUrl: builtRtsp || null,
+        rtspPort,
+        pssPort,
         host: form.host.trim(),
         port: Number(form.port) || 80,
         username: form.username.trim(),
@@ -699,6 +753,9 @@ export function EquipmentPanel() {
                         <div className="mt-1 flex flex-wrap items-center gap-1.5">
                           <span className="font-mono text-xs text-slate-500 dark:text-slate-400 font-semibold">
                             {d.host}:{d.port}
+                          </span>
+                          <span className="text-[10px] font-medium text-slate-400 dark:text-slate-500">
+                            HTTP {d.port} · RTSP {d.rtspPort || 554} · PSS {d.pssPort || 37777}
                           </span>
                           {d.model && (
                             <span className="rounded bg-slate-100 dark:bg-slate-800 px-1.5 py-0.5 text-[10px] font-mono font-medium text-slate-600 dark:text-slate-300">
@@ -1013,17 +1070,81 @@ export function EquipmentPanel() {
                   {/* Puerto HTTP */}
                   <div>
                     <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                      Puerto HTTP (Web/API) *
+                      Puerto HTTP / CGI *
                     </label>
                     <input
                       type="number"
                       required
+                      min={1}
+                      max={65535}
                       placeholder="80"
                       value={form.port}
                       onChange={(e) => setForm({ ...form, port: e.target.value })}
                       className="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#0b0f17] px-3.5 py-2 text-sm text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-600 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono"
                     />
+                    <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
+                      Web del ASI. Si hay desvío, el puerto público (no 80).
+                    </p>
                   </div>
+
+                  {form.deviceType !== "camera_ip" ? (
+                    <div className="sm:col-span-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50/70 dark:bg-slate-800/30 p-3.5 space-y-3">
+                      <p className="text-xs font-semibold text-slate-700 dark:text-slate-200">
+                        Puertos RTSP y SmartPSS (desvío / NAT)
+                      </p>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                        AccesoPro habla CGI por el puerto HTTP. Completá RTSP y SmartPSS con los puertos
+                        públicos si el router los desvía (fábrica 554 y 37777).
+                      </p>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
+                            Puerto RTSP
+                          </label>
+                          <input
+                            type="number"
+                            min={1}
+                            max={65535}
+                            placeholder="554"
+                            value={form.rtspPort}
+                            onChange={(e) =>
+                              setForm({
+                                ...form,
+                                rtspPort: e.target.value,
+                                customRtsp: false,
+                                rtspUrl: form.host.trim()
+                                  ? buildRtspUrl(
+                                      form.username,
+                                      form.password,
+                                      form.host,
+                                      e.target.value || "554",
+                                      form.rtspChannel || "1",
+                                      form.rtspSubtype || "1",
+                                      "dahua",
+                                    )
+                                  : form.rtspUrl,
+                              })
+                            }
+                            className="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#0b0f17] px-2.5 py-1.5 text-xs font-mono text-slate-900 dark:text-white"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-[11px] font-semibold text-slate-600 dark:text-slate-400 mb-1">
+                            Puerto SmartPSS
+                          </label>
+                          <input
+                            type="number"
+                            min={1}
+                            max={65535}
+                            placeholder="37777"
+                            value={form.pssPort}
+                            onChange={(e) => setForm({ ...form, pssPort: e.target.value })}
+                            className="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#0b0f17] px-2.5 py-1.5 text-xs font-mono text-slate-900 dark:text-white"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  ) : null}
 
                   {/* Usuario */}
                   <div>

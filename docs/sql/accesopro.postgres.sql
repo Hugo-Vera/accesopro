@@ -85,6 +85,8 @@ CREATE TABLE IF NOT EXISTS dahua_devices (
   name TEXT NOT NULL,
   host TEXT NOT NULL,
   port INTEGER NOT NULL DEFAULT 80,
+  rtsp_port INTEGER NOT NULL DEFAULT 554,
+  pss_port INTEGER NOT NULL DEFAULT 37777,
   username TEXT NOT NULL,
   password TEXT NOT NULL,
   device_type TEXT NOT NULL DEFAULT 'asi_facial',

@@ -14,6 +14,12 @@ import { engineDetections, engineGet, engineHealth, engineOps, enginePost, engin
 
 export { fireActuator } from "./actuatorExec.js";
 
+function parseServicePort(value: unknown, fallback: number): number {
+  const n = Number(value);
+  if (!Number.isFinite(n) || n < 1 || n > 65535) return fallback;
+  return Math.trunc(n);
+}
+
 type Env = { Variables: { user: AuthUser } };
 
 /** Base del site-agent. En Ubuntu (agent host network) debe ser host.docker.internal:8790. */
@@ -275,6 +281,8 @@ hardware.post("/dahua", async (c) => {
     serialNumber?: string;
     location?: string;
     rtspUrl?: string;
+    rtspPort?: number;
+    pssPort?: number;
     sentido?: string;
     laneSector?: string;
     useLive?: boolean;
@@ -290,6 +298,8 @@ hardware.post("/dahua", async (c) => {
   const laneSector = parseDeviceLaneSector(body.laneSector);
   const useLive = body.useLive !== false;
   const useLocalRelay = deviceType === "camera_ip" ? false : body.useLocalRelay !== false;
+  const rtspPort = parseServicePort(body.rtspPort, 554);
+  const pssPort = parseServicePort(body.pssPort, 37777);
   await db.insert(dahuaDevices).values({
     id: deviceId,
     siteId: scoped.site.id,
@@ -301,7 +311,9 @@ hardware.post("/dahua", async (c) => {
     rtspUrl: body.rtspUrl?.trim() || null,
     lastStatus: "unknown",
     host: body.host.trim(),
-    port: body.port ?? 80,
+    port: parseServicePort(body.port, 80),
+    rtspPort,
+    pssPort,
     username: body.username.trim(),
     password: body.password,
     sentido,
@@ -392,6 +404,8 @@ hardware.patch("/dahua/:id", async (c) => {
     serialNumber?: string;
     location?: string;
     rtspUrl?: string;
+    rtspPort?: number;
+    pssPort?: number;
     sentido?: string;
     laneSector?: string;
     useLive?: boolean;
@@ -400,7 +414,7 @@ hardware.patch("/dahua/:id", async (c) => {
   const next: Record<string, unknown> = {
     name: body.name?.trim() || row.name,
     host: body.host?.trim() || row.host,
-    port: body.port ?? row.port,
+    port: body.port !== undefined ? parseServicePort(body.port, row.port) : row.port,
     username: body.username?.trim() || row.username,
     password: body.password?.trim() ? body.password : row.password,
   };
@@ -409,6 +423,8 @@ hardware.patch("/dahua/:id", async (c) => {
   if (body.serialNumber !== undefined) next.serialNumber = body.serialNumber?.trim() || null;
   if (body.location !== undefined) next.location = body.location?.trim() || null;
   if (body.rtspUrl !== undefined) next.rtspUrl = body.rtspUrl?.trim() || null;
+  if (body.rtspPort !== undefined) next.rtspPort = parseServicePort(body.rtspPort, row.rtspPort ?? 554);
+  if (body.pssPort !== undefined) next.pssPort = parseServicePort(body.pssPort, row.pssPort ?? 37777);
   const deviceType = String(body.deviceType ?? row.deviceType ?? "asi_facial");
   const sentido = body.sentido !== undefined ? parseDeviceSentido(body.sentido) : parseDeviceSentido(row.sentido);
   next.sentido = sentido;

@@ -23,7 +23,20 @@ _stop = threading.Event()
 _config: dict[str, Any] = {"dahua": [], "actuators": [], "cameras": [], "plates": []}
 
 
-_http = httpx.Client(timeout=httpx.Timeout(20.0, connect=5.0), headers=HEADERS)
+def _new_http() -> httpx.Client:
+    return httpx.Client(timeout=httpx.Timeout(20.0, connect=5.0), headers=HEADERS)
+
+
+_http = _new_http()
+
+
+def _reset_http() -> None:
+    global _http
+    try:
+        _http.close()
+    except Exception:
+        pass
+    _http = _new_http()
 
 
 def api_get(path: str) -> dict[str, Any]:
@@ -601,6 +614,7 @@ def _heartbeat_worker() -> None:
                     _last_config_at = now
         except Exception as exc:  # noqa: BLE001
             print(f"Heartbeat worker: {exc}")
+            _reset_http()
         time.sleep(4.0)
 
 
@@ -613,7 +627,7 @@ def _dahua_stream_one(dev_id: str) -> None:
             continue
         try:
             _stream_error.pop(dev_id, None)
-            print(f"Stream attach → {dev.get('name')} {dev.get('host')}")
+            print(f"Stream attach -> {dev.get('name')} {dev.get('host')}")
             n = 0
             for event in _client(dev).stream_events():
                 _stream_live[dev_id] = True
@@ -823,9 +837,7 @@ def dahua_live(
 
     def gen():
         try:
-            # Pantalla ASI: forzar 272×480 (como el display del lector) para no aplastar el live
-            force = (272, 480) if sub == 2 else None
-            yield from iter_mjpeg(dev, channel=ch, subtype=sub, force_size=force)
+            yield from iter_mjpeg(dev, channel=ch, subtype=sub)
         except Exception as exc:  # noqa: BLE001
             # Un frame JPEG de error no rompe el multipart; el cliente reintenta.
             print(f"Live RTSP error: {exc}")

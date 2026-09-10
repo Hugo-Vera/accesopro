@@ -72,7 +72,7 @@ Fuente viva de columnas: `apps/api/src/db/schema.ts` + `migrate.ts`.
 | Tabla | Columnas clave |
 |-------|----------------|
 | `sites` | `id`, `tenant_id`, `name`, `agent_token`, `last_seen_at` |
-| `dahua_devices` | `host`, `port`, `username`, `password`, `device_type` (`asi_facial` / `camera_ip` / …), `sentido` (`in`/`out`), `lane_sector` (`vehicular`/`peatonal`), `use_live`, `use_local_relay` |
+| `dahua_devices` | `host`, `port` (HTTP/CGI), `rtsp_port`, `pss_port` (SmartPSS 37777), `username`, `password`, `device_type` (`asi_facial` / `camera_ip` / …), `sentido` (`in`/`out`), `lane_sector` (`vehicular`/`peatonal`), `use_live`, `use_local_relay` |
 | `actuators` | `name`, `kind`, `driver` (`dahua` / `http` / `engine`), `dahua_device_id`, `dahua_channel`, `pulse_ms`, `trigger_alpr`/`dahua`/`qr`/`manual` |
 | `cameras` | `rtsp_url`, `actuator_id` (legacy), `enabled` |
 | `access_points` | `sector` (`vehicular`\|`peatonal`\|`servicio`), `sentido` (`in`\|`out`\|`both`), `map_x`/`map_y` |
