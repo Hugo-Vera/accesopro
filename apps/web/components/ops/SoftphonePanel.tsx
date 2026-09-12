@@ -22,10 +22,9 @@ export function SoftphonePanel({ tenantName }: { tenantName: string | null }) {
         aria-live="polite"
       >
         <p className="ops-brand text-[12px]">AccesoPhone</p>
-        <p className="mt-2 text-[13px] font-semibold text-slate-800 dark:text-white">Próximamente</p>
-        <p className="mt-1 max-w-[220px] text-[11px] text-slate-600 dark:text-[#8fa7b8]">
-          Telefonía SIP / FreePBX local todavía no está integrada. Los botones de emergencia no
-          simulan llamadas.
+        <p className="mt-2 text-[13px] font-semibold text-slate-800 dark:text-white">FreePBX en la LAN</p>
+        <p className="mt-1 max-w-[240px] text-[11px] text-slate-600 dark:text-[#8fa7b8]">
+          El audio queda en el barrio. Activá el pack Intercom y seguí docs/INTERCOM.md (Asterisk local, no en la nube AccesoPro).
         </p>
       </div>
 

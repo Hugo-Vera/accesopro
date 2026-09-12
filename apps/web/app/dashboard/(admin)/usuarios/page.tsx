@@ -4,6 +4,7 @@ import { FormEvent, useCallback, useEffect, useState } from "react";
 import { api, withTenant } from "@/lib/api";
 import { useDash } from "@/components/DashboardProvider";
 import { CapabilityGate, PageHeader } from "@/components/PageHeader";
+import { useEscapeKey } from "@/hooks/useEscapeKey";
 import { Users, UserPlus, Shield, X, CheckCircle2, RotateCcw, Key } from "lucide-react";
 
 type CapDef = { key: string; group: string; name: string; summary: string };
@@ -34,6 +35,7 @@ export default function UsuariosPage() {
   const [msg, setMsg] = useState<string | null>(null);
   const [showModal, setShowModal] = useState(false);
   const [busy, setBusy] = useState(false);
+  useEscapeKey(() => setShowModal(false), showModal);
   const [form, setForm] = useState({
     name: "",
     email: "",

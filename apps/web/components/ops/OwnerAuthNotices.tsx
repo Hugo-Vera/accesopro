@@ -69,6 +69,19 @@ function statusLabel(p: OwnerPassNotice) {
   return p.status;
 }
 
+function LiveDwell({ inAt }: { inAt: string | number }) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 30000);
+    return () => clearInterval(id);
+  }, []);
+  const start = new Date(inAt).getTime();
+  if (!Number.isFinite(start)) return null;
+  const label = formatStay(now - start);
+  if (!label) return null;
+  return <p className="mt-0.5 text-[9.5px] font-semibold text-sky-700 dark:text-sky-300">En predio {label}</p>;
+}
+
 function NoticeCard({ p }: { p: OwnerPassNotice }) {
   const tone = statusTone(p.status);
   const stay = formatStay(p.stayMs ?? stayFromRange(p.scannedInAt, p.scannedOutAt));
@@ -92,7 +105,10 @@ function NoticeCard({ p }: { p: OwnerPassNotice }) {
             </p>
           ) : null}
           {p.scannedInAt && !p.scannedOutAt ? (
-            <p className="mt-0.5 text-[9.5px] text-slate-500">Ingreso {timeLabel(p.scannedInAt)}</p>
+            <>
+              <p className="mt-0.5 text-[9.5px] text-slate-500">Ingreso {timeLabel(p.scannedInAt)}</p>
+              <LiveDwell inAt={p.scannedInAt} />
+            </>
           ) : null}
           {stay ? (
             <p className="mt-0.5 text-[9.5px] font-semibold text-slate-600 dark:text-slate-300">

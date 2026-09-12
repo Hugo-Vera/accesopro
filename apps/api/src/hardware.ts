@@ -9,7 +9,7 @@ import { processEngineAccessEvents } from "./engineBridge.js";
 import { agentOnline, nid, normalizePlate, scopedSite, scopedSiteWithModule } from "./scope.js";
 import { parseDeviceLaneSector, parseDeviceSentido, syncDeviceLaneWiring } from "./accessPoints.js";
 import { denyUnlessCapability } from "./grants.js";
-import { tenantFeatureEnabled } from "./features.js";
+import { tenantFeatureEnabled, assertFeature } from "./features.js";
 import { engineDetections, engineGet, engineHealth, engineOps, enginePost, enginePut, engineRelay, maskSecrets, safeMediaPath, siteFetch } from "./siteEngine.js";
 
 export { fireActuator } from "./actuatorExec.js";
@@ -631,6 +631,8 @@ hardware.post("/dahua/:id/test", async (c) => {
 });
 
 hardware.get("/dahua/:id/access-records", async (c) => {
+  const denied = await denyUnlessCapability(c.get("user"), "dahua.events");
+  if (denied) return denied;
   const scoped = await scopedSiteWithModule(c, "dahua_access");
   if ("error" in scoped) return scoped.error;
   const id = c.req.param("id");
@@ -966,8 +968,12 @@ hardware.delete("/dahua/:id/persons/:userId", async (c) => {
 });
 
 hardware.get("/dahua/:id/qr-config", async (c) => {
+  const denied = await denyUnlessCapability(c.get("user"), "dahua.qr");
+  if (denied) return denied;
   const scoped = await scopedSiteWithModule(c, "dahua_access");
   if ("error" in scoped) return scoped.error;
+  const feat = await assertFeature(scoped.site.tenantId, "dahua.qr");
+  if (feat) return c.json({ error: feat }, 403);
   const id = c.req.param("id");
   const agentBase = agentBaseUrl();
   const agentToken = process.env.SITE_AGENT_TOKEN ?? "accesopro-demo-agent";
@@ -985,8 +991,12 @@ hardware.get("/dahua/:id/qr-config", async (c) => {
 });
 
 hardware.post("/dahua/:id/qr-config", async (c) => {
+  const denied = await denyUnlessCapability(c.get("user"), "dahua.qr");
+  if (denied) return denied;
   const scoped = await scopedSiteWithModule(c, "dahua_access");
   if ("error" in scoped) return scoped.error;
+  const feat = await assertFeature(scoped.site.tenantId, "dahua.qr");
+  if (feat) return c.json({ error: feat }, 403);
   const id = c.req.param("id");
   const body = await c.req.json<{ transmissionEnable?: boolean; validTime?: number }>();
   const agentBase = agentBaseUrl();
@@ -1011,7 +1021,12 @@ hardware.post("/dahua/:id/qr-config", async (c) => {
 });
 
 hardware.get("/dahua/:id/schedules", async (c) => {
+  const denied = await denyUnlessCapability(c.get("user"), "dahua.schedules");
+  if (denied) return denied;
   const scoped = await scopedSiteWithModule(c, "dahua_access");
+  if ("error" in scoped) return scoped.error;
+  const feat = await assertFeature(scoped.site.tenantId, "dahua.schedules");
+  if (feat) return c.json({ error: feat }, 403);
   if ("error" in scoped) return scoped.error;
   const id = c.req.param("id");
   const count = Number(c.req.query("count")) || 16;
@@ -1031,7 +1046,12 @@ hardware.get("/dahua/:id/schedules", async (c) => {
 });
 
 hardware.post("/dahua/:id/schedules", async (c) => {
+  const denied = await denyUnlessCapability(c.get("user"), "dahua.schedules");
+  if (denied) return denied;
   const scoped = await scopedSiteWithModule(c, "dahua_access");
+  if ("error" in scoped) return scoped.error;
+  const feat = await assertFeature(scoped.site.tenantId, "dahua.schedules");
+  if (feat) return c.json({ error: feat }, 403);
   if ("error" in scoped) return scoped.error;
   const id = c.req.param("id");
   const body = await c.req.json<{ index: number; enabled?: boolean; days: string[][] }>();
@@ -1340,7 +1360,7 @@ hardware.get("/events", async (c) => {
   if ("error" in scoped) return scoped.error;
   const type = c.req.query("type");
   const rawLimit = Number(c.req.query("limit") || 24);
-  const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(Math.trunc(rawLimit), 1), 80) : 24;
+  const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(Math.trunc(rawLimit), 1), 200) : 24;
   const rows = type
     ? await db
         .select()

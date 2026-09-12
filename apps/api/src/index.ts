@@ -3,7 +3,7 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { getCookie } from "hono/cookie";
 import bcrypt from "bcryptjs";
-import { eq, and } from "drizzle-orm";
+import { eq, and, gte, sql } from "drizzle-orm";
 import { FEATURE_PACK_CATALOG, MODULE_CATALOG, PLAN_CATALOG, isModuleKey, planIncludesModule, type ModuleKey } from "@accesopro/catalog";
 import {
   COOKIE,
@@ -18,11 +18,13 @@ import {
 import { agentRoutes } from "./agent.js";
 import { startEngineBridgePoller } from "./engineBridge.js";
 import { db } from "./db/client.js";
-import { properties, sites, tenantModules, tenants, users, visitPasses } from "./db/schema.js";
+import { properties, sites, tenantModules, tenants, users, visitPasses, events } from "./db/schema.js";
 import { scanVisitPass, parseVisitQrPayload } from "./visitPass.js";
 import { accessPointsApi } from "./accessPoints.js";
 import { hardware } from "./hardware.js";
 import { residents } from "./residents.js";
+import { alarmsApi } from "./alarms.js";
+import { dniEnrollApi } from "./dniEnroll.js";
 import { attendanceApi } from "./attendance.js";
 import { visitorsApi } from "./visitors.js";
 import { eventStreamRoutes } from "./eventStream.js";
@@ -327,6 +329,8 @@ app.route("/api", systemApi);
 app.route("/api/residents", residents);
 app.route("/api", attendanceApi);
 app.route("/api", visitorsApi);
+app.route("/api", alarmsApi);
+app.route("/api", dniEnrollApi);
 app.route("/agent", agentRoutes);
 
 app.get("/api/dashboard", async (c) => {
@@ -345,15 +349,41 @@ app.get("/api/dashboard", async (c) => {
   const enabled = MODULE_CATALOG.filter(
     (m) => m.alwaysOn || rows.some((r) => r.moduleKey === m.key && r.enabled),
   );
+  const site = await db.select().from(sites).where(eq(sites.tenantId, tenantId)).get();
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  const today = site
+    ? await db
+        .select({ n: sql<number>`count(*)` })
+        .from(events)
+        .where(and(eq(events.siteId, site.id), gte(events.createdAt, start)))
+        .get()
+    : { n: 0 };
+  const openAlarms = site
+    ? await db
+        .select()
+        .from(events)
+        .where(and(eq(events.siteId, site.id), eq(events.type, "panic_sos")))
+        .limit(40)
+    : [];
+  const openCount = openAlarms.filter((row) => {
+    try {
+      const p = JSON.parse(row.payload) as { status?: string };
+      return p.status === "open" || p.status === "acked";
+    } catch {
+      return true;
+    }
+  }).length;
+  const userCount = await db.select({ n: sql<number>`count(*)` }).from(users).where(eq(users.tenantId, tenantId)).get();
   return c.json({
     mode: "tenant",
     tenant,
     enabledModules: enabled,
     kpis: {
-      sites: 1,
-      users: 2,
-      eventsToday: 0,
-      openAlarms: 0,
+      sites: site ? 1 : 0,
+      users: Number(userCount?.n ?? 0),
+      eventsToday: Number(today?.n ?? 0),
+      openAlarms: openCount,
     },
   });
 });

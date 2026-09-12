@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { api, withTenant } from "@/lib/api";
 import { useDash } from "@/components/DashboardProvider";
+import { useEscapeKey } from "@/hooks/useEscapeKey";
 import { Plus, X, Settings2, Power, DoorClosed, Trash2 } from "lucide-react";
 
 type Actuator = {
@@ -47,6 +48,8 @@ export function ActuatorsPanel() {
   const [showModal, setShowModal] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm);
+
+  useEscapeKey(() => setShowModal(false), showModal);
 
   const t = (path: string) => withTenant(path, tenantId);
 

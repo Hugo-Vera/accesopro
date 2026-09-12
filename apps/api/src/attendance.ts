@@ -209,6 +209,8 @@ attendanceApi.post("/attendance/manual", async (c) => {
     id,
     siteId: scoped.site.id,
     type: "manual_attendance",
+    sentido: direction,
+    laneCode: direction === "out" ? 2 : 1,
     payload: JSON.stringify({
       personName: body.personName.trim(),
       personId: (body.personId || "").trim() || "—",

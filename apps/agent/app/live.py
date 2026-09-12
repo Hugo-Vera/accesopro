@@ -257,3 +257,94 @@ def iter_mjpeg(
         force_size=force_size,
         target_fps=snap_fps,
     )
+
+
+class _LiveHub:
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.cv = threading.Condition(self.lock)
+        self.jpeg: bytes | None = None
+        self.users = 0
+        self.stop = threading.Event()
+        self.thread: threading.Thread | None = None
+
+
+_hubs: dict[str, _LiveHub] = {}
+_hubs_lock = threading.Lock()
+
+
+def iter_mjpeg_shared(
+    dev: dict[str, Any],
+    channel: int = 1,
+    subtype: int = 2,
+    jpeg_quality: int | None = None,
+    max_width: int = 720,
+    force_size: tuple[int, int] | None = None,
+    target_fps: float | None = None,
+) -> Iterator[bytes]:
+    """Un solo RTSP/CGI por equipo: varias pestañas reutilizan el último JPEG."""
+    key = str(dev.get("id") or dev.get("host") or "live")
+    with _hubs_lock:
+        hub = _hubs.get(key)
+        if hub is None:
+            hub = _LiveHub()
+            _hubs[key] = hub
+        hub.users += 1
+        if hub.thread is None or not hub.thread.is_alive():
+            hub.stop.clear()
+            hub.thread = threading.Thread(
+                target=_hub_producer,
+                args=(hub, dev, channel, subtype, jpeg_quality, max_width, force_size, target_fps),
+                daemon=True,
+                name=f"live-hub-{key[:8]}",
+            )
+            hub.thread.start()
+    last: bytes | None = None
+    try:
+        while not hub.stop.is_set():
+            with hub.cv:
+                hub.cv.wait(timeout=1.0)
+                frame = hub.jpeg
+            if frame and frame is not last:
+                last = frame
+                yield _pack_jpeg(frame)
+    finally:
+        with _hubs_lock:
+            hub.users -= 1
+            if hub.users <= 0:
+                hub.stop.set()
+
+
+def _hub_producer(
+    hub: _LiveHub,
+    dev: dict[str, Any],
+    channel: int,
+    subtype: int,
+    jpeg_quality: int | None,
+    max_width: int,
+    force_size: tuple[int, int] | None,
+    target_fps: float | None,
+) -> None:
+    try:
+        for packed in iter_mjpeg(
+            dev,
+            channel=channel,
+            subtype=subtype,
+            jpeg_quality=jpeg_quality,
+            max_width=max_width,
+            force_size=force_size,
+            target_fps=target_fps,
+        ):
+            if hub.stop.is_set() and hub.users <= 0:
+                break
+            raw = packed
+            marker = b"\r\n\r\n"
+            idx = packed.find(marker)
+            if idx >= 0:
+                raw = packed[idx + len(marker) :].rstrip(b"\r\n")
+            with hub.cv:
+                hub.jpeg = raw
+                hub.cv.notify_all()
+    except Exception as exc:  # noqa: BLE001
+        print(f"Live hub producer: {exc}")
+

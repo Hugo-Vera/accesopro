@@ -48,7 +48,7 @@ API: `GET/PATCH /api/tenants/:id/features`. UI: Configuración → Módulos (blo
 - **Nube / AccesoPro:** dashboard Next (`apps/web`), API módulos (`apps/api`), Dahua CGI agent (`apps/agent`).
 - Eventos faciales: sync incremental ASI → SQLite (`GET /agent/sync-state` + stream; sin dump del historial del lector al arrancar). Live/toast: `docs/PLAN_PORTERIA.md`.
 - **LAN / AccesoSeguro:** `apps/site` — FastALPR, evidencias, QR DNI, barreras. Corre en :5051. No mezclar ese HTML con el dashboard AccesoPro.
-- RTSP y claves de equipos no salen de la LAN ni van a git (`apps/site/config.yaml` está ignorado).
+- RTSP y claves de equipos no van a git (`apps/site/config.yaml` está ignorado). En este predio hay NAT WAN de prueba al ASI (HTTP/SDK/RTSP TCP): **`docs/SITE_RB4011.md`** (sección 0, a mano).
 
 ## Catálogo de módulos
 
@@ -58,7 +58,7 @@ Actuador = relé con **nombre libre** (Barrera entrada, Portón cochera, Puerta 
 
 **Puntos de acceso** (`access_points`): topología del predio (sector vehicular/peatonal/servicio + sentido in/out/both). No es un módulo comercial: solo agrupa cableados.
 
-**Live portería:** dos consolas **Ingreso** | **Salida** (live + actuadores cableados a ese sentido + historial del lector). Carril en eventos: `lane_code` **1** = entrada, **2** = salida (se sella al ingest). El 2º ASI de salida habilita medir permanencia de visitas; propietarios/permanentes no llevan control de tiempo. Softphone SIP queda pendiente (FreePBX local).
+**Live portería:** dos consolas **Ingreso** | **Salida** (live + actuadores cableados a ese sentido + historial del lector). Carril en eventos: `lane_code` **1** = entrada, **2** = salida (se sella al ingest). Cableado admin: `/dashboard/puntos-acceso`. El 2º ASI de salida habilita medir permanencia de visitas; propietarios/permanentes no llevan control de tiempo. Softphone SIP: pack `dahua.intercom` + `docs/INTERCOM.md` (FreePBX local).
 
 **Cableado** (tablas de vínculo, reutilizables):
 - `access_point_actuators` — qué relé abre ese punto
@@ -73,7 +73,7 @@ Plano del predio = core. Pines arrastrables. Pánico y fuego aparecen cuando el 
 
 Monorepo: `apps/web` (Next.js), `apps/api` (Hono), `apps/agent` (Dahua CGI), `apps/site` (AccesoSeguro / FastALPR). Postgres lo usa el sitio ALPR.
 
-Mapa detallado: `docs/ARCHITECTURE.md`. Estado por módulo: `docs/MODULES.md`. Base de datos: `docs/DATABASE.md`. Pendientes: `docs/PENDING.md`. Inventario + plan punta a punta: `docs/ROADMAP.md`. Ops IN/OUT: `docs/OPS_LANES.md`.
+Mapa detallado: `docs/ARCHITECTURE.md`. Estado por módulo: `docs/MODULES.md`. Base de datos: `docs/DATABASE.md`. Pendientes: `docs/PENDING.md`. Inventario + plan punta a punta: `docs/ROADMAP.md`. Ops IN/OUT: `docs/OPS_LANES.md`. Sitio físico RB4011 + NAT ASI: `docs/SITE_RB4011.md`. Intercom: `docs/INTERCOM.md`. Smoke: `docs/E2E_SMOKE.md`.
 
 ## Convenciones
 

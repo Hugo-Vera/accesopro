@@ -3,6 +3,7 @@
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
+import { useEscapeKey } from "@/hooks/useEscapeKey";
 import {
   User,
   Users,
@@ -26,6 +27,7 @@ import {
   LogOut,
   X,
   ScanFace,
+  Siren,
   AlertTriangle,
 } from "lucide-react";
 
@@ -149,6 +151,14 @@ export function OwnerPortal() {
   const [showFamilyModal, setShowFamilyModal] = useState(false);
   const [showServiceModal, setShowServiceModal] = useState(false);
   const [showVisitModal, setShowVisitModal] = useState(false);
+  const [panicEnabled, setPanicEnabled] = useState(false);
+  const [sosBusy, setSosBusy] = useState(false);
+  const [sosMsg, setSosMsg] = useState<string | null>(null);
+  useEscapeKey(() => {
+    if (showFamilyModal) setShowFamilyModal(false);
+    else if (showServiceModal) setShowServiceModal(false);
+    else if (showVisitModal) setShowVisitModal(false);
+  }, showFamilyModal || showServiceModal || showVisitModal);
 
   const load = useCallback(async () => {
     try {
@@ -158,6 +168,7 @@ export function OwnerPortal() {
         profile: Profile;
         services: Service[];
         familyMembers?: FamilyMember[];
+        panicEnabled?: boolean;
       }>("/api/residents/me");
 
       setUserName(me.profile?.fullName || me.user.name);
@@ -165,6 +176,7 @@ export function OwnerPortal() {
       setProfile(me.profile);
       setServices(me.services);
       setFamily(me.familyMembers || []);
+      setPanicEnabled(Boolean(me.panicEnabled));
 
       const p = await api<{ passes: Pass[] }>("/api/residents/me/visit-passes");
       setPasses(p.passes);
@@ -317,6 +329,33 @@ export function OwnerPortal() {
               <span>Rostro no sincronizado</span>
             </div>
           )}
+
+          {panicEnabled ? (
+            <button
+              type="button"
+              disabled={sosBusy}
+              onClick={async () => {
+                setSosBusy(true);
+                setSosMsg(null);
+                try {
+                  await api("/api/alarms/panic", {
+                    method: "POST",
+                    body: JSON.stringify({ message: "SOS desde portal vecino", source: "portal" }),
+                  });
+                  setSosMsg("SOS enviado a portería");
+                } catch (err) {
+                  setSosMsg(err instanceof Error ? err.message : "No se pudo enviar");
+                } finally {
+                  setSosBusy(false);
+                }
+              }}
+              className="flex items-center gap-1.5 rounded-xl border border-rose-300 bg-rose-50 px-3 py-2 text-xs font-bold text-rose-800 hover:bg-rose-100 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-300"
+            >
+              <Siren className="h-4 w-4" />
+              {sosBusy ? "Enviando…" : "SOS"}
+            </button>
+          ) : null}
+          {sosMsg ? <span className="text-[11px] text-slate-500">{sosMsg}</span> : null}
 
           <button
             type="button"

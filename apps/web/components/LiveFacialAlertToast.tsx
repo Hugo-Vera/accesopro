@@ -89,12 +89,17 @@ export function LiveFacialAlertToast({ alert, onDismiss, onOpenRelay }: Props) {
         hour: "2-digit",
         minute: "2-digit",
         second: "2-digit",
+        hour12: false,
       })
     : "Ahora";
 
   const accent = isApproved ? "#10b981" : "#f43f5e";
   const accentSoft = isApproved ? "#34d399" : "#fb7185";
-  const bg = isApproved ? "#ecfdf5" : "#fff1f2";
+  const isDark =
+    typeof document !== "undefined" && document.documentElement.classList.contains("dark");
+  const bg = isApproved ? (isDark ? "#052e1f" : "#ecfdf5") : isDark ? "#3f1219" : "#fff1f2";
+  const fg = isDark ? "#e2e8f0" : "#0f172a";
+  const muted = isDark ? "#94a3b8" : "#64748b";
 
   const node = (
     <aside
@@ -128,7 +133,7 @@ export function LiveFacialAlertToast({ alert, onDismiss, onOpenRelay }: Props) {
           background: bg,
           boxShadow: "0 20px 50px rgba(0,0,0,0.35)",
           overflow: "hidden",
-          color: "#0f172a",
+          color: fg,
         }}
       >
         <div style={{ height: 4, background: "rgba(0,0,0,0.08)" }}>
@@ -257,17 +262,17 @@ export function LiveFacialAlertToast({ alert, onDismiss, onOpenRelay }: Props) {
                 {shown.method === "facial" ? "Rostro" : shown.method}
               </div>
               {!isApproved ? (
-                <div style={{ marginTop: 6, fontSize: 12, fontWeight: 700, color: "#be123c", lineHeight: 1.35 }}>
+                <div style={{ marginTop: 6, fontSize: 12, fontWeight: 700, color: isDark ? "#fda4af" : "#be123c", lineHeight: 1.35 }}>
                   {shown.reason || "Rostro no registrado"}
                 </div>
               ) : (
-                <div style={{ marginTop: 6, fontSize: 12, fontWeight: 600, color: "#047857" }}>
+                <div style={{ marginTop: 6, fontSize: 12, fontWeight: 600, color: isDark ? "#6ee7b7" : "#047857" }}>
                   Identidad validada
                 </div>
               )}
             </div>
 
-            {!isApproved && onOpenRelay ? (
+            {onOpenRelay ? (
               <button
                 type="button"
                 onClick={() => onOpenRelay(shown.deviceId)}

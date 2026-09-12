@@ -25,7 +25,7 @@ Plataforma modular de acceso y seguridad para barrios cerrados (Argentina).
 | **Agent Dahua** | `apps/agent` | CGI Digest, openDoor, eventos faciales → API |
 | **Motor LAN** | `apps/site` | FastALPR, QR/DNI, barreras IN/OUT (fork AccesoSeguro) |
 | **Reglas Cursor** | `.cursor/rules` | Convenciones del proyecto para el IDE |
-| **Docs** | `docs/` | Arquitectura, estado de módulos, playbooks futuros |
+| **Docs** | `docs/` | Arquitectura, estado de módulos, playbooks. Sitio físico RB4011 + NAT ASI (retome §0): `docs/SITE_RB4011.md` |
 
 ## `apps/web` — dashboard por sectores de UI
 
@@ -34,16 +34,17 @@ Rutas agrupadas con **route groups** de Next.js (los paréntesis no cambian la U
 | Grupo | Ruta | Contenido |
 |-------|------|-----------|
 | `(operacion)` | `/dashboard` | KPIs, barreras, detecciones en vivo |
-| `(operacion)` | `/dashboard/plano` | Croquis del predio (core) |
+| `(operacion)` | `/dashboard/plano` | Croquis con pines de `access_points` |
 | `(operacion)` | `/dashboard/diagnostico` | Triggers, cola de comandos, CGI |
 | `(acceso)` | `/dashboard/alpr` | Detecciones del motor LAN |
 | `(acceso)` | `/dashboard/dahua` | Terminales faciales |
 | `(acceso)` | `/dashboard/actuadores` | Relés con nombre y triggers |
-| `(acceso)` | `/dashboard/visitas` | QR de visitas (stub) |
-| `(acceso)` | `/dashboard/alta-dni` | Enrolamiento DNI (stub) |
-| `(seguridad)` | `/dashboard/panico` | Alarmas SOS (stub) |
-| `(seguridad)` | `/dashboard/fuego` | Supervisión panel (stub) |
-| `(admin)` | `/dashboard/fichadas` | Asistencia Dahua (stub) |
+| `(acceso)` | `/dashboard/puntos-acceso` | Cableado de puntos (lector / relé / cámara) |
+| `(acceso)` | `/dashboard/visitas` | Check-in portería + pases QR |
+| `(acceso)` | `/dashboard/alta-dni` | Enrolamiento DNI portería |
+| `(seguridad)` | `/dashboard/panico` | Cola SOS |
+| `(seguridad)` | `/dashboard/fuego` | Contacto panel (no certificado) |
+| `(admin)` | `/dashboard/fichadas` | Asistencia Dahua |
 | `(admin)` | `/dashboard/modulos` | Config AccesoSeguro + módulos AccesoPro |
 
 Componentes principales: `HomeDashboard` (ops dinámico según packs), `ActuatorsPanel`, `ConfigPage`, `EquipmentPanel`, `DebugPanel`.
@@ -59,6 +60,9 @@ Componentes principales: `HomeDashboard` (ops dinámico según packs), `Actuator
 | `engineBridge.ts` | Poll eventos AccesoSeguro → triggers QR/chapa |
 | `siteEngine.ts` | Cliente HTTP al motor :5051 |
 | `agent.ts` | API del site agent (heartbeat, eventos plate/dahua/qr) |
+| `accessPoints.ts` | Topología + wiring + resolución de relés |
+| `alarms.ts` | SOS pánico y contacto fuego |
+| `dniEnroll.ts` | Alta DNI portería |
 | `scope.ts` | Multi-tenant, módulos habilitados |
 | `seed.ts` | Demo Las Acacias |
 | `db/` | SQLite + Drizzle |

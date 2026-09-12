@@ -9,11 +9,12 @@ import {
   properties,
   propertyFamilyMembers,
   propertyServices,
+  tenantModules,
   users,
   visitAuthorizations,
   visitPasses,
 } from "./db/schema.js";
-import { enqueue } from "./actuatorExec.js";
+import { deletePersonOnSiteDevices, enrollPersonOnSiteDevices } from "./dahuaSite.js";
 import { revokeAuthorizationOnEngine, syncAuthorizationToEngine, syncOwnerDniToEngine } from "./engineSync.js";
 import { nid, normalizePlate, scopedSiteWithModule } from "./scope.js";
 import { makeVisitToken } from "./visitPass.js";
@@ -194,12 +195,18 @@ residents.get("/me", async (c) => {
     .select()
     .from(propertyFamilyMembers)
     .where(and(eq(propertyFamilyMembers.propertyId, ctx.property.id), eq(propertyFamilyMembers.active, true)));
+  const panicRow = await db
+    .select()
+    .from(tenantModules)
+    .where(and(eq(tenantModules.tenantId, scoped.tenantId), eq(tenantModules.moduleKey, "panic")))
+    .get();
   return c.json({
     user: c.get("user"),
     profile: ctx.profile,
     property: ctx.property,
     services,
     familyMembers,
+    panicEnabled: Boolean(panicRow?.enabled),
   });
 });
 
@@ -237,7 +244,7 @@ residents.patch("/me", async (c) => {
   // Si se envió foto facial, la sincronizamos de inmediato con el terminal Dahua ASI
   if (body.photoBase64) {
     try {
-      await enqueue(ctx.property.siteId, "dahua_person_enroll", {
+      await enrollPersonOnSiteDevices(ctx.property.siteId, {
         userId: dahuaUserId,
         name: body.fullName?.trim() || ctx.profile.fullName || c.get("user").name,
         cardNo: body.dni?.trim() || ctx.profile.dni || dahuaUserId,
@@ -266,7 +273,7 @@ residents.post("/me/sync-face", async (c) => {
   }
 
   const dahuaUserId = ctx.profile.dahuaUserId || `u_${ctx.profile.id.slice(-8)}`;
-  await enqueue(ctx.property.siteId, "dahua_person_enroll", {
+  await enrollPersonOnSiteDevices(ctx.property.siteId, {
     userId: dahuaUserId,
     name: ctx.profile.fullName || c.get("user").name,
     cardNo: ctx.profile.dni || dahuaUserId,
@@ -333,7 +340,7 @@ residents.post("/me/family", async (c) => {
   // Si se adjuntó foto facial, la sincronizamos de inmediato al terminal Dahua ASI
   if (body.photoBase64) {
     try {
-      await enqueue(ctx.property.siteId, "dahua_person_enroll", {
+      await enrollPersonOnSiteDevices(ctx.property.siteId, {
         userId: dahuaUserId,
         name,
         cardNo: body.dni?.trim() || dahuaUserId,
@@ -372,7 +379,7 @@ residents.delete("/me/family/:id", async (c) => {
 
   if (row.dahuaUserId) {
     try {
-      await enqueue(ctx.property.siteId, "dahua_person_delete", {
+      await deletePersonOnSiteDevices(ctx.property.siteId, {
         userId: row.dahuaUserId,
       });
     } catch (err) {
@@ -576,7 +583,7 @@ residents.post("/me/visit-passes", async (c) => {
     authorizationId: body.authorizationId || null,
     token,
     dahuaCardNo: token,
-    dahuaSynced: true,
+    dahuaSynced: false,
     guestName,
     guestDni: body.guestDni?.trim() || null,
     patente: body.patente ? normalizePlate(body.patente) : null,
@@ -589,9 +596,10 @@ residents.post("/me/visit-passes", async (c) => {
     createdAt: new Date(),
   });
 
+  let dahuaSynced = false;
   // Sincronización inmediata con el terminal Dahua ASI (el lector valida el QR como CardNo)
   try {
-    await enqueue(ctx.property.siteId, "dahua_person_enroll", {
+    const cmds = await enrollPersonOnSiteDevices(ctx.property.siteId, {
       userId: dahuaUserId,
       name: guestName,
       cardNo: token,
@@ -599,6 +607,10 @@ residents.post("/me/visit-passes", async (c) => {
       validDateEnd: validUntil.toISOString().slice(0, 19).replace("T", " "),
       userType: 1,
     });
+    if (cmds.length) {
+      dahuaSynced = true;
+      await db.update(visitPasses).set({ dahuaSynced: true, dahuaCardNo: token }).where(eq(visitPasses.id, passId));
+    }
   } catch (err) {
     console.error("Error sincronizando pase QR con Dahua:", err);
   }
@@ -609,7 +621,7 @@ residents.post("/me/visit-passes", async (c) => {
     token,
     qrPayload: `ACCESOPRO:V1:${token}`,
     lotNumber: ctx.property.lotNumber,
-    dahuaSynced: true,
+    dahuaSynced,
   });
 });
 
@@ -627,7 +639,7 @@ residents.post("/me/visit-passes/:id/revoke", async (c) => {
 
   // Revocar también del terminal Dahua
   try {
-    await enqueue(ctx.property.siteId, "dahua_person_delete", {
+    await deletePersonOnSiteDevices(ctx.property.siteId, {
       userId: `v_${passId.slice(-8)}`,
     });
   } catch (err) {

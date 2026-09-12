@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { api, apiUrl, withTenant } from "@/lib/api";
 import { useDash } from "@/components/DashboardProvider";
+import { useEscapeKey } from "@/hooks/useEscapeKey";
 
 type Detection = {
   id: number;
@@ -41,6 +42,7 @@ export function AlprPanel({ tenantId }: { tenantId: string }) {
   const [live, setLive] = useState<Live | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [open, setOpen] = useState<Detection | null>(null);
+  useEscapeKey(() => setOpen(null), !!open);
 
   useEffect(() => {
     let cancelled = false;

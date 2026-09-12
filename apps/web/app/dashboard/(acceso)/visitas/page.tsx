@@ -5,6 +5,7 @@ import { api, withTenant } from "@/lib/api";
 import { useDash } from "@/components/DashboardProvider";
 import { ModuleGate, PageHeader } from "@/components/PageHeader";
 import { VisitorCheckinModal } from "@/components/VisitorCheckinModal";
+import { useEscapeKey } from "@/hooks/useEscapeKey";
 import {
   UserPlus,
   Car,
@@ -104,6 +105,10 @@ export default function VisitasPage() {
   const [isCheckinOpen, setIsCheckinOpen] = useState(false);
   const [selectedRecord, setSelectedRecord] = useState<VisitRecordRow | null>(null);
   const [checkoutLoading, setCheckoutLoading] = useState<string | null>(null);
+  useEscapeKey(() => {
+    if (selectedRecord) setSelectedRecord(null);
+    else if (isCheckinOpen) setIsCheckinOpen(false);
+  }, !!selectedRecord || isCheckinOpen);
 
   // Filtros
   const [search, setSearch] = useState("");

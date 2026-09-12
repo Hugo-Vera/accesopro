@@ -573,6 +573,24 @@ export async function syncDeviceLaneWiring(
   }
 }
 
+/** Relés del punto cuyo sentido coincide (QR / botón de portería). */
+export async function actuatorsForSentido(siteId: string, sentido: "in" | "out") {
+  const points = await db.select().from(accessPoints).where(eq(accessPoints.siteId, siteId));
+  const match = points.filter((p) => p.enabled !== false && (p.sentido === sentido || p.sentido === "both"));
+  const acts = await db.select().from(actuators).where(eq(actuators.siteId, siteId));
+  if (match.length > 0) {
+    const actWires = await db.select().from(accessPointActuators);
+    const pointIds = new Set(match.map((p) => p.id));
+    const linkedIds = new Set(
+      actWires.filter((w) => pointIds.has(w.accessPointId)).map((w) => w.actuatorId),
+    );
+    const wired = acts.filter((a) => linkedIds.has(a.id));
+    const qr = wired.filter((a) => a.triggerQr);
+    return qr.length ? qr : wired;
+  }
+  return acts.filter((a) => a.triggerQr && (a.driver !== "engine" || a.engineSentido === sentido));
+}
+
 /** Resuelve actuadores a disparar por equipo Dahua (vía cableado; fallback legacy). */
 export async function actuatorsForDahuaDevice(siteId: string, deviceId: string) {
   const wires = await db

@@ -144,6 +144,7 @@ export const PLAN_CATALOG: PlanDef[] = [
       "dahua.schedules",
       "dahua.evidence",
       "dahua.live",
+      "dahua.intercom",
       "access.visitors.manage",
       "staff.employees",
       "tenant.grants",
@@ -174,8 +175,10 @@ export const PLAN_CATALOG: PlanDef[] = [
       "dahua.schedules",
       "dahua.evidence",
       "dahua.live",
+      "dahua.intercom",
       "access.visitors.manage",
       "access.dni_enroll",
+      "access.attendance",
       "staff.employees",
       "staff.schedules",
       "tenant.grants",
@@ -223,8 +226,10 @@ export type CapabilityKey =
   | "dahua.schedules"
   | "dahua.evidence"
   | "dahua.live"
+  | "dahua.intercom"
   | "access.visitors.manage"
   | "access.dni_enroll"
+  | "access.attendance"
   | "staff.employees"
   | "staff.schedules"
   | "tenant.grants"
@@ -269,8 +274,16 @@ export const CAPABILITY_CATALOG: CapabilityDef[] = [
     summary: "Video continuo del terminal (substream) en portería.",
     moduleKey: "dahua_access",
   },
+  {
+    key: "dahua.intercom",
+    group: "Dahua",
+    name: "Intercom SIP",
+    summary: "Llamar / contestar por FreePBX local (LAN del barrio).",
+    moduleKey: "dahua_access",
+  },
   { key: "access.visitors.manage", group: "Acceso", name: "Visitas", summary: "Gestionar visitas y propiedades.", moduleKey: "visitors" },
   { key: "access.dni_enroll", group: "Acceso", name: "Alta DNI", summary: "Enrolar con DNI en portería.", moduleKey: "dni_enroll" },
+  { key: "access.attendance", group: "Personal", name: "Fichadas", summary: "Asistencia a partir de eventos Dahua.", moduleKey: "attendance" },
   { key: "staff.employees", group: "Personal", name: "Empleados", summary: "Alta de personal del lote (portal)." },
   { key: "staff.schedules", group: "Personal", name: "Cronogramas", summary: "Horarios de servicios (portal)." },
   { key: "tenant.grants", group: "Admin", name: "Otorgar permisos", summary: "Asignar permisos a guardias y vecinos." },
@@ -373,6 +386,16 @@ export const FEATURE_PACK_CATALOG: FeaturePackDef[] = [
     defaultOn: false,
     sortOrder: 80,
   },
+  {
+    key: "dahua.intercom",
+    parentModule: "dahua_access",
+    name: "Intercom",
+    summary: "Softphone hacia FreePBX/Asterisk en la LAN del barrio. El audio no sale a internet.",
+    capabilityKey: "dahua.intercom",
+    href: "/dashboard",
+    defaultOn: false,
+    sortOrder: 90,
+  },
 ];
 
 /** Plantillas base por rol (se cruzan con el plan del barrio). */
@@ -395,8 +418,10 @@ export const ROLE_TEMPLATES: Record<string, CapabilityKey[]> = {
     "dahua.schedules",
     "dahua.evidence",
     "dahua.live",
+    "dahua.intercom",
     "access.visitors.manage",
     "access.dni_enroll",
+    "access.attendance",
     "staff.employees",
     "staff.schedules",
     "tenant.grants",
@@ -413,6 +438,9 @@ export const ROLE_TEMPLATES: Record<string, CapabilityKey[]> = {
     "dahua.evidence",
     "dahua.live",
     "dahua.persons",
+    "access.visitors.manage",
+    "access.dni_enroll",
+    "access.attendance",
   ],
   resident: ["staff.employees", "staff.schedules"],
 };

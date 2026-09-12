@@ -1,6 +1,6 @@
 # AccesoPro — inventario + plan punta a punta
 
-Fecha de revisión: 2026-09-07.  
+Fecha de revisión: 2026-09-12.  
 Orden práctico portería (live/toast/cableado): **`docs/PLAN_PORTERIA.md`**.
 
 ---
@@ -28,21 +28,21 @@ Orden práctico portería (live/toast/cableado): **`docs/PLAN_PORTERIA.md`**.
 | # | Problema | Evidencia | Efecto |
 |---|----------|-----------|--------|
 | P0.1 | Un ASI no cubre IN y OUT | Ficha `sentido` Entrada/Salida; OUT vacío hasta el 2º ASI | Hecho (0.2.5) |
-| P0.2 | `onOpenRelay` no prioriza `dahuaDeviceId` del actuador | Toast abre por pool de sentido, no por vínculo equipo↔relé | Apertura manual falla o abre otro relé |
-| P0.3 | Sin UI admin de cableado | API `accessPoints.ts` existe; cero página web | Topología = heurística de nombre / backfill |
-| P0.4 | QR visita: payload ≠ CardNo ASI | QR = `ACCESOPRO:V1:token`; enroll = `token` crudo | ASI puede no validar el QR mostrado |
-| P0.5 | Lectura QR en ASI no cierra el circuito AccesoPro | Agent solo emite `dahua_access`; no llama `scanVisitPass` | Historial portal sin `scannedInAt`; no dispara `triggerQr` |
+| P0.2 | `onOpenRelay` no prioriza `dahuaDeviceId` del actuador | Toast abre por pool de sentido, no por vínculo equipo↔relé | Hecho (0.2.10) |
+| P0.3 | Sin UI admin de cableado | API `accessPoints.ts` existe; cero página web | Hecho (`/dashboard/puntos-acceso`) |
+| P0.4 | QR visita: payload ≠ CardNo ASI | QR = `ACCESOPRO:V1:token`; enroll = `token` crudo | Hecho (CardNo = token) |
+| P0.5 | Lectura QR en ASI no cierra el circuito AccesoPro | Agent solo emite `dahua_access`; no llama `scanVisitPass` | Hecho (`markVisitStayByCard`) |
 
 ### P1 — Portería usable en barrio real (2 ASI)
 
 | # | Problema | Notas |
 |---|----------|-------|
-| P1.1 | Cablear 2 puntos `in`/`out` + 2 ASI + relés desde UI | Modal CRUD puntos + wiring (regla modular) |
+| P1.1 | Cablear 2 puntos `in`/`out` + 2 ASI + relés desde UI | Hecho (`/dashboard/puntos-acceso`) |
 | P1.2 | Permanencia visitas (IN → OUT) | Reloj en home; propietarios sin control de tiempo |
 | P1.3 | Persistencia opcional de `lanePick` | Hoy se pierde al F5 (aceptable si hay cableado) |
-| P1.4 | Toast 24h + botón apertura también en aprobado | UX; hoy apertura solo en denegado |
-| P1.5 | Live RTSP estable / un cliente compartido | Varias pestañas saturan el ASI |
-| P1.6 | Docs desactualizados | `MODULES.md` marca visitas/packs como stub; portal ya existe |
+| P1.4 | Toast 24h + botón apertura también en aprobado | Hecho (0.2.10) |
+| P1.5 | Live RTSP estable / un cliente compartido | Hub MJPEG por equipo en el agent |
+| P1.6 | Docs desactualizados | Alineado en 0.2.10 |
 
 ### P2 — Producto comercial completo
 
@@ -171,10 +171,10 @@ No mezclar Fase F (intercom) con A/B: distinto stack (SIP).
 
 ## 6. Criterio de «barrio listo para piloto»
 
-- [ ] 2 sentidos cableados en UI (o 1 ASI lab documentado).  
-- [ ] Facial abre solo relé del punto.  
+- [x] 2 sentidos cableados en UI (o 1 ASI lab documentado).  
+- [x] Facial abre solo relé del punto.  
 - [x] Toast sin replay al refresh.  
-- [ ] QR visita abre y registra IN/OUT.  
-- [ ] Portal vecino usable.  
-- [ ] Guardia home usable sin Config.  
-- [ ] Agent + engine monitoreados en status.
+- [x] QR visita abre y registra IN/OUT.  
+- [x] Portal vecino usable.  
+- [x] Guardia home usable sin Config.  
+- [x] Agent + engine monitoreados en status.

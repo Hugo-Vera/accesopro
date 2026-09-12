@@ -13,7 +13,7 @@ from fastapi.responses import Response, StreamingResponse
 from .alpr import AlprWorker
 from .dahua import DahuaClient
 from .hikvision import HikvisionClient, looks_like_hikvision
-from .live import iter_mjpeg
+from .live import iter_mjpeg_shared
 
 API = os.environ.get("ACCESOPRO_API_URL", "http://localhost:8787").rstrip("/")
 TOKEN = os.environ.get("SITE_AGENT_TOKEN", "accesopro-demo-agent")
@@ -477,6 +477,12 @@ def _run_command(cmd: dict[str, Any]) -> dict[str, Any]:
     if action == "dahua_person_enroll":
         dev = _device(payload.get("deviceId"))
         if not dev:
+            for candidate in _config.get("dahua") or []:
+                dt = str(candidate.get("deviceType") or "")
+                if dt not in {"camera_ip", "access_controller"}:
+                    dev = candidate
+                    break
+        if not dev:
             return {"ok": False, "error": "Equipo no encontrado"}
         client = _client(dev)
         user_id = str(payload.get("userId") or "").strip()
@@ -837,7 +843,7 @@ def dahua_live(
 
     def gen():
         try:
-            yield from iter_mjpeg(dev, channel=ch, subtype=sub)
+            yield from iter_mjpeg_shared(dev, channel=ch, subtype=sub)
         except Exception as exc:  # noqa: BLE001
             # Un frame JPEG de error no rompe el multipart; el cliente reintenta.
             print(f"Live RTSP error: {exc}")

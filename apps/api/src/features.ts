@@ -43,6 +43,11 @@ export async function tenantFeatureEnabled(tenantId: string, featureKey: string)
   return Boolean(row.enabled);
 }
 
+export async function assertFeature(tenantId: string, featureKey: string): Promise<string | null> {
+  if (await tenantFeatureEnabled(tenantId, featureKey)) return null;
+  return "Esta función no está habilitada en el barrio";
+}
+
 export async function setTenantFeature(tenantId: string, featureKey: string, enabled: boolean) {
   if (!isFeatureKey(featureKey)) throw new Error("Feature desconocida");
   const pack = FEATURE_PACK_CATALOG.find((f) => f.key === featureKey)!;

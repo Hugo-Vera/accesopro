@@ -4,6 +4,7 @@ import { useEffect, useState, useMemo } from "react";
 import { useDash } from "@/components/DashboardProvider";
 import { ModuleGate, PageHeader } from "@/components/PageHeader";
 import { api, withTenant } from "@/lib/api";
+import { useEscapeKey } from "@/hooks/useEscapeKey";
 import {
   Users,
   Clock,
@@ -74,6 +75,7 @@ export default function FichadasPage() {
   // Modal de Fichada Manual
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [saving, setSaving] = useState(false);
+  useEscapeKey(() => setIsModalOpen(false), isModalOpen);
   const [manualForm, setManualForm] = useState({
     personName: "",
     personId: "",

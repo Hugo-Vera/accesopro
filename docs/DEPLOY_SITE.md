@@ -168,7 +168,19 @@ Demo: `admin@lasacacias.local` / `AccesoPro!2026` — vecino: `vecino@lasacacias
 
 ---
 
-## Alternativa: Docker
+## Playbook por barrio (piloto)
+
+Cada predio = un host LAN (o Ubuntu en portería) + este repo.
+
+1. Clonar `master` o instalar con `scripts/install-ubuntu.sh`.
+2. `.env` propio: `SITE_AGENT_TOKEN`, `JWT_SECRET`, `ACCESOPRO_OWNER`. No copiar tokens demo a producción.
+3. Agent: perfil `dahua` + `deploy/docker-compose.linux.yml` (`network_mode: host`) para alcanzar el ASI.
+4. ALPR: solo si el contrato lo incluye (`--profile alpr`) y un `config.yaml` real (RTSP). El YAML de Docker vacío no lee chapas.
+5. Cablear en **Puntos de acceso** (Ingreso/Salida + ASI + relé). No mezclar módulos en la fila del punto.
+6. Actualizar: botón **Configuración → Módulos → Actualizar servidor** o `docs/UPDATE_UBUNTU.md`.
+7. Smoke: `docs/E2E_SMOKE.md`. Intercom: `docs/INTERCOM.md` (FreePBX local, no en la nube).
+
+No `docker compose down -v`. No publicar SIP/RTP a WAN.
 
 Si la máquina tiene Docker Desktop o Docker Engine, es más simple que FTP:
 

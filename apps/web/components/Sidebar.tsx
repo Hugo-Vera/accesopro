@@ -21,6 +21,7 @@ const SECTIONS: Section[] = [
     items: [
       { href: "/dashboard", label: "Inicio", capability: "ops.dashboard" },
       { href: "/dashboard/plano", label: "Plano", capability: "ops.plano" },
+      { href: "/dashboard/puntos-acceso", label: "Puntos de acceso", module: "actuators", capability: "core.config", adminOnly: true },
     ],
   },
   {
@@ -69,7 +70,7 @@ const SECTIONS: Section[] = [
         capability: "dahua.persons",
       },
       {
-        href: "/dashboard/dahua/eventos",
+        href: "/dashboard/dahua/evidencia",
         label: "Evidencia",
         module: "dahua_access",
         feature: "dahua.evidence",
@@ -85,6 +86,7 @@ const SECTIONS: Section[] = [
       { href: "/dashboard/actuadores", label: "Actuadores", module: "actuators", capability: "ops.relay" },
       { href: "/dashboard/alpr", label: "Detecciones ALPR", module: "alpr", capability: "access.alpr" },
       { href: "/dashboard/visitas", label: "Visitas", module: "visitors", capability: "access.visitors.manage" },
+      { href: "/dashboard/alta-dni", label: "Alta DNI", module: "dni_enroll", capability: "access.dni_enroll" },
       { href: "/portal", label: "App Propietario (Portal)", module: "visitors" },
     ],
   },
@@ -92,7 +94,9 @@ const SECTIONS: Section[] = [
     title: "Administración",
     items: [
       { href: "/dashboard/propiedades", label: "Propiedades", module: "visitors", capability: "access.visitors.manage", adminOnly: true },
-      { href: "/dashboard/fichadas", label: "Fichadas", module: "attendance" },
+      { href: "/dashboard/fichadas", label: "Fichadas", module: "attendance", capability: "access.attendance" },
+      { href: "/dashboard/panico", label: "Pánico", module: "panic", capability: "ops.alarms" },
+      { href: "/dashboard/fuego", label: "Fuego", module: "fire", capability: "ops.alarms" },
       { href: "/dashboard/usuarios", label: "Usuarios y permisos", capability: "core.users.read", adminOnly: true },
       { href: "/dashboard/modulos", label: "Configuración", capability: "core.config", adminOnly: true },
       { href: "/dashboard/diagnostico", label: "Diagnóstico", capability: "ops.dashboard", adminOnly: true },

@@ -5,6 +5,7 @@ import { FeatureGate, PageHeader } from "@/components/PageHeader";
 import { Building2, Plus, Trash2, Clock, CheckCircle2, RefreshCw, Shield, Users } from "lucide-react";
 import { api, withTenant } from "@/lib/api";
 import { useDash } from "@/components/DashboardProvider";
+import { useEscapeKey } from "@/hooks/useEscapeKey";
 
 interface Department {
   id: string;
@@ -28,6 +29,7 @@ export default function DahuaDepartamentosPage() {
   const [defaultPeriodIndex, setDefaultPeriodIndex] = useState<number>(0); // 0 = Period 1 (Laboral)
   const [description, setDescription] = useState("");
   const [showModal, setShowModal] = useState(false);
+  useEscapeKey(() => setShowModal(false), showModal);
 
   function t(path: string) {
     return withTenant(path, tenantId);

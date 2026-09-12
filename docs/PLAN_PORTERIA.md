@@ -36,7 +36,7 @@ Live fluido + toast al instante. Verificar en el barrio:
 1. F5 en `/dashboard`: **sin** toast.
 2. Pasar la cara: toast + fila IN en **menos de ~1 s**; live no se congela.
 3. F5 otra vez: el toast no vuelve; el historial sí.
-4. Módulos: versión **0.2.6**.
+4. Módulos: versión **0.2.10**.
 
 Ubuntu: el botón de update **viejo** se suicida. Primera vez:
 
@@ -50,7 +50,7 @@ curl -fsSL https://raw.githubusercontent.com/Hugo-Vera/accesopro/master/scripts/
 
 La ficha de Dispositivos (`sentido` Entrada|Salida, carril vehicular|peatonal, Live, Relé local) recablea `Ingreso vehicular` / `Salida vehicular` (o peatonal si se elige). Un ASI no es los dos sentidos.
 
-1. UI admin de `access_points` (modal Nuevo/Editar, Escape, tema) para cableados extra.
+1. UI admin de `access_points` (`/dashboard/puntos-acceso`).
 2. Segundo ASI = ficha Salida.
 3. Dropdown AccesoCam = override de sesión.
 

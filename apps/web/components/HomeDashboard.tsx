@@ -20,6 +20,7 @@ import {
 } from "@/components/ops/laneTopology";
 import { type Actuator, type RelaySlot } from "@/components/ops/relayPresets";
 import { ACTUATOR_POLL_MS, useOpsEvents } from "@/components/ops/useOpsEvents";
+import { mergeLaneActuatorIds, resolveOpenActuatorId } from "@/components/ops/resolveOpenRelay";
 
 type Device = LiveDevice;
 
@@ -137,10 +138,15 @@ export function HomeDashboard() {
   const wiredOutId = preferLaneReader(topology.out.deviceIds, outLaneDevices);
   const inDeviceId = lanePick.in ?? wiredInId;
   const outDeviceId = lanePick.out ?? wiredOutId;
+  const sameDeviceLab = Boolean(inDeviceId && outDeviceId && inDeviceId === outDeviceId);
 
   const outSlots = useMemo(
-    () => buildLaneRelaySlots(manualActs, topology.out.actuatorIds),
-    [manualActs, topology.out.actuatorIds],
+    () =>
+      buildLaneRelaySlots(
+        manualActs,
+        mergeLaneActuatorIds(topology.out.actuatorIds, topology.in.actuatorIds, sameDeviceLab),
+      ),
+    [manualActs, topology.out.actuatorIds, topology.in.actuatorIds, sameDeviceLab],
   );
 
   const inEvents = useMemo(
@@ -327,7 +333,7 @@ export function HomeDashboard() {
           <OpsOutColumns
             showLive={showLive}
             showActuators={showActuators}
-            devices={outLaneDevices}
+            devices={outLaneDevices.length ? outLaneDevices : liveableDevices}
             preferredDeviceId={outDeviceId}
             onDeviceChange={(id) => setLanePick((p) => ({ ...p, out: id }))}
             relaySlots={outSlots}
@@ -357,26 +363,19 @@ export function HomeDashboard() {
         alert={facialAlert}
         onDismiss={() => setFacialAlert(null)}
         onOpenRelay={async (deviceId) => {
-          const byDev = manualActs.find(
-            (a) => a.driver === "dahua" && a.dahuaDeviceId && a.dahuaDeviceId === deviceId,
-          );
-          if (byDev) {
-            await fire(byDev.id, "open");
-            return;
-          }
-          const inHit = topology.in.deviceIds.includes(deviceId) || inDeviceId === deviceId;
-          const outHit = topology.out.deviceIds.includes(deviceId) || outDeviceId === deviceId;
-          const poolIds = inHit
-            ? topology.in.actuatorIds
-            : outHit
-              ? topology.out.actuatorIds
-              : manualActs.map((a) => a.id);
-          const pool = manualActs.filter((a) => poolIds.includes(a.id));
-          const target =
-            pool.find((a) => a.driver === "dahua" || a.kind === "gate" || a.kind === "underground") ||
-            pool[0] ||
-            acts[0];
-          if (target) await fire(target.id, "open");
+          const id = resolveOpenActuatorId({
+            deviceId,
+            actuators: manualActs.length ? manualActs : acts,
+            inDeviceIds: topology.in.deviceIds,
+            outDeviceIds: topology.out.deviceIds,
+            inActuatorIds: topology.in.actuatorIds,
+            outActuatorIds: sameDeviceLab
+              ? mergeLaneActuatorIds(topology.out.actuatorIds, topology.in.actuatorIds, true)
+              : topology.out.actuatorIds,
+            inDeviceId,
+            outDeviceId,
+          });
+          if (id) await fire(id, "open");
         }}
       />
 

@@ -1,8 +1,9 @@
 import { createHmac } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { db } from "./db/client.js";
-import { actuators, events, properties, visitPasses, visitRecords } from "./db/schema.js";
+import { events, properties, visitPasses, visitRecords } from "./db/schema.js";
 import { fireActuator } from "./actuatorExec.js";
+import { actuatorsForSentido } from "./accessPoints.js";
 import { nid } from "./scope.js";
 
 export function qrSecret() {
@@ -16,8 +17,9 @@ export function makeVisitToken(propertyId: string, passId: string) {
 
 export function parseVisitQrPayload(raw: string): string | null {
   const trimmed = raw.trim();
+  if (!trimmed) return null;
   if (trimmed.startsWith("ACCESOPRO:V1:")) return trimmed.slice("ACCESOPRO:V1:".length);
-  return null;
+  return trimmed;
 }
 
 function ts(v: Date | number | null | undefined): number | null {
@@ -46,7 +48,7 @@ export async function markVisitStayByCard(
   sentido: "in" | "out",
   at: Date,
 ): Promise<{ passId: string; guestName: string; dwellMs: number | null } | null> {
-  const card = cardRaw.trim();
+  const card = parseVisitQrPayload(cardRaw) ?? cardRaw.trim();
   if (!card) return null;
   const rows = await db.select().from(visitPasses).where(eq(visitPasses.siteId, siteId));
   const pass = rows.find((p) => {
@@ -131,10 +133,10 @@ export async function scanVisitPass(
       .where(eq(visitPasses.id, pass.id));
   }
 
-  const acts = await db.select().from(actuators).where(eq(actuators.siteId, site.id));
   const property = await db.select().from(properties).where(eq(properties.id, pass.propertyId)).get();
   const fired: string[] = [];
-  for (const a of acts.filter((x) => x.triggerQr && (x.driver !== "engine" || x.engineSentido === sentido))) {
+  const targets = await actuatorsForSentido(site.id, sentido);
+  for (const a of targets) {
     const r = await fireActuator(site, a.id, "open");
     if (r.ok) fired.push(a.name);
   }

@@ -6,6 +6,7 @@ import { api, apiUrl, withTenant } from "@/lib/api";
 import { useDash } from "@/components/DashboardProvider";
 import { useToast } from "@/components/Toast";
 import { useTheme } from "@/components/ThemeProvider";
+import { useEscapeKey } from "@/hooks/useEscapeKey";
 import { DahuaDateTimePicker } from "@/components/DahuaDateTimePicker";
 import {
   CreditCard,
@@ -204,6 +205,7 @@ function CreatePersonModal({
   onSuccess: (name: string, enrolledData: any) => void;
 }) {
   const toast = useToast();
+  useEscapeKey(onClose, isOpen);
 
   const [name, setName] = useState("");
   const [userId, setUserId] = useState("");
@@ -765,6 +767,7 @@ function EditPersonModal({
   onClose: () => void;
   onSuccess: (updatedName: string, lastEnrolledData: any) => void;
 }) {
+  useEscapeKey(onClose, true);
   const toast = useToast();
 
   let initialName = person.name || "";
@@ -1761,6 +1764,14 @@ export function PersonsPanel({ initialSearch = "" }: { initialSearch?: string })
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
+
+  useEscapeKey(() => {
+    if (personToDelete) setPersonToDelete(null);
+    else if (selectedPersonQr) setSelectedPersonQr(null);
+    else if (lastEnrolled) setLastEnrolled(null);
+    else if (editingPerson) setEditingPerson(null);
+    else if (showCreateModal) setShowCreateModal(false);
+  }, !!(personToDelete || selectedPersonQr || lastEnrolled || editingPerson || showCreateModal));
 
   function t(path: string) {
     return withTenant(path, tenantId);

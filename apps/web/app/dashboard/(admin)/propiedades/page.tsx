@@ -5,6 +5,7 @@ import { api, withTenant } from "@/lib/api";
 import { useDash } from "@/components/DashboardProvider";
 import { ModuleGate, PageHeader } from "@/components/PageHeader";
 import { Home, Plus, UserPlus, MapPin, X, Building, CheckCircle2 } from "lucide-react";
+import { useEscapeKey } from "@/hooks/useEscapeKey";
 
 type Property = {
   id: string;
@@ -23,6 +24,10 @@ export default function PropiedadesPage() {
   const [showOwnerModal, setShowOwnerModal] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  useEscapeKey(() => {
+    if (showOwnerModal) setShowOwnerModal(false);
+    else if (showPropModal) setShowPropModal(false);
+  }, showPropModal || showOwnerModal);
 
   const [form, setForm] = useState({ lotNumber: "", label: "", address: "", mapLat: "", mapLng: "" });
   const [ownerForm, setOwnerForm] = useState({ propertyId: "", email: "", name: "", password: "", dni: "", phone: "" });

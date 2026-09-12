@@ -1,7 +1,7 @@
 {
   "name": "accesopro",
   "private": true,
-  "version": "0.2.7",
+  "version": "0.2.10",
   "description": "Acceso y seguridad para barrios cerrados",
   "workspaces": [
     "apps/*",
@@ -14,7 +14,8 @@
     "build:web": "npm run build -w @accesopro/web",
     "start:api": "npm run start -w @accesopro/api",
     "start:web": "npm run start -w @accesopro/web",
-    "db:seed": "npm run seed -w @accesopro/api"
+    "db:seed": "npm run seed -w @accesopro/api",
+    "test:smoke": "node scripts/smoke-p0.mjs"
   },
   "engines": {
     "node": ">=20"

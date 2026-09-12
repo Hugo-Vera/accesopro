@@ -4,9 +4,15 @@ Fuente de verdad: `packages/catalog/src/index.ts` (`MODULE_CATALOG` + `PLAN_CATA
 
 | Módulo | Clave | Depende de | UI dashboard | API / LAN | Notas |
 |--------|-------|------------|--------------|-----------|-------|
-| Núcleo | `core` | — | Plano (stub), auth, tenants | `index.ts`, `auth.ts` | Siempre on |
-| Actuadores | `actuators` | — | `/dashboard/actuadores` | `hardware.ts`, `actuatorExec.ts` | CRUD + open/close |
-| Acceso Dahua | `dahua_access` | actuators | `/dashboard/dahua/*` | `agent.ts`, `apps/agent` | Feature packs: equipos, eventos, abrir, personas, QR, periodos, evidencia, live |
+| Núcleo | `core` | — | Plano (pines), auth, tenants | `index.ts`, `auth.ts` | Siempre on |
+| Actuadores | `actuators` | — | `/dashboard/actuadores`, `/dashboard/puntos-acceso` | `hardware.ts`, `actuatorExec.ts`, `accessPoints.ts` | CRUD + cableado |
+| Acceso Dahua | `dahua_access` | actuators | `/dashboard/dahua/*` | `agent.ts`, `apps/agent` | Packs: equipos, eventos, abrir, personas, QR, periodos, evidencia, live, intercom |
+| Chapas ALPR | `alpr` | actuators | `/dashboard`, `/dashboard/alpr` | `siteEngine.ts`, `engineBridge` | Motor :5051 |
+| Visitas | `visitors` | actuators | `/dashboard/visitas`, `/portal` | `visitors.ts`, `visitPass.ts`, `residents.ts` | QR portal + check-in portería |
+| Alta DNI | `dni_enroll` | visitors | `/dashboard/alta-dni` | `dniEnroll.ts` | PDF417/QR DNI en portería |
+| Pánico | `panic` | — | `/dashboard/panico`, SOS portal | `alarms.ts` | Cola SOS |
+| Fuego | `fire` | — | `/dashboard/fuego` | `alarms.ts` | Contacto panel, no certificado |
+| Fichadas | `attendance` | dahua_access | `/dashboard/fichadas` | `attendance.ts` | Eventos Dahua + fichada manual |
 
 ## Feature packs Dahua
 
@@ -15,21 +21,16 @@ Fuente de verdad: `packages/catalog/src/index.ts` (`MODULE_CATALOG` + `PLAN_CATA
 | Equipos | `dahua.devices` | `access.dahua` | on | `/dashboard/dahua` |
 | Eventos y foto | `dahua.events` | `dahua.events` | on | `/dashboard/dahua/eventos` |
 | Abrir puerta | `dahua.open` | `dahua.open` | on | (botones openDoor) |
-| Personas | `dahua.persons` | `dahua.persons` | on | `/dashboard/dahua/personas` | Alta cara+QR, listar, borrar |
-| QR nativo | `dahua.qr` | `dahua.qr` | off | `/dashboard/dahua/qr` | Stub: ajustes ASI (≠ QR visita AccesoPro) |
+| Personas | `dahua.persons` | `dahua.persons` | on | `/dashboard/dahua/personas` |
+| QR nativo | `dahua.qr` | `dahua.qr` | off | `/dashboard/dahua/qr` (≠ QR visita AccesoPro) |
 | Periodos | `dahua.schedules` | `dahua.schedules` | off | `/dashboard/dahua/periodos` |
 | Evidencia | `dahua.evidence` | `dahua.evidence` | off | `/dashboard/dahua/evidencia` |
-| Live | `dahua.live` | `dahua.live` | off | `/dashboard/dahua/live` | RTSP stream extra → MJPEG |
+| Live | `dahua.live` | `dahua.live` | off | `/dashboard/dahua/live` |
+| Intercom | `dahua.intercom` | `dahua.intercom` | off | AccesoPhone; `docs/INTERCOM.md` |
 
-Pendientes (intercom FreePBX local, admin de personas/credenciales, QR visitas): `docs/PENDING.md`.
+Pendientes (PBX físico, huella/PIN avanzada): `docs/PENDING.md`.
 
 API: `GET/PATCH /api/tenants/:id/features`. El admin tilda packs; el grant decide quién los ve.
-| Chapas ALPR | `alpr` | actuators | `/dashboard`, `/dashboard/alpr` | `siteEngine.ts`, `engineBridge` | Motor :5051 |
-| Visitas | `visitors` | actuators | `/dashboard/visitas` | — | Stub: QR firmado pendiente |
-| Alta DNI | `dni_enroll` | visitors | `/dashboard/alta-dni` | — | Stub: enrolar en portería |
-| Pánico | `panic` | — | `/dashboard/panico` | — | Stub: cola alarmas + plano |
-| Fuego | `fire` | — | `/dashboard/fuego` | — | Stub: contacto panel, no certificado |
-| Fichadas | `attendance` | dahua_access | `/dashboard/fichadas` | — | Stub: eventos Dahua → asistencia |
 
 ## Planes comerciales (Fase 1)
 

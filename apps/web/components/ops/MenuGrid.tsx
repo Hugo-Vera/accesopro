@@ -106,7 +106,7 @@ export function useOpsMenuTiles({ can, enabled, featureOn, showDevices, showEven
         {
           key: "archivos",
           label: "Evidencia",
-          href: "/dashboard/dahua/eventos",
+          href: "/dashboard/dahua/evidencia",
           icon: <IconFolder className={ICON} />,
           show: featureOn("dahua.evidence") && can("dahua.evidence"),
         },
@@ -116,6 +116,13 @@ export function useOpsMenuTiles({ can, enabled, featureOn, showDevices, showEven
           href: "/dashboard/fichadas",
           icon: <IconFingerprint className={ICON} />,
           show: enabled("attendance") && can("access.attendance"),
+        },
+        {
+          key: "puntos",
+          label: "Puntos acceso",
+          href: "/dashboard/puntos-acceso",
+          icon: <IconGate className={ICON} />,
+          show: can("core.config") && enabled("actuators"),
         },
         {
           key: "config",
