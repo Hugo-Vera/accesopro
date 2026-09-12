@@ -319,6 +319,21 @@ async function runHostUpdate() {
   }
 }
 
+function hostPackageVersion(): string | null {
+  for (const dir of [HOST_DIR, HOST_PATH]) {
+    if (!dir) continue;
+    try {
+      const p = join(dir, "package.json");
+      if (!existsSync(p)) continue;
+      const parsed = JSON.parse(readFileSync(p, "utf8")) as { version?: string };
+      if (parsed.version) return String(parsed.version);
+    } catch {
+      /* ignore */
+    }
+  }
+  return null;
+}
+
 export const systemApi = new Hono<Env>();
 
 systemApi.use("*", requireAuth);
@@ -329,10 +344,14 @@ systemApi.get("/system/version", async (c) => {
   if (denied && user.role !== "platform_admin") return denied;
 
   const [local, remote] = await Promise.all([localSha(), remoteSha()]);
-  const updateAvailable = Boolean(local && remote && local !== remote.sha);
+  const diskVersion = hostPackageVersion();
+  const imageStale = Boolean(diskVersion && diskVersion !== APP_VERSION);
+  const updateAvailable = Boolean((local && remote && local !== remote.sha) || imageStale);
 
   return c.json({
     appVersion: APP_VERSION,
+    diskVersion,
+    imageStale,
     repo: REPO,
     branch: BRANCH,
     localSha: local,

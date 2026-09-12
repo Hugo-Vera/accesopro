@@ -9,6 +9,8 @@ import { useEscapeKey } from "@/hooks/useEscapeKey";
 
 type VersionInfo = {
   appVersion?: string;
+  diskVersion?: string | null;
+  imageStale?: boolean;
   repo: string;
   branch: string;
   localSha: string | null;
@@ -185,7 +187,7 @@ export function ServerUpdatePanel() {
         <div className="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 dark:border-slate-700 dark:bg-slate-950/50">
           <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500">Estado</p>
           <p className="mt-1 text-sm font-semibold text-slate-900 dark:text-white">
-            {info?.updateAvailable ? "Hay actualización" : info ? "Al día" : "—"}
+            {info?.updateAvailable ? (info.imageStale ? "Docker desactualizado" : "Hay actualización") : info ? "Al día" : "—"}
           </p>
         </div>
       </div>

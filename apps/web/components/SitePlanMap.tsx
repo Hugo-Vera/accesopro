@@ -221,11 +221,10 @@ export function SitePlanMap() {
           : null;
       if (poly) {
         poly.bindTooltip(`Lote ${lot.lotNumber} · ${lot.label}`, { sticky: true });
-        poly.on("click", (ev) => {
+        poly.on("click", (ev: import("leaflet").LeafletMouseEvent) => {
           L.DomEvent.stopPropagation(ev);
           if (tool === "house") {
-            const ll = (ev as { latlng: { lat: number; lng: number } }).latlng;
-            openHouse(ll.lat, ll.lng, lot);
+            openHouse(ev.latlng.lat, ev.latlng.lng, lot);
             return;
           }
           if (tool === "move") openEdit(lot);
@@ -242,7 +241,7 @@ export function SitePlanMap() {
           }),
         });
         marker.bindTooltip(`Casa · Lote ${lot.lotNumber} · ${lot.label}`, { direction: "top", permanent: focused });
-        marker.on("click", (ev) => {
+        marker.on("click", (ev: import("leaflet").LeafletMouseEvent) => {
           L.DomEvent.stopPropagation(ev);
           if (tool === "move") openEdit(lot);
         });
@@ -339,7 +338,7 @@ export function SitePlanMap() {
         });
         if (first) {
           marker.bindTooltip("Clic para cerrar el lote", { direction: "top" });
-          marker.on("click", (ev) => {
+          marker.on("click", (ev: import("leaflet").LeafletMouseEvent) => {
             L.DomEvent.stopPropagation(ev);
             const pts = draftPtsRef.current;
             if (pts.length >= 3) finishLot(pts);
@@ -521,18 +520,21 @@ export function SitePlanMap() {
         const payload = kmlPreview.flatMap((layer) =>
           layer.features
             .filter((f) => f.kind === "polygon" && f.geometry.type === "Polygon")
-            .map((f) => {
+            .flatMap((f) => {
+              if (f.geometry.type !== "Polygon") return [];
               seq += 1;
               const lotNumber = lotNumberFromName(f.name, used, String(seq));
               const ring = f.geometry.coordinates[0] ?? [];
               const center = centroid(ring.map((c) => ({ lng: c[0], lat: c[1] })));
-              return {
-                lotNumber,
-                label: f.name || `Lote ${lotNumber}`,
-                lotPolygon: f.geometry,
-                mapLat: kmlHouse ? String(center.lat) : null,
-                mapLng: kmlHouse ? String(center.lng) : null,
-              };
+              return [
+                {
+                  lotNumber,
+                  label: f.name || `Lote ${lotNumber}`,
+                  lotPolygon: f.geometry,
+                  mapLat: kmlHouse ? String(center.lat) : null,
+                  mapLng: kmlHouse ? String(center.lng) : null,
+                },
+              ];
             }),
         );
         if (payload.length) {
