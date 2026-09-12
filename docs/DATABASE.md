@@ -71,7 +71,7 @@ Fuente viva de columnas: `apps/api/src/db/schema.ts` + `migrate.ts`.
 
 | Tabla | Columnas clave |
 |-------|----------------|
-| `sites` | `id`, `tenant_id`, `name`, `agent_token`, `last_seen_at` |
+| `sites` | `id`, `tenant_id`, `name`, `agent_token`, `last_seen_at`, `map_lat`/`map_lng`/`map_zoom` (vista del plano), `map_overlays` (capas KML) |
 | `dahua_devices` | `host`, `port` (HTTP/CGI), `rtsp_port`, `pss_port` (SmartPSS 37777), `username`, `password`, `device_type` (`asi_facial` / `camera_ip` / …), `sentido` (`in`/`out`), `lane_sector` (`vehicular`/`peatonal`), `use_live`, `use_local_relay` |
 | `actuators` | `name`, `kind`, `driver` (`dahua` / `http` / `engine`), `dahua_device_id`, `dahua_channel`, `pulse_ms`, `trigger_alpr`/`dahua`/`qr`/`manual` |
 | `cameras` | `rtsp_url`, `actuator_id` (legacy), `enabled` |
@@ -105,7 +105,7 @@ Visita: ingreso en carril 1 (`visit_passes.scanned_in_at`) y egreso en carril 2 
 
 | Tabla | Uso |
 |-------|-----|
-| `properties` | Lote, label, GPS (`map_lat`, `map_lng`), dirección. Único `(site_id, lot_number)` |
+| `properties` | Lote, label, GPS casa (`map_lat`, `map_lng`), polígono GeoJSON (`lot_polygon`), dirección. Único `(site_id, lot_number)` |
 | `owner_profiles` | Vecino ↔ `users` ↔ `properties` (DNI, teléfonos, foto, sync Dahua) |
 | `property_family_members` | Grupo familiar del lote (foto / Dahua) |
 | `property_services` | Jardinero, empleada, horarios, días |
@@ -119,7 +119,7 @@ Visita: ingreso en carril 1 (`visit_passes.scanned_in_at`) y egreso en carril 2 
 
 | Tabla | Columnas clave |
 |-------|----------------|
-| `properties` | `lot_number`, `label`, `address`, `map_lat`, `map_lng` |
+| `properties` | `lot_number`, `label`, `address`, `map_lat`, `map_lng`, `lot_polygon` |
 | `owner_profiles` | `user_id` único, `dni`, `photo_base64`, `dahua_user_id`, `dahua_synced` |
 | `visit_passes` | `token` único, `valid_from`/`valid_until`, `status`, `dahua_card_no` |
 | `visitor_identities` | `dni_number`, `tramite_number`, `last_name`, `first_name`, `raw_pdf417`, `blacklisted` |

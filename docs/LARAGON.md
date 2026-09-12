@@ -16,23 +16,21 @@ En esta PC el puerto **3000** suele ser **GenieACS**. AccesoPro web local usa **
 
 ```powershell
 cd C:\laragon\www\accesopro
-powershell -ExecutionPolicy Bypass -File scripts\start-laragon.ps1
+npm run local
 ```
 
-3. Entrá a **http://localhost:8084/accesopro**
+3. Entrá a **http://localhost:8084/accesopro** o **http://127.0.0.1:3080/accesopro**
 
-El script:
+`npm run local`:
 
 - Instala `deploy/laragon/accesopro.test.conf` (quita el `auto.` que listaba el repo)
 - Instala el alias `/accesopro` → Next `:3080`
 - Crea `.env` si falta
-- Levanta API + Web (web en :3080, no pisa GenieACS)
+- Levanta API + Web en la misma consola (web en :3080, no pisa GenieACS)
 
-Agent Dahua (opcional):
+Agent Dahua (opcional): `npm run local:dahua`. Parar: `npm run local:stop`.
 
-```powershell
-powershell -File scripts\start-laragon.ps1 -Profile dahua
-```
+Atajo PowerShell (misma logica): `scripts\start-laragon.ps1`.
 
 ## Cuentas demo
 

@@ -105,6 +105,10 @@ export async function ensureSchema() {
   `);
   await addColumn("sites", "agent_token", "TEXT");
   await addColumn("sites", "last_seen_at", "INTEGER");
+  await addColumn("sites", "map_lat", "TEXT");
+  await addColumn("sites", "map_lng", "TEXT");
+  await addColumn("sites", "map_zoom", "INTEGER");
+  await addColumn("sites", "map_overlays", "TEXT");
 
   await db.run(sql`
     CREATE TABLE IF NOT EXISTS dahua_devices (
@@ -211,11 +215,13 @@ export async function ensureSchema() {
       address TEXT,
       map_lat TEXT,
       map_lng TEXT,
+      lot_polygon TEXT,
       notes TEXT,
       created_at INTEGER NOT NULL,
       UNIQUE (site_id, lot_number)
     )
   `);
+  await addColumn("properties", "lot_polygon", "TEXT");
   await db.run(sql`
     CREATE TABLE IF NOT EXISTS owner_profiles (
       id TEXT PRIMARY KEY,

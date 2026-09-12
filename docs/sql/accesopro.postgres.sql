@@ -76,6 +76,10 @@ CREATE TABLE IF NOT EXISTS sites (
   name TEXT NOT NULL,
   agent_token TEXT,
   last_seen_at BIGINT,
+  map_lat TEXT,
+  map_lng TEXT,
+  map_zoom INTEGER,
+  map_overlays TEXT,
   created_at BIGINT NOT NULL
 );
 
@@ -174,6 +178,7 @@ CREATE TABLE IF NOT EXISTS properties (
   address TEXT,
   map_lat TEXT,
   map_lng TEXT,
+  lot_polygon TEXT,
   notes TEXT,
   created_at BIGINT NOT NULL,
   UNIQUE (site_id, lot_number)

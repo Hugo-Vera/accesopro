@@ -88,6 +88,10 @@ CREATE TABLE IF NOT EXISTS sites (
   name VARCHAR(255) NOT NULL,
   agent_token VARCHAR(255) NULL,
   last_seen_at BIGINT NULL,
+  map_lat VARCHAR(32) NULL,
+  map_lng VARCHAR(32) NULL,
+  map_zoom INT NULL,
+  map_overlays TEXT NULL,
   created_at BIGINT NOT NULL,
   CONSTRAINT fk_sites_tenant FOREIGN KEY (tenant_id) REFERENCES tenants(id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -192,6 +196,7 @@ CREATE TABLE IF NOT EXISTS properties (
   address TEXT NULL,
   map_lat VARCHAR(32) NULL,
   map_lng VARCHAR(32) NULL,
+  lot_polygon TEXT NULL,
   notes TEXT NULL,
   created_at BIGINT NOT NULL,
   UNIQUE KEY uq_prop_lot (site_id, lot_number),

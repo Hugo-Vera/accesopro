@@ -83,6 +83,7 @@ residents.post("/properties", async (c) => {
     address?: string;
     mapLat?: string;
     mapLng?: string;
+    lotPolygon?: string;
     notes?: string;
   }>();
   const lotNumber = String(body.lotNumber ?? "").trim();
@@ -98,6 +99,7 @@ residents.post("/properties", async (c) => {
     address: body.address?.trim() || null,
     mapLat: body.mapLat?.trim() || null,
     mapLng: body.mapLng?.trim() || null,
+    lotPolygon: body.lotPolygon?.trim() || null,
     notes: body.notes?.trim() || null,
     createdAt: new Date(),
   });
@@ -123,6 +125,7 @@ residents.patch("/properties/:id", async (c) => {
       address: body.address !== undefined ? String(body.address || "").trim() || null : row.address,
       mapLat: body.mapLat !== undefined ? String(body.mapLat || "").trim() || null : row.mapLat,
       mapLng: body.mapLng !== undefined ? String(body.mapLng || "").trim() || null : row.mapLng,
+      lotPolygon: body.lotPolygon !== undefined ? String(body.lotPolygon || "").trim() || null : row.lotPolygon,
       notes: body.notes !== undefined ? String(body.notes || "").trim() || null : row.notes,
     })
     .where(eq(properties.id, row.id));

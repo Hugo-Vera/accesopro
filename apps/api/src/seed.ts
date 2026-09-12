@@ -146,6 +146,11 @@ async function ensureDemoOwner() {
       notes: "Demo propietario",
       createdAt: now,
     });
+  } else if (!existing.mapLat || !existing.mapLng) {
+    await db
+      .update(properties)
+      .set({ mapLat: "-34.60380", mapLng: "-58.38160" })
+      .where(eq(properties.id, existing.id));
   }
   const ownerUser = await db.select().from(users).where(eq(users.email, "vecino@lasacacias.local")).get();
   if (!ownerUser) {

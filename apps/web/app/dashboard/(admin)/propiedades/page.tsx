@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useEffect, useState } from "react";
+import Link from "next/link";
 import { api, withTenant } from "@/lib/api";
 import { useDash } from "@/components/DashboardProvider";
 import { ModuleGate, PageHeader } from "@/components/PageHeader";
@@ -148,12 +149,13 @@ export default function PropiedadesPage() {
                 <th className="px-5 py-3.5">Titular / Identificador</th>
                 <th className="px-5 py-3.5">Direccion</th>
                 <th className="px-5 py-3.5">Coordenadas GPS</th>
+                <th className="px-5 py-3.5">Plano</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
               {rows.length === 0 ? (
                 <tr>
-                  <td colSpan={4} className="px-5 py-12 text-center text-slate-500 dark:text-slate-400">
+                  <td colSpan={5} className="px-5 py-12 text-center text-slate-500 dark:text-slate-400">
                     <Home className="mx-auto h-8 w-8 text-slate-300 dark:text-slate-600 mb-2" />
                     <p className="text-sm font-medium">No hay propiedades registradas</p>
                     <p className="text-xs text-slate-400 mt-0.5">Usa el boton superior para cargar el primer lote.</p>
@@ -180,6 +182,15 @@ export default function PropiedadesPage() {
                       ) : (
                         <span className="text-slate-400">—</span>
                       )}
+                    </td>
+                    <td className="px-5 py-3.5">
+                      <Link
+                        href={`/dashboard/plano?lote=${encodeURIComponent(r.lotNumber)}`}
+                        className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-sky-700 transition hover:bg-sky-50 dark:border-slate-600 dark:bg-slate-800 dark:text-sky-300 dark:hover:bg-slate-700"
+                      >
+                        <MapPin className="h-3.5 w-3.5" />
+                        Abrir en el plano
+                      </Link>
                     </td>
                   </tr>
                 ))

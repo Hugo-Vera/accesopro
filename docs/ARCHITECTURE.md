@@ -34,7 +34,7 @@ Rutas agrupadas con **route groups** de Next.js (los paréntesis no cambian la U
 | Grupo | Ruta | Contenido |
 |-------|------|-----------|
 | `(operacion)` | `/dashboard` | KPIs, barreras, detecciones en vivo |
-| `(operacion)` | `/dashboard/plano` | Croquis con pines de `access_points` |
+| `(operacion)` | `/dashboard/plano` | Plano OSM/Google del predio: lotes, casas y capas KML (core) |
 | `(operacion)` | `/dashboard/diagnostico` | Triggers, cola de comandos, CGI |
 | `(acceso)` | `/dashboard/alpr` | Detecciones del motor LAN |
 | `(acceso)` | `/dashboard/dahua` | Terminales faciales |
@@ -99,8 +99,8 @@ Ver `.env.example` en la raíz. Claves RTSP y passwords de cámaras **solo** en 
 
 ```powershell
 npm install
-npm run dev:api
-npm run dev:web
+npm run local
+# Con agent Dahua: npm run local:dahua
+# Parar: npm run local:stop
 # Motor LAN: apps/site (ver apps/site/README.md)
-# Agent Dahua: apps/agent (ver apps/agent/README.md)
 ```

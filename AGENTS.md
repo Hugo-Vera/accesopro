@@ -67,7 +67,7 @@ Actuador = relé con **nombre libre** (Barrera entrada, Portón cochera, Puerta 
 
 Las reglas (cara, QR, ALPR, botón) resuelven el **punto** por el dispositivo que disparó el evento y abren solo los actuadores cableados ahí. No mezclar sectores ni módulos en una sola tabla.
 
-Plano del predio = core. Pines arrastrables. Pánico y fuego aparecen cuando el módulo está tildado.
+Plano del predio = core (`/dashboard/plano`). Mapa OSM o Google (`NEXT_PUBLIC_MAP_PROVIDER=osm|google`, opcional `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` y `NEXT_PUBLIC_GOOGLE_MAPS_TYPE=hybrid`). El admin busca el barrio, dibuja lotes, importa KML/KMZ (capas en `sites.map_overlays` o lotes en `properties`) y ubica casas. Se guarda en `properties` (`lot_polygon`, `map_lat`/`map_lng`) y la vista en `sites`. Pánico y fuego aparecen cuando el módulo está tildado.
 
 ## Stack
 
@@ -104,8 +104,18 @@ Detalle: `docs/UPDATE_UBUNTU.md` · `.cursor/rules/deploy-update.mdc` · `docs/D
 
 ```powershell
 npm install
-npm run dev:api
-npm run dev:web
+npm run local
+# Agent Dahua en la misma consola:
+npm run local:dahua
+# Parar:
+npm run local:stop
+```
+
+En PCs con Laragon el dashboard queda en `http://localhost:3080/accesopro` (el :3000 suele ser GenieACS) y, si Nginx esta verde, `http://localhost:8084/accesopro`.
+
+Para levantar solo un proceso: `npm run dev:api` / `npm run dev:web`. Agent a mano:
+
+```powershell
 cd apps\agent
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1

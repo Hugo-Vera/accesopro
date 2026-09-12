@@ -132,14 +132,16 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
   useEffect(() => {
     if (!isOpen || !tenantId) return;
     // Cargar propiedades del barrio
-    api<{ properties: PropertyItem[] }>(withTenant("/api/properties", tenantId))
+    api<{ properties: PropertyItem[] }>(withTenant("/api/visitors/properties", tenantId))
       .then((d) => {
         setProperties(d.properties || []);
         if (d.properties?.length > 0 && !propertyId) {
           setPropertyId(d.properties[0].id);
         }
       })
-      .catch(() => {});
+      .catch((err) => {
+        setError(err instanceof Error ? err.message : "No se pudieron cargar los lotes");
+      });
 
     // Cargar actuadores
     api<{ actuators: ActuatorItem[] }>(withTenant("/api/actuators", tenantId))

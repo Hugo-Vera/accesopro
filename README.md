@@ -48,16 +48,30 @@ AccesoPro/
 
 ## Arranque local
 
+Un comando, API + dashboard en la misma consola:
+
+```powershell
+cd C:\laragon\www\accesopro
+npm install
+npm run local
+```
+
+- Dashboard: **http://localhost:3080/accesopro** (en esta PC el :3000 es GenieACS)
+- Si Nginx de Laragon está verde: **http://localhost:8084/accesopro**
+- API: http://localhost:8787/health
+- Con agent Dahua: `npm run local:dahua`
+- Parar: `Ctrl+C` o `npm run local:stop`
+
+Detalle: [`docs/LARAGON.md`](docs/LARAGON.md).
+
 ### Con Laragon (Nginx :8084)
 
-Laragon solo sirve PHP/archivos. AccesoPro es Node: hay que levantar API + Next.
+Laragon solo sirve PHP/archivos. AccesoPro es Node: `npm run local` ya configura el alias y levanta API + Next.
 
 ```powershell
 # Nginx en verde en Laragon, después:
-powershell -ExecutionPolicy Bypass -File scripts\start-laragon.ps1
+npm run local
 ```
-
-Abrí **http://localhost:8084/accesopro**. En esta PC el :3000 es GenieACS; el dashboard AccesoPro queda en :3080. Detalle: [`docs/LARAGON.md`](docs/LARAGON.md).
 
 ### Con XAMPP (Apache, sin Docker)
 
@@ -83,13 +97,11 @@ powershell -ExecutionPolicy Bypass -File scripts\start-server.ps1 -Profile dahua
 
 Parar: `scripts\stop-server.ps1`
 
-### Dev (hot reload)
+### Dev (hot reload, procesos sueltos)
 
-Node 20+.
+Node 20+. Preferí `npm run local`. Si hace falta cada proceso aparte:
 
 ```powershell
-cd C:\Users\Master\AccesoPro
-npm install
 npm run dev:api
 npm run dev:web
 ```

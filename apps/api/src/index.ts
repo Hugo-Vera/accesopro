@@ -21,6 +21,7 @@ import { db } from "./db/client.js";
 import { properties, sites, tenantModules, tenants, users, visitPasses, events } from "./db/schema.js";
 import { scanVisitPass, parseVisitQrPayload } from "./visitPass.js";
 import { accessPointsApi } from "./accessPoints.js";
+import { planApi } from "./plan.js";
 import { hardware } from "./hardware.js";
 import { residents } from "./residents.js";
 import { alarmsApi } from "./alarms.js";
@@ -322,6 +323,7 @@ app.patch("/api/tenants/:id/features", async (c) => {
 });
 
 app.route("/api", accessPointsApi);
+app.route("/api", planApi);
 app.route("/api", hardware);
 app.route("/api/hardware", hardware);
 app.route("/api", usersApi);

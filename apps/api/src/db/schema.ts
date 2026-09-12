@@ -104,6 +104,12 @@ export const sites = sqliteTable("sites", {
   name: text("name").notNull(),
   agentToken: text("agent_token"),
   lastSeenAt: integer("last_seen_at", { mode: "timestamp_ms" }),
+  /** Centro del plano OSM (lat/lng WGS84). */
+  mapLat: text("map_lat"),
+  mapLng: text("map_lng"),
+  mapZoom: integer("map_zoom"),
+  /** Capas KML importadas (JSON: OverlayLayer[]). */
+  mapOverlays: text("map_overlays"),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
 });
 
@@ -304,6 +310,8 @@ export const properties = sqliteTable("properties", {
   address: text("address"),
   mapLat: text("map_lat"),
   mapLng: text("map_lng"),
+  /** GeoJSON Polygon del lote (coordenadas [lng, lat]). */
+  lotPolygon: text("lot_polygon"),
   notes: text("notes"),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
 });

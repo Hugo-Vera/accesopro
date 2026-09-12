@@ -156,6 +156,25 @@ visitorsApi.get("/visitors/search-vehicle", async (c) => {
   });
 });
 
+/** Lotes del barrio para el check-in de visitas (portería y admin). */
+visitorsApi.get("/visitors/properties", async (c) => {
+  const denied = await denyUnlessCapability(c.get("user"), "access.visitors.manage");
+  if (denied) return denied;
+  const scoped = await scopedSiteWithModule(c, "visitors");
+  if ("error" in scoped) return scoped.error;
+  const rows = await db
+    .select({
+      id: properties.id,
+      lotNumber: properties.lotNumber,
+      label: properties.label,
+    })
+    .from(properties)
+    .where(eq(properties.siteId, scoped.site.id));
+  return c.json({
+    properties: rows.sort((a, b) => a.lotNumber.localeCompare(b.lotNumber, "es", { numeric: true })),
+  });
+});
+
 /** Autorizaciones y pases de todos los propietarios del barrio (portería). */
 visitorsApi.get("/visitors/owner-passes", async (c) => {
   const denied = await denyUnlessCapability(c.get("user"), "access.visitors.manage");
