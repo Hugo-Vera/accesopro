@@ -87,13 +87,12 @@ Personas (editar/huella/PIN), evidencia galería, intercom FreePBX, DNI, pánico
 | Pieza | Cambio | Por qué |
 |-------|--------|---------|
 | Live | Route Next `/api/dahua/:id/live` sin buffer | El rewrite de Next atrasaba el MJPEG |
-| Live | ~8 fps, JPEG 52; retry 1,4 s | Más fluido sin saturar el ASI |
-| Live | ASI extra 1, `contain` (sin recorte 272×480); no snapshot CGI | El extra es 4:3; CGI/main traban el facial. NAT: `AGENT_LIVE_PREFER_SNAPSHOT=1` |
+| Live | RTSP extra 1 via ffmpeg (~12 fps); AccesoCam 4:3 `contain` | Chrome no abre `rtsp://`. OpenCV recodificaba y recortaba. Sin snapshot CGI |
 | Toast | SSE `ping` + reconnect 1,2 s; poll 1 s si SSE cae | No esperar 8 s a un evento |
 | Toast | Auto-cierre 12 s | La fila de historial es la actividad; el toast avisa |
 | Agent | Cliente HTTP reutilizado; debounce 1,2 s | Menos latencia al POST |
 
-Si el live se pone pesado en un NUC chico: `AGENT_LIVE_FPS=5` en `.env` del host.
+Si el live se pone pesado en un NUC chico: `AGENT_LIVE_FPS=8` en `.env` del host.
 
 ## Reglas que no romper
 

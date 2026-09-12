@@ -25,7 +25,7 @@ export type LiveLane = "in" | "out";
 
 /** Clasifica la tecnología del equipo. Live ASI usa extra 1 (substream), no el display 272×480. */
 function getDeviceTech(d: LiveDevice | null) {
-  if (!d) return { type: "asi_facial", label: "Lector Facial", badge: "ASI extra", isFacial: true, subtype: 1 };
+  if (!d) return { type: "asi_facial", label: "Lector Facial", badge: "RTSP extra", isFacial: true, subtype: 1 };
   const dt = d.deviceType;
   if (dt === "camera_ip" || /cam|ip|camara|cámara|nvr|dvr/i.test(d.name)) {
     return { type: "camera_ip", label: "Cámara IP", badge: "CAM IP 16:9", isFacial: false, subtype: 1 };
@@ -33,7 +33,7 @@ function getDeviceTech(d: LiveDevice | null) {
   if (dt === "vto_intercom" || /vto|intercom|portero/i.test(d.name)) {
     return { type: "vto_intercom", label: "Videoportero", badge: "VTO 16:9", isFacial: false, subtype: 1 };
   }
-  return { type: "asi_facial", label: "Lector Facial", badge: "ASI extra", isFacial: true, subtype: 1 };
+  return { type: "asi_facial", label: "Lector Facial", badge: "RTSP extra", isFacial: true, subtype: 1 };
 }
 
 function laneGuess(d: LiveDevice): LiveLane | null {
@@ -225,7 +225,7 @@ export function DahuaLivePanel({
               }`}
               title={
                 tech.isFacial
-                  ? "Substream extra (RTSP subtype 1). No usa el main ni el display 272×480."
+                  ? "Substream extra 1 (640×480). El totem 272×480 es otra cosa; Chrome no abre rtsp://."
                   : "Resolución de cámara IP estándar: 16:9 HD"
               }
             >
@@ -263,9 +263,7 @@ export function DahuaLivePanel({
       </div>
 
       <div
-        className={`ops-cam-viewport relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-[#050b12] ${
-          tech.isFacial ? "ops-cam-viewport--facial" : "ops-cam-viewport--wide"
-        }`}
+        className="ops-cam-viewport ops-cam-viewport--wide relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-[#050b12]"
       >
         {emptyOut ? (
           <div className="grid max-w-[220px] place-items-center px-3 text-center">
@@ -288,7 +286,7 @@ export function DahuaLivePanel({
           <img
             src={streamSrc}
             alt={selected?.name || "Live feed"}
-            className={tech.isFacial ? "ops-cam-frame-facial select-none" : "ops-cam-frame-wide select-none"}
+            className="ops-cam-frame-wide select-none"
             onLoad={() => setError(null)}
             onError={() => {
               setError("Se cortó el live.");
@@ -319,7 +317,7 @@ export function DahuaLivePanel({
           {selected ? (
             <>
               <span className="font-mono text-[8.5px] font-semibold text-[#55819e]">
-                {tech.isFacial ? "substream extra" : "16:9 HD"}
+                {tech.isFacial ? "RTSP extra 4:3" : "16:9 HD"}
               </span>
               <span className="max-w-[120px] truncate text-[10.5px] font-semibold text-slate-200">
                 {selected.name}

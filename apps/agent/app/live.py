@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import shutil
+import subprocess
 import threading
 import time
 from typing import Any, Iterator
@@ -199,6 +201,116 @@ def _live_try_subs(dev: dict[str, Any], requested: int) -> list[int]:
     return [sub, 1]
 
 
+def _ffmpeg_q(jpeg_quality: int) -> int:
+    """Mapea calidad JPEG 1–100 a -q:v de ffmpeg (2 nítido, 31 peor)."""
+    q = int(round((100 - max(1, min(100, jpeg_quality))) / 8))
+    return max(3, min(12, q))
+
+
+def _iter_jpegs_from_pipe(read_fn) -> Iterator[bytes]:
+    buf = b""
+    while True:
+        chunk = read_fn(8192)
+        if not chunk:
+            break
+        buf += chunk
+        while True:
+            soi = buf.find(b"\xff\xd8")
+            if soi < 0:
+                buf = buf[-1:] if buf else b""
+                break
+            if soi:
+                buf = buf[soi:]
+            eoi = buf.find(b"\xff\xd9", 2)
+            if eoi < 0:
+                break
+            jpg = buf[: eoi + 2]
+            buf = buf[eoi + 2 :]
+            if len(jpg) > 200:
+                yield jpg
+
+
+def iter_ffmpeg_rtsp(
+    dev: dict[str, Any],
+    channel: int,
+    subtype: int,
+    jpeg_quality: int,
+    max_width: int,
+    target_fps: float,
+) -> Iterator[bytes]:
+    """
+    RTSP extra → MJPEG con ffmpeg (un solo recode, baja latencia).
+    El browser no habla rtsp://; este pipe es el camino corto.
+    """
+    bin_path = shutil.which("ffmpeg")
+    if not bin_path:
+        return
+    url = rtsp_url(dev, channel=channel, subtype=subtype)
+    host = str(dev.get("host") or "")
+    port = int(dev.get("rtspPort") or dev.get("rtsp_port") or 554)
+    fps = max(5, min(20, int(round(float(target_fps)))))
+    width = max(320, min(1280, int(max_width)))
+    cmd = [
+        bin_path,
+        "-nostdin",
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-fflags",
+        "nobuffer",
+        "-flags",
+        "low_delay",
+        "-probesize",
+        "32",
+        "-analyzeduration",
+        "0",
+        "-rtsp_transport",
+        "tcp",
+        "-timeout",
+        "5000000",
+        "-i",
+        url,
+        "-an",
+        "-r",
+        str(fps),
+        "-vf",
+        f"scale={width}:-2",
+        "-q:v",
+        str(_ffmpeg_q(jpeg_quality)),
+        "-f",
+        "mpjpeg",
+        "-boundary_tag",
+        "frame",
+        "pipe:1",
+    ]
+    proc = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        bufsize=0,
+    )
+
+    def _drain_err() -> None:
+        try:
+            if proc.stderr:
+                proc.stderr.read()
+        except Exception:  # noqa: BLE001
+            return
+
+    threading.Thread(target=_drain_err, daemon=True, name="ffmpeg-err").start()
+    print(f"Live ffmpeg RTSP host={host} port={port} subtype={subtype} fps={fps}", flush=True)
+    try:
+        if not proc.stdout:
+            return
+        yield from (_pack_jpeg(jpg) for jpg in _iter_jpegs_from_pipe(proc.stdout.read))
+    finally:
+        try:
+            proc.kill()
+            proc.wait(timeout=2)
+        except Exception:  # noqa: BLE001
+            pass
+
+
 def iter_mjpeg(
     dev: dict[str, Any],
     channel: int = 1,
@@ -209,13 +321,13 @@ def iter_mjpeg(
     target_fps: float | None = None,
 ) -> Iterator[bytes]:
     """
-    Live del dashboard: RTSP extra 1. No cae al main ni a snapshot.cgi
-    (eso traba el ASI). Snapshot CGI solo con AGENT_LIVE_PREFER_SNAPSHOT=1 (NAT).
+    Live del dashboard: RTSP extra 1 via ffmpeg (sin OpenCV). No cae al main
+    ni a snapshot.cgi. Snapshot CGI solo con AGENT_LIVE_PREFER_SNAPSHOT=1 (NAT).
     """
     if jpeg_quality is None:
         jpeg_quality = _env_int("AGENT_LIVE_JPEG_QUALITY", 52)
     if target_fps is None:
-        target_fps = _env_float("AGENT_LIVE_FPS", 8.0)
+        target_fps = _env_float("AGENT_LIVE_FPS", 12.0)
 
     prefer_snap = os.environ.get("AGENT_LIVE_PREFER_SNAPSHOT", "").strip() in {"1", "true", "yes"}
     if prefer_snap:
@@ -231,15 +343,34 @@ def iter_mjpeg(
         return
 
     try_subs = _live_try_subs(dev, subtype)
-    cap = None
-    wait = _env_float("AGENT_LIVE_RTSP_WAIT", 12.0)
     host = str(dev.get("host") or "")
     port = int(dev.get("rtspPort") or dev.get("rtsp_port") or 554)
+
+    if shutil.which("ffmpeg"):
+        for try_sub in try_subs:
+            got = False
+            for packed in iter_ffmpeg_rtsp(
+                dev,
+                channel=channel,
+                subtype=try_sub,
+                jpeg_quality=jpeg_quality,
+                max_width=max_width,
+                target_fps=target_fps,
+            ):
+                got = True
+                yield packed
+            if got:
+                yield from iter_placeholder_mjpeg("Sin live")
+                return
+            print(f"Live ffmpeg no entrego host={host} port={port} subtype={try_sub}", flush=True)
+
+    wait = _env_float("AGENT_LIVE_RTSP_WAIT", 12.0)
+    cap = None
     for try_sub in try_subs:
         url = rtsp_url(dev, channel=channel, subtype=try_sub)
         cap = _open_rtsp_limited(url, timeout=wait)
         if cap is not None:
-            print(f"Live RTSP host={host} port={port} subtype={try_sub}", flush=True)
+            print(f"Live OpenCV RTSP host={host} port={port} subtype={try_sub}", flush=True)
             break
     if cap is None:
         print(f"Live RTSP no abrio host={host} port={port} extra=1, sin snapshot CGI", flush=True)

@@ -734,7 +734,7 @@ async def lifespan(_app: FastAPI):
     alpr.stop()
 
 
-app = FastAPI(title="AccesoPro Site Agent", version="0.3.2", lifespan=lifespan)
+app = FastAPI(title="AccesoPro Site Agent", version="0.3.3", lifespan=lifespan)
 
 
 @app.get("/health")
@@ -745,7 +745,7 @@ def health():
         "product": "AccesoPro",
         "cameras": len(_config.get("cameras") or []),
         "dahua": len(_config.get("dahua") or []),
-        "version": "0.3.2",
+        "version": "0.3.3",
         "streamLive": {k: bool(v) for k, v in _stream_live.items()},
         "streamError": dict(_stream_error),
         "cursors": {k: {"recNo": a, "rawTime": b} for k, (a, b) in _cursors.items()},
@@ -840,7 +840,7 @@ def dahua_live(
     authorization: str | None = Header(default=None),
     token: str | None = Query(default=None),
 ):
-    """MJPEG desde RTSP extra 1. El ASI no usa main ni snapshot CGI (traba el facial)."""
+    """MJPEG desde RTSP extra 1 via ffmpeg (el browser no abre rtsp://)."""
     _authorize(authorization, token)
     _ensure_dahua_config()
     dev = _device(device_id)
