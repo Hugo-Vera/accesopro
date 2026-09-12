@@ -3,7 +3,9 @@ node_modules
 .git
 .cursor
 **/.venv
-**/evidencia
+# Fotos/dumps de evidencia en runtime — NUNCA **/evidencia: eso saca la página Next del build (404).
+apps/site/**/evidencia
+apps/api/data/**
 apps/api/data
 .env
 .env.local
