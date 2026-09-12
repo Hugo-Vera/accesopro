@@ -93,6 +93,7 @@ export async function ensureDemoFeatures(tenantId: string) {
   for (const key of ["dahua.live", "dahua.evidence", "dahua.persons", "dahua.qr"] as const) {
     await setTenantFeature(tenantId, key, true);
   }
+  await setTenantFeature(tenantId, "dahua.face", true);
 }
 
 export function serializeFeature(pack: FeaturePackDef & { parentOn?: boolean; enabled?: boolean }) {

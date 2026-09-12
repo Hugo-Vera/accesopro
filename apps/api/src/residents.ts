@@ -5,6 +5,7 @@ import type { AuthUser } from "./auth.js";
 import { requireAuth } from "./auth.js";
 import { db } from "./db/client.js";
 import {
+  credentialDeviceSync,
   ownerProfiles,
   properties,
   propertyFamilyMembers,
@@ -14,10 +15,25 @@ import {
   visitAuthorizations,
   visitPasses,
 } from "./db/schema.js";
-import { deletePersonOnSiteDevices, enrollPersonOnSiteDevices } from "./dahuaSite.js";
+import {
+  deletePersonOnSiteDevicesWait,
+  enrollOk,
+  enrollPersonOnSiteDevicesWait,
+} from "./dahuaSite.js";
 import { revokeAuthorizationOnEngine, syncAuthorizationToEngine, syncOwnerDniToEngine } from "./engineSync.js";
 import { nid, normalizePlate, scopedSiteWithModule } from "./scope.js";
 import { makeVisitToken } from "./visitPass.js";
+import { applyRoleTemplate, userHasCapability } from "./grants.js";
+import { assertFeature, tenantFeatureEnabled } from "./features.js";
+import {
+  activationUrl,
+  hashPassword,
+  inviteExpiresAt,
+  inviteShareText,
+  newInviteToken,
+  newTempPassword,
+  normalizeArWhatsapp,
+} from "./ownerInvite.js";
 
 type Env = { Variables: { user: AuthUser } };
 
@@ -63,14 +79,58 @@ function isAdmin(user: AuthUser) {
   return user.role === "platform_admin" || user.role === "tenant_admin";
 }
 
-// ── Admin: propiedades ───────────────────────────────────────────────────────
+async function canInvite(user: AuthUser) {
+  if (isAdmin(user)) return true;
+  return userHasCapability(user, "access.owners.invite");
+}
+
+function publicWebBase(c: { req: { header: (n: string) => string | undefined } }) {
+  const env = (process.env.WEB_ORIGIN ?? "http://localhost:3000").split(",")[0]?.trim();
+  return c.req.header("origin") || env || "http://localhost:3000";
+}
+
+async function featureMap(tenantId: string) {
+  return {
+    face: await tenantFeatureEnabled(tenantId, "dahua.face"),
+    qr: await tenantFeatureEnabled(tenantId, "dahua.qr"),
+    fingerprint: await tenantFeatureEnabled(tenantId, "dahua.fingerprint"),
+    card: await tenantFeatureEnabled(tenantId, "dahua.card"),
+    password: await tenantFeatureEnabled(tenantId, "dahua.password"),
+  };
+}
+
+async function syncLanes(dahuaUserId: string | null | undefined) {
+  if (!dahuaUserId) return [];
+  return db.select().from(credentialDeviceSync).where(eq(credentialDeviceSync.dahuaUserId, dahuaUserId));
+}
+
+// ── Admin / vigilador: propiedades ───────────────────────────────────────────
 
 residents.get("/properties", async (c) => {
   const scoped = await scopedSiteWithModule(c, "visitors");
   if ("error" in scoped) return scoped.error;
-  if (!isAdmin(c.get("user"))) return c.json({ error: "Solo administración del barrio" }, 403);
+  if (!(await canInvite(c.get("user")))) return c.json({ error: "Sin permiso para ver lotes" }, 403);
   const rows = await db.select().from(properties).where(eq(properties.tenantId, scoped.tenantId));
-  return c.json({ properties: rows });
+  const propertiesOut = [];
+  for (const p of rows) {
+    const profiles = await db.select().from(ownerProfiles).where(eq(ownerProfiles.propertyId, p.id));
+    const owners = [];
+    for (const pr of profiles) {
+      const u = await db.select().from(users).where(eq(users.id, pr.userId)).get();
+      if (!u) continue;
+      owners.push({
+        userId: u.id,
+        email: u.email,
+        name: u.name,
+        dni: pr.dni,
+        whatsapp: pr.whatsapp,
+        mustChangePassword: Boolean(u.mustChangePassword),
+        invitePending: Boolean(u.mustChangePassword || u.inviteToken),
+      });
+    }
+    propertiesOut.push({ ...p, owners });
+  }
+  return c.json({ properties: propertiesOut, canCreateLot: isAdmin(c.get("user")) });
 });
 
 residents.post("/properties", async (c) => {
@@ -183,6 +243,140 @@ residents.post("/properties/:id/owners", async (c) => {
   return c.json({ ok: true, userId, profileId });
 });
 
+residents.post("/properties/:id/invite", async (c) => {
+  const scoped = await scopedSiteWithModule(c, "visitors");
+  if ("error" in scoped) return scoped.error;
+  if (!(await canInvite(c.get("user")))) return c.json({ error: "Sin permiso para invitar propietarios" }, 403);
+  const property = await db
+    .select()
+    .from(properties)
+    .where(and(eq(properties.id, c.req.param("id")), eq(properties.tenantId, scoped.tenantId)))
+    .get();
+  if (!property) return c.json({ error: "Propiedad no encontrada" }, 404);
+  const body = await c.req.json<{
+    email?: string;
+    name?: string;
+    dni?: string;
+    whatsapp?: string;
+  }>();
+  const email = body.email?.trim().toLowerCase();
+  const name = body.name?.trim() || "";
+  const dni = body.dni?.trim() || "";
+  const whatsapp = normalizeArWhatsapp(body.whatsapp || "");
+  if (!email) return c.json({ error: "Falta el email del propietario" }, 400);
+  if (!name && !dni) return c.json({ error: "Pedí el nombre o el DNI" }, 400);
+  if (!whatsapp) return c.json({ error: "Falta un WhatsApp válido (con código de área)" }, 400);
+  const exists = await db.select().from(users).where(eq(users.email, email)).get();
+  if (exists) return c.json({ error: "Ya existe un usuario con ese email" }, 409);
+
+  const userId = nid();
+  const profileId = nid();
+  const tempPassword = newTempPassword();
+  const token = newInviteToken();
+  const displayName = name || `Lote ${property.lotNumber}`;
+  await db.insert(users).values({
+    id: userId,
+    tenantId: scoped.tenantId,
+    email,
+    passwordHash: await hashPassword(tempPassword),
+    name: displayName,
+    role: "resident",
+    mustChangePassword: true,
+    inviteToken: token,
+    inviteExpiresAt: inviteExpiresAt(),
+    createdAt: new Date(),
+  });
+  await applyRoleTemplate(userId, "resident", c.get("user").id);
+  await db.insert(ownerProfiles).values({
+    id: profileId,
+    userId,
+    propertyId: property.id,
+    fullName: name || null,
+    dni: dni || null,
+    whatsapp,
+    phone: whatsapp,
+    createdAt: new Date(),
+  });
+  if (dni) await syncOwnerDniToEngine(property.lotNumber, dni, displayName);
+  const url = activationUrl(publicWebBase(c), token);
+  const shareText = inviteShareText({
+    name: displayName,
+    lotNumber: property.lotNumber,
+    email,
+    tempPassword,
+    url,
+  });
+  return c.json({
+    ok: true,
+    userId,
+    profileId,
+    email,
+    tempPassword,
+    activateUrl: url,
+    whatsapp,
+    waUrl: `https://wa.me/${whatsapp}?text=${encodeURIComponent(shareText)}`,
+    shareText,
+  });
+});
+
+residents.post("/invites/:userId/resend", async (c) => {
+  const scoped = await scopedSiteWithModule(c, "visitors");
+  if ("error" in scoped) return scoped.error;
+  if (!(await canInvite(c.get("user")))) return c.json({ error: "Sin permiso para reenviar" }, 403);
+  const userId = c.req.param("userId");
+  const u = await db.select().from(users).where(eq(users.id, userId)).get();
+  if (!u || u.tenantId !== scoped.tenantId || u.role !== "resident") {
+    return c.json({ error: "Propietario no encontrado" }, 404);
+  }
+  const profile = await db.select().from(ownerProfiles).where(eq(ownerProfiles.userId, u.id)).get();
+  const property = profile
+    ? await db.select().from(properties).where(eq(properties.id, profile.propertyId)).get()
+    : null;
+  if (!property) return c.json({ error: "Lote no encontrado" }, 404);
+  const tempPassword = newTempPassword();
+  const token = newInviteToken();
+  await db
+    .update(users)
+    .set({
+      passwordHash: await hashPassword(tempPassword),
+      mustChangePassword: true,
+      inviteToken: token,
+      inviteExpiresAt: inviteExpiresAt(),
+    })
+    .where(eq(users.id, u.id));
+  const url = activationUrl(publicWebBase(c), token);
+  const whatsapp = profile?.whatsapp ? normalizeArWhatsapp(profile.whatsapp) : null;
+  const shareText = inviteShareText({
+    name: u.name,
+    lotNumber: property.lotNumber,
+    email: u.email,
+    tempPassword,
+    url,
+  });
+  return c.json({
+    ok: true,
+    tempPassword,
+    activateUrl: url,
+    whatsapp,
+    waUrl: whatsapp ? `https://wa.me/${whatsapp}?text=${encodeURIComponent(shareText)}` : null,
+    shareText,
+  });
+});
+
+residents.post("/invites/:userId/revoke", async (c) => {
+  const scoped = await scopedSiteWithModule(c, "visitors");
+  if ("error" in scoped) return scoped.error;
+  if (!isAdmin(c.get("user"))) return c.json({ error: "Solo administración puede revocar" }, 403);
+  const userId = c.req.param("userId");
+  const u = await db.select().from(users).where(eq(users.id, userId)).get();
+  if (!u || u.tenantId !== scoped.tenantId) return c.json({ error: "Usuario no encontrado" }, 404);
+  await db
+    .update(users)
+    .set({ inviteToken: null, inviteExpiresAt: null, mustChangePassword: true })
+    .where(eq(users.id, u.id));
+  return c.json({ ok: true });
+});
+
 // ── Portal propietario ───────────────────────────────────────────────────────
 
 residents.get("/me", async (c) => {
@@ -203,13 +397,23 @@ residents.get("/me", async (c) => {
     .from(tenantModules)
     .where(and(eq(tenantModules.tenantId, scoped.tenantId), eq(tenantModules.moduleKey, "panic")))
     .get();
+  const features = await featureMap(scoped.tenantId);
+  const familyOut = [];
+  for (const f of familyMembers) {
+    familyOut.push({ ...f, deviceSync: await syncLanes(f.dahuaUserId) });
+  }
+  const servicesOut = [];
+  for (const s of services) {
+    servicesOut.push({ ...s, deviceSync: await syncLanes(s.dahuaUserId) });
+  }
   return c.json({
     user: c.get("user"),
-    profile: ctx.profile,
+    profile: { ...ctx.profile, deviceSync: await syncLanes(ctx.profile.dahuaUserId) },
     property: ctx.property,
-    services,
-    familyMembers,
+    services: servicesOut,
+    familyMembers: familyOut,
     panicEnabled: Boolean(panicRow?.enabled),
+    features,
   });
 });
 
@@ -228,7 +432,7 @@ residents.patch("/me", async (c) => {
     photoBase64?: string;
   }>();
 
-  const dahuaUserId = ctx.profile.dahuaUserId || `u_${ctx.profile.id.slice(-8)}`;
+  const dahuaUserId = ctx.profile.dahuaUserId || `own_${ctx.profile.id.slice(-8)}`;
 
   await db
     .update(ownerProfiles)
@@ -245,25 +449,28 @@ residents.patch("/me", async (c) => {
     .where(eq(ownerProfiles.id, ctx.profile.id));
 
   // Si se envió foto facial, la sincronizamos de inmediato con el terminal Dahua ASI
+  let deviceSync: unknown = await syncLanes(dahuaUserId);
   if (body.photoBase64) {
-    try {
-      await enrollPersonOnSiteDevices(ctx.property.siteId, {
+    const blocked = await assertFeature(scoped.tenantId, "dahua.face");
+    if (blocked) return c.json({ error: blocked }, 403);
+    const results = await enrollPersonOnSiteDevicesWait(
+      ctx.property.siteId,
+      {
         userId: dahuaUserId,
         name: body.fullName?.trim() || ctx.profile.fullName || c.get("user").name,
         cardNo: body.dni?.trim() || ctx.profile.dni || dahuaUserId,
         photoBase64: body.photoBase64,
         userType: 0,
-      });
-      await db
-        .update(ownerProfiles)
-        .set({ dahuaSynced: true })
-        .where(eq(ownerProfiles.id, ctx.profile.id));
-    } catch (err) {
-      console.error("Error sincronizando rostro del titular con Dahua:", err);
-    }
+      },
+    );
+    await db
+      .update(ownerProfiles)
+      .set({ dahuaSynced: enrollOk(results), dahuaUserId })
+      .where(eq(ownerProfiles.id, ctx.profile.id));
+    deviceSync = results;
   }
 
-  return c.json({ ok: true, dahuaUserId });
+  return c.json({ ok: true, dahuaUserId, deviceSync });
 });
 
 residents.post("/me/sync-face", async (c) => {
@@ -275,8 +482,10 @@ residents.post("/me/sync-face", async (c) => {
     return c.json({ error: "No hay foto facial cargada para el titular" }, 400);
   }
 
-  const dahuaUserId = ctx.profile.dahuaUserId || `u_${ctx.profile.id.slice(-8)}`;
-  await enrollPersonOnSiteDevices(ctx.property.siteId, {
+  const dahuaUserId = ctx.profile.dahuaUserId || `own_${ctx.profile.id.slice(-8)}`;
+  const blocked = await assertFeature(scoped.tenantId, "dahua.face");
+  if (blocked) return c.json({ error: blocked }, 403);
+  const results = await enrollPersonOnSiteDevicesWait(ctx.property.siteId, {
     userId: dahuaUserId,
     name: ctx.profile.fullName || c.get("user").name,
     cardNo: ctx.profile.dni || dahuaUserId,
@@ -286,10 +495,10 @@ residents.post("/me/sync-face", async (c) => {
 
   await db
     .update(ownerProfiles)
-    .set({ dahuaSynced: true, dahuaUserId })
+    .set({ dahuaSynced: enrollOk(results), dahuaUserId })
     .where(eq(ownerProfiles.id, ctx.profile.id));
 
-  return c.json({ ok: true, synced: true, dahuaUserId });
+  return c.json({ ok: true, synced: enrollOk(results), dahuaUserId, deviceSync: results });
 });
 
 // ── Portal: Grupo Familiar ──────────────────────────────────────────────────
@@ -318,13 +527,24 @@ residents.post("/me/family", async (c) => {
     relationship?: string;
     phone?: string;
     photoBase64?: string;
+    fechaDesde?: string;
+    fechaHasta?: string;
+    horaDesde?: string;
+    horaHasta?: string;
+    diasSemana?: number[];
   }>();
 
   const name = body.name?.trim();
   if (!name) return c.json({ error: "Falta el nombre del familiar" }, 400);
+  if (body.photoBase64) {
+    const blocked = await assertFeature(scoped.tenantId, "dahua.face");
+    if (blocked) return c.json({ error: blocked }, 403);
+  }
 
   const id = nid();
   const dahuaUserId = `fam_${id.slice(-8)}`;
+  const fechaDesde = body.fechaDesde ? parseDateInput(body.fechaDesde) : null;
+  const fechaHasta = body.fechaHasta ? parseDateInput(body.fechaHasta) : null;
 
   await db.insert(propertyFamilyMembers).values({
     id,
@@ -336,30 +556,42 @@ residents.post("/me/family", async (c) => {
     photoBase64: body.photoBase64 || null,
     dahuaUserId,
     dahuaSynced: false,
+    fechaDesde,
+    fechaHasta,
+    horaDesde: body.horaDesde?.trim() || null,
+    horaHasta: body.horaHasta?.trim() || null,
+    diasSemana: body.diasSemana ? JSON.stringify(body.diasSemana) : null,
     active: true,
     createdAt: new Date(),
   });
 
-  // Si se adjuntó foto facial, la sincronizamos de inmediato al terminal Dahua ASI
+  let deviceSync: unknown[] = [];
   if (body.photoBase64) {
-    try {
-      await enrollPersonOnSiteDevices(ctx.property.siteId, {
+    const results = await enrollPersonOnSiteDevicesWait(
+      ctx.property.siteId,
+      {
         userId: dahuaUserId,
         name,
         cardNo: body.dni?.trim() || dahuaUserId,
         photoBase64: body.photoBase64,
         userType: 0,
-      });
-      await db
-        .update(propertyFamilyMembers)
-        .set({ dahuaSynced: true })
-        .where(eq(propertyFamilyMembers.id, id));
-    } catch (err) {
-      console.error("Error sincronizando rostro del familiar con Dahua:", err);
-    }
+      },
+      {
+        horaDesde: body.horaDesde,
+        horaHasta: body.horaHasta,
+        diasSemana: body.diasSemana,
+        fechaDesde,
+        fechaHasta,
+      },
+    );
+    await db
+      .update(propertyFamilyMembers)
+      .set({ dahuaSynced: enrollOk(results) })
+      .where(eq(propertyFamilyMembers.id, id));
+    deviceSync = results;
   }
 
-  return c.json({ ok: true, id, dahuaUserId });
+  return c.json({ ok: true, id, dahuaUserId, deviceSync });
 });
 
 residents.delete("/me/family/:id", async (c) => {
@@ -381,13 +613,7 @@ residents.delete("/me/family/:id", async (c) => {
     .where(eq(propertyFamilyMembers.id, row.id));
 
   if (row.dahuaUserId) {
-    try {
-      await deletePersonOnSiteDevices(ctx.property.siteId, {
-        userId: row.dahuaUserId,
-      });
-    } catch (err) {
-      console.error("Error removiendo familiar de Dahua:", err);
-    }
+    await deletePersonOnSiteDevicesWait(ctx.property.siteId, { userId: row.dahuaUserId });
   }
 
   return c.json({ ok: true });
@@ -416,12 +642,18 @@ residents.post("/me/services", async (c) => {
     horaDesde?: string;
     horaHasta?: string;
     diasSemana?: number[];
+    fechaDesde?: string;
+    fechaHasta?: string;
     notes?: string;
+    photoBase64?: string;
   }>();
   const name = body.name?.trim();
   const role = body.role?.trim() || "otro";
   if (!name) return c.json({ error: "Falta el nombre" }, 400);
   const id = nid();
+  const dahuaUserId = `svc_${id.slice(-8)}`;
+  const fechaDesde = body.fechaDesde ? parseDateInput(body.fechaDesde) : null;
+  const fechaHasta = body.fechaHasta ? parseDateInput(body.fechaHasta) : null;
   await db.insert(propertyServices).values({
     id,
     propertyId: ctx.property.id,
@@ -433,11 +665,42 @@ residents.post("/me/services", async (c) => {
     horaDesde: body.horaDesde?.trim() || null,
     horaHasta: body.horaHasta?.trim() || null,
     diasSemana: body.diasSemana ? JSON.stringify(body.diasSemana) : null,
+    fechaDesde,
+    fechaHasta,
     notes: body.notes?.trim() || null,
+    photoBase64: body.photoBase64 || null,
+    dahuaUserId,
+    dahuaSynced: false,
     active: true,
     createdAt: new Date(),
   });
-  return c.json({ ok: true, id });
+  let deviceSync: unknown[] = [];
+  if (body.photoBase64 || body.dni) {
+    if (body.photoBase64) {
+      const blocked = await assertFeature(scoped.tenantId, "dahua.face");
+      if (blocked) return c.json({ error: blocked, id }, 403);
+    }
+    const results = await enrollPersonOnSiteDevicesWait(
+      ctx.property.siteId,
+      {
+        userId: dahuaUserId,
+        name,
+        cardNo: body.dni?.trim() || dahuaUserId,
+        photoBase64: body.photoBase64,
+        userType: 0,
+      },
+      {
+        horaDesde: body.horaDesde,
+        horaHasta: body.horaHasta,
+        diasSemana: body.diasSemana,
+        fechaDesde,
+        fechaHasta,
+      },
+    );
+    await db.update(propertyServices).set({ dahuaSynced: enrollOk(results) }).where(eq(propertyServices.id, id));
+    deviceSync = results;
+  }
+  return c.json({ ok: true, id, dahuaUserId, deviceSync });
 });
 
 residents.delete("/me/services/:id", async (c) => {
@@ -445,10 +708,18 @@ residents.delete("/me/services/:id", async (c) => {
   if ("error" in scoped) return scoped.error;
   const ctx = await ownerContext(c.get("user"));
   if (!ctx) return c.json({ error: "Perfil de propietario no encontrado" }, 404);
+  const row = await db
+    .select()
+    .from(propertyServices)
+    .where(and(eq(propertyServices.id, c.req.param("id")), eq(propertyServices.propertyId, ctx.property.id)))
+    .get();
   await db
     .update(propertyServices)
     .set({ active: false })
     .where(and(eq(propertyServices.id, c.req.param("id")), eq(propertyServices.propertyId, ctx.property.id)));
+  if (row?.dahuaUserId) {
+    await deletePersonOnSiteDevicesWait(ctx.property.siteId, { userId: row.dahuaUserId });
+  }
   return c.json({ ok: true });
 });
 
@@ -560,6 +831,8 @@ residents.post("/me/visit-passes", async (c) => {
   if ("error" in scoped) return scoped.error;
   const ctx = await ownerContext(c.get("user"));
   if (!ctx) return c.json({ error: "Perfil de propietario no encontrado" }, 404);
+  const qrBlocked = await assertFeature(scoped.tenantId, "dahua.qr");
+  if (qrBlocked) return c.json({ error: qrBlocked }, 403);
   const body = await c.req.json<{
     guestName?: string;
     guestDni?: string;
@@ -600,22 +873,19 @@ residents.post("/me/visit-passes", async (c) => {
   });
 
   let dahuaSynced = false;
-  // Sincronización inmediata con el terminal Dahua ASI (el lector valida el QR como CardNo)
-  try {
-    const cmds = await enrollPersonOnSiteDevices(ctx.property.siteId, {
+  const results = await enrollPersonOnSiteDevicesWait(
+    ctx.property.siteId,
+    {
       userId: dahuaUserId,
       name: guestName,
       cardNo: token,
-      validDateStart: validFrom.toISOString().slice(0, 19).replace("T", " "),
-      validDateEnd: validUntil.toISOString().slice(0, 19).replace("T", " "),
       userType: 1,
-    });
-    if (cmds.length) {
-      dahuaSynced = true;
-      await db.update(visitPasses).set({ dahuaSynced: true, dahuaCardNo: token }).where(eq(visitPasses.id, passId));
-    }
-  } catch (err) {
-    console.error("Error sincronizando pase QR con Dahua:", err);
+    },
+    { fechaDesde: validFrom, fechaHasta: validUntil, horaDesde: body.horaDesde, horaHasta: body.horaHasta },
+  );
+  dahuaSynced = enrollOk(results);
+  if (dahuaSynced) {
+    await db.update(visitPasses).set({ dahuaSynced: true, dahuaCardNo: token }).where(eq(visitPasses.id, passId));
   }
 
   return c.json({
@@ -625,6 +895,7 @@ residents.post("/me/visit-passes", async (c) => {
     qrPayload: `ACCESOPRO:V1:${token}`,
     lotNumber: ctx.property.lotNumber,
     dahuaSynced,
+    deviceSync: results,
   });
 });
 
@@ -642,7 +913,7 @@ residents.post("/me/visit-passes/:id/revoke", async (c) => {
 
   // Revocar también del terminal Dahua
   try {
-    await deletePersonOnSiteDevices(ctx.property.siteId, {
+    await deletePersonOnSiteDevicesWait(ctx.property.siteId, {
       userId: `v_${passId.slice(-8)}`,
     });
   } catch (err) {

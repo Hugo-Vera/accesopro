@@ -165,20 +165,52 @@ def iter_snapshot_mjpeg(
             time.sleep(wait)
 
 
+def _placeholder_jpeg(message: str = "Sin live") -> bytes:
+    img = np.zeros((240, 320, 3), dtype=np.uint8)
+    img[:] = (18, 14, 8)
+    cv2.putText(
+        img,
+        message,
+        (70, 126),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.72,
+        (168, 168, 168),
+        1,
+        cv2.LINE_AA,
+    )
+    ok, buf = cv2.imencode(".jpg", img, [int(cv2.IMWRITE_JPEG_QUALITY), 70])
+    return buf.tobytes() if ok else b""
+
+
+def iter_placeholder_mjpeg(message: str = "Sin live") -> Iterator[bytes]:
+    packed = _pack_jpeg(_placeholder_jpeg(message))
+    while True:
+        yield packed
+        time.sleep(1.0)
+
+
+def _live_try_subs(dev: dict[str, Any], requested: int) -> list[int]:
+    """ASI: solo extra 1. Nunca main (0): satura el motor facial."""
+    if str(dev.get("deviceType") or "") == "asi_facial":
+        return [1]
+    sub = int(requested)
+    if sub == 1:
+        return [1]
+    return [sub, 1]
+
+
 def iter_mjpeg(
     dev: dict[str, Any],
     channel: int = 1,
-    subtype: int = 2,
+    subtype: int = 1,
     jpeg_quality: int | None = None,
     max_width: int = 720,
     force_size: tuple[int, int] | None = None,
     target_fps: float | None = None,
 ) -> Iterator[bytes]:
     """
-    force_size: (width, height). Si se indica, reescala cada frame a ese tamaño
-    (p.ej. 272×480 del display ASI) para que el live coincida con la pantalla del lector.
-    target_fps: tope de encode (OpenCV come CPU si no se limita). Env: AGENT_LIVE_FPS.
-    Si el RTSP no abre (NAT / digest), pasa a snapshot CGI por HTTP.
+    Live del dashboard: RTSP extra 1. No cae al main ni a snapshot.cgi
+    (eso traba el ASI). Snapshot CGI solo con AGENT_LIVE_PREFER_SNAPSHOT=1 (NAT).
     """
     if jpeg_quality is None:
         jpeg_quality = _env_int("AGENT_LIVE_JPEG_QUALITY", 52)
@@ -186,27 +218,7 @@ def iter_mjpeg(
         target_fps = _env_float("AGENT_LIVE_FPS", 8.0)
 
     prefer_snap = os.environ.get("AGENT_LIVE_PREFER_SNAPSHOT", "").strip() in {"1", "true", "yes"}
-    sub = int(subtype)
-    cap = None
-    wait = _env_float("AGENT_LIVE_RTSP_WAIT", 12.0)
-    # Extra 1 (640×480) es el que suele atravesar NAT; el 2 vertical a menudo no.
-    if str(dev.get("deviceType") or "") == "asi_facial":
-        try_subs = [1, 0] if sub != 0 else [0, 1]
-    else:
-        try_subs = [sub] if sub == 1 else [sub, 1]
-    if not prefer_snap:
-        host = str(dev.get("host") or "")
-        port = int(dev.get("rtspPort") or dev.get("rtsp_port") or 554)
-        for try_sub in try_subs:
-            url = rtsp_url(dev, channel=channel, subtype=try_sub)
-            cap = _open_rtsp_limited(url, timeout=wait)
-            if cap is not None:
-                print(f"Live RTSP host={host} port={port} subtype={try_sub}", flush=True)
-                break
-        if cap is None:
-            print(f"Live RTSP no abrio host={host} port={port}, fallback snapshot", flush=True)
-
-    if cap is None:
+    if prefer_snap:
         snap_fps = _env_float("AGENT_LIVE_SNAPSHOT_FPS", 4.0)
         yield from iter_snapshot_mjpeg(
             dev,
@@ -218,6 +230,22 @@ def iter_mjpeg(
         )
         return
 
+    try_subs = _live_try_subs(dev, subtype)
+    cap = None
+    wait = _env_float("AGENT_LIVE_RTSP_WAIT", 12.0)
+    host = str(dev.get("host") or "")
+    port = int(dev.get("rtspPort") or dev.get("rtsp_port") or 554)
+    for try_sub in try_subs:
+        url = rtsp_url(dev, channel=channel, subtype=try_sub)
+        cap = _open_rtsp_limited(url, timeout=wait)
+        if cap is not None:
+            print(f"Live RTSP host={host} port={port} subtype={try_sub}", flush=True)
+            break
+    if cap is None:
+        print(f"Live RTSP no abrio host={host} port={port} extra=1, sin snapshot CGI", flush=True)
+        yield from iter_placeholder_mjpeg("Sin live")
+        return
+
     fails = 0
     min_interval = 1.0 / max(1.0, float(target_fps))
     next_emit = 0.0
@@ -227,7 +255,7 @@ def iter_mjpeg(
             if not ok:
                 fails += 1
                 if fails > 40:
-                    print("Live RTSP cortado, paso a snapshot CGI")
+                    print("Live RTSP cortado, sin snapshot CGI")
                     break
                 time.sleep(0.08)
                 continue
@@ -244,19 +272,11 @@ def iter_mjpeg(
                 continue
             yield _pack_jpeg(jpg)
     except Exception as exc:  # noqa: BLE001
-        print(f"Live RTSP error, paso a snapshot CGI: {exc}")
+        print(f"Live RTSP error, sin snapshot CGI: {exc}")
     finally:
         cap.release()
 
-    snap_fps = _env_float("AGENT_LIVE_SNAPSHOT_FPS", 4.0)
-    yield from iter_snapshot_mjpeg(
-        dev,
-        channel=channel,
-        jpeg_quality=jpeg_quality,
-        max_width=max_width,
-        force_size=force_size,
-        target_fps=snap_fps,
-    )
+    yield from iter_placeholder_mjpeg("Sin live")
 
 
 class _LiveHub:
@@ -276,7 +296,7 @@ _hubs_lock = threading.Lock()
 def iter_mjpeg_shared(
     dev: dict[str, Any],
     channel: int = 1,
-    subtype: int = 2,
+    subtype: int = 1,
     jpeg_quality: int | None = None,
     max_width: int = 720,
     force_size: tuple[int, int] | None = None,

@@ -612,5 +612,40 @@ async function backfillAccessPointsFromLegacy() {
       }
     }
   }
+
+  await addColumn("users", "must_change_password", "INTEGER NOT NULL DEFAULT 0");
+  await addColumn("users", "invite_token", "TEXT");
+  await addColumn("users", "invite_expires_at", "INTEGER");
+  await addColumn("owner_profiles", "whatsapp", "TEXT");
+  await addColumn("property_family_members", "fecha_desde", "INTEGER");
+  await addColumn("property_family_members", "fecha_hasta", "INTEGER");
+  await addColumn("property_family_members", "hora_desde", "TEXT");
+  await addColumn("property_family_members", "hora_hasta", "TEXT");
+  await addColumn("property_family_members", "dias_semana", "TEXT");
+  await addColumn("property_services", "fecha_desde", "INTEGER");
+  await addColumn("property_services", "fecha_hasta", "INTEGER");
+
+  await db.run(sql`
+    CREATE TABLE IF NOT EXISTS dahua_period_slots (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL REFERENCES dahua_devices(id),
+      fingerprint TEXT NOT NULL,
+      period_index INTEGER NOT NULL,
+      created_at INTEGER NOT NULL,
+      UNIQUE (device_id, fingerprint)
+    )
+  `);
+  await db.run(sql`
+    CREATE TABLE IF NOT EXISTS credential_device_sync (
+      id TEXT PRIMARY KEY,
+      site_id TEXT NOT NULL REFERENCES sites(id),
+      dahua_user_id TEXT NOT NULL,
+      device_id TEXT NOT NULL REFERENCES dahua_devices(id),
+      status TEXT NOT NULL DEFAULT 'pending',
+      last_error TEXT,
+      last_synced_at INTEGER,
+      UNIQUE (dahua_user_id, device_id)
+    )
+  `);
 }
 

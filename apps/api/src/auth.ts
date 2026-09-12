@@ -14,6 +14,7 @@ export type AuthUser = {
   email: string;
   name: string;
   role: string;
+  mustChangePassword?: boolean;
 };
 
 export async function createSession(userId: string): Promise<string> {
@@ -45,6 +46,7 @@ export async function userFromToken(token: string | undefined): Promise<AuthUser
       email: users.email,
       name: users.name,
       role: users.role,
+      mustChangePassword: users.mustChangePassword,
       expiresAt: sessions.expiresAt,
     })
     .from(sessions)
@@ -59,6 +61,7 @@ export async function userFromToken(token: string | undefined): Promise<AuthUser
     email: row.email,
     name: row.name,
     role: row.role,
+    mustChangePassword: Boolean(row.mustChangePassword),
   };
 }
 

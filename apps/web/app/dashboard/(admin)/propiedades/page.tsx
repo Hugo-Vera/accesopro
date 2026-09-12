@@ -5,8 +5,17 @@ import Link from "next/link";
 import { api, withTenant } from "@/lib/api";
 import { useDash } from "@/components/DashboardProvider";
 import { ModuleGate, PageHeader } from "@/components/PageHeader";
-import { Home, Plus, UserPlus, MapPin, X, Building, CheckCircle2 } from "lucide-react";
+import { Home, Plus, UserPlus, MapPin, X, Building, CheckCircle2, Copy, MessageCircle } from "lucide-react";
 import { useEscapeKey } from "@/hooks/useEscapeKey";
+
+type OwnerRow = {
+  userId: string;
+  email: string;
+  name: string;
+  dni: string | null;
+  whatsapp: string | null;
+  invitePending: boolean;
+};
 
 type Property = {
   id: string;
@@ -15,30 +24,45 @@ type Property = {
   address: string | null;
   mapLat: string | null;
   mapLng: string | null;
+  owners?: OwnerRow[];
+};
+
+type InviteResult = {
+  activateUrl: string;
+  waUrl: string | null;
+  shareText: string;
+  tempPassword: string;
+  email: string;
 };
 
 export default function PropiedadesPage() {
-  const { tenantId } = useDash();
+  const { tenantId, isAdmin, can } = useDash();
   const [rows, setRows] = useState<Property[]>([]);
+  const [canCreateLot, setCanCreateLot] = useState(false);
   const [loading, setLoading] = useState(true);
   const [showPropModal, setShowPropModal] = useState(false);
   const [showOwnerModal, setShowOwnerModal] = useState(false);
+  const [inviteResult, setInviteResult] = useState<InviteResult | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   useEscapeKey(() => {
-    if (showOwnerModal) setShowOwnerModal(false);
+    if (inviteResult) setInviteResult(null);
+    else if (showOwnerModal) setShowOwnerModal(false);
     else if (showPropModal) setShowPropModal(false);
-  }, showPropModal || showOwnerModal);
+  }, showPropModal || showOwnerModal || Boolean(inviteResult));
 
   const [form, setForm] = useState({ lotNumber: "", label: "", address: "", mapLat: "", mapLng: "" });
-  const [ownerForm, setOwnerForm] = useState({ propertyId: "", email: "", name: "", password: "", dni: "", phone: "" });
+  const [ownerForm, setOwnerForm] = useState({ propertyId: "", email: "", name: "", dni: "", whatsapp: "" });
+
+  const canInvite = isAdmin || can("access.owners.invite");
 
   const loadProperties = async () => {
     if (!tenantId) return;
     setLoading(true);
     try {
-      const d = await api<{ properties: Property[] }>(withTenant("/api/residents/properties", tenantId));
+      const d = await api<{ properties: Property[]; canCreateLot?: boolean }>(withTenant("/api/residents/properties", tenantId));
       setRows(d.properties || []);
+      setCanCreateLot(Boolean(d.canCreateLot));
     } catch {
       // ignore
     } finally {
@@ -77,13 +101,20 @@ export default function PropiedadesPage() {
     setBusy(true);
     setMsg(null);
     try {
-      await api(withTenant(`/api/residents/properties/${ownerForm.propertyId}/owners`, tenantId), {
+      const d = await api<InviteResult>(withTenant(`/api/residents/properties/${ownerForm.propertyId}/invite`, tenantId), {
         method: "POST",
-        body: JSON.stringify(ownerForm),
+        body: JSON.stringify({
+          email: ownerForm.email,
+          name: ownerForm.name,
+          dni: ownerForm.dni,
+          whatsapp: ownerForm.whatsapp,
+        }),
       });
-      setOwnerForm({ propertyId: "", email: "", name: "", password: "", dni: "", phone: "" });
+      setInviteResult(d);
+      setOwnerForm({ propertyId: "", email: "", name: "", dni: "", whatsapp: "" });
       setShowOwnerModal(false);
-      setMsg("Propietario creado con exito");
+      setMsg("Invitación lista para copiar o enviar por WhatsApp");
+      await loadProperties();
     } catch (err) {
       setMsg(err instanceof Error ? err.message : "Error al crear propietario");
     } finally {
@@ -119,23 +150,27 @@ export default function PropiedadesPage() {
           </div>
         </div>
         <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setShowOwnerModal(true)}
-            disabled={rows.length === 0}
-            className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
-          >
-            <UserPlus className="h-4 w-4" />
-            Crear Login Propietario
-          </button>
-          <button
-            type="button"
-            onClick={() => setShowPropModal(true)}
-            className="flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-xs font-semibold text-white shadow-sm transition hover:bg-blue-700 active:scale-95"
-          >
-            <Plus className="h-4 w-4" />
-            Nueva Propiedad
-          </button>
+          {canInvite ? (
+            <button
+              type="button"
+              onClick={() => setShowOwnerModal(true)}
+              disabled={rows.length === 0}
+              className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-xs font-semibold text-slate-700 shadow-sm transition hover:bg-slate-50 disabled:opacity-40 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+            >
+              <UserPlus className="h-4 w-4" />
+              Invitar propietario
+            </button>
+          ) : null}
+          {canCreateLot ? (
+            <button
+              type="button"
+              onClick={() => setShowPropModal(true)}
+              className="flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-xs font-semibold text-white shadow-sm transition hover:bg-blue-700 active:scale-95"
+            >
+              <Plus className="h-4 w-4" />
+              Nueva Propiedad
+            </button>
+          ) : null}
         </div>
       </div>
 
@@ -146,7 +181,7 @@ export default function PropiedadesPage() {
             <thead className="border-b border-slate-100 bg-slate-50 text-[11px] font-semibold uppercase tracking-wider text-slate-500 dark:border-slate-800 dark:bg-slate-950/60 dark:text-slate-400">
               <tr>
                 <th className="px-5 py-3.5">Nº Lote</th>
-                <th className="px-5 py-3.5">Titular / Identificador</th>
+                <th className="px-5 py-3.5">Propietarios</th>
                 <th className="px-5 py-3.5">Direccion</th>
                 <th className="px-5 py-3.5">Coordenadas GPS</th>
                 <th className="px-5 py-3.5">Plano</th>
@@ -168,7 +203,19 @@ export default function PropiedadesPage() {
                       Lote {r.lotNumber}
                     </td>
                     <td className="px-5 py-3.5 font-medium text-slate-700 dark:text-slate-200">
-                      {r.label}
+                      <div>{r.label}</div>
+                      {(r.owners || []).length ? (
+                        <ul className="mt-1 space-y-0.5 text-xs text-slate-500 dark:text-slate-400">
+                          {r.owners!.map((o) => (
+                            <li key={o.userId}>
+                              {o.name} · {o.email}
+                              {o.invitePending ? " (pendiente de activar)" : ""}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <span className="text-xs text-slate-400">Sin propietario invitado</span>
+                      )}
                     </td>
                     <td className="px-5 py-3.5 text-slate-500 dark:text-slate-400">
                       {r.address || "—"}
@@ -314,7 +361,7 @@ export default function PropiedadesPage() {
         </div>
       ) : null}
 
-      {/* Modal 2: Crear Login Propietario */}
+      {/* Modal 2: Invitar propietario */}
       {showOwnerModal ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 overflow-y-auto">
           <div className="relative w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl transition-all dark:border-slate-800 dark:bg-slate-900">
@@ -324,9 +371,9 @@ export default function PropiedadesPage() {
                   <UserPlus className="h-5 w-5" />
                 </div>
                 <div>
-                  <h3 className="font-bold text-slate-900 dark:text-white">Crear Login Propietario</h3>
+                  <h3 className="font-bold text-slate-900 dark:text-white">Invitar propietario</h3>
                   <p className="text-xs text-slate-500 dark:text-slate-400">
-                    Habilitar acceso a portal web de vecinos (/portal) para autorizar visitas.
+                    Lote + nombre o DNI + WhatsApp + email. El vecino arma su clave en el link.
                   </p>
                 </div>
               </div>
@@ -342,7 +389,7 @@ export default function PropiedadesPage() {
             <form onSubmit={addOwner} className="mt-5 space-y-4">
               <div>
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  Propiedad vinculada
+                  Lote
                 </label>
                 <select
                   required
@@ -362,48 +409,16 @@ export default function PropiedadesPage() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Email de acceso
-                  </label>
-                  <input
-                    type="email"
-                    required
-                    placeholder="vecino@correo.com"
-                    value={ownerForm.email}
-                    onChange={(e) => setOwnerForm({ ...ownerForm, email: e.target.value })}
-                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800/80 dark:text-white"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Nombre completo
+                    Nombre (o DNI)
                   </label>
                   <input
                     type="text"
-                    required
                     placeholder="Juan Perez"
                     value={ownerForm.name}
                     onChange={(e) => setOwnerForm({ ...ownerForm, name: e.target.value })}
                     className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800/80 dark:text-white"
                   />
                 </div>
-              </div>
-
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  Contraseña inicial (min. 8 caracteres)
-                </label>
-                <input
-                  type="password"
-                  required
-                  minLength={8}
-                  placeholder="••••••••"
-                  value={ownerForm.password}
-                  onChange={(e) => setOwnerForm({ ...ownerForm, password: e.target.value })}
-                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800/80 dark:text-white"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                     DNI
@@ -416,18 +431,33 @@ export default function PropiedadesPage() {
                     className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800/80 dark:text-white"
                   />
                 </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Telefono / Celular
-                  </label>
-                  <input
-                    type="tel"
-                    placeholder="11-4567-8901"
-                    value={ownerForm.phone}
-                    onChange={(e) => setOwnerForm({ ...ownerForm, phone: e.target.value })}
-                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800/80 dark:text-white"
-                  />
-                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  Email de acceso
+                </label>
+                <input
+                  type="email"
+                  required
+                  placeholder="vecino@correo.com"
+                  value={ownerForm.email}
+                  onChange={(e) => setOwnerForm({ ...ownerForm, email: e.target.value })}
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800/80 dark:text-white"
+                />
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  WhatsApp
+                </label>
+                <input
+                  type="tel"
+                  required
+                  placeholder="11 4567-8901"
+                  value={ownerForm.whatsapp}
+                  onChange={(e) => setOwnerForm({ ...ownerForm, whatsapp: e.target.value })}
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800/80 dark:text-white"
+                />
               </div>
 
               <div className="mt-6 flex items-center justify-end gap-2 pt-4 border-t border-slate-100 dark:border-slate-800">
@@ -443,10 +473,48 @@ export default function PropiedadesPage() {
                   disabled={busy}
                   className="rounded-xl bg-emerald-600 px-5 py-2.5 text-xs font-semibold text-white shadow-sm transition hover:bg-emerald-700 disabled:opacity-50"
                 >
-                  {busy ? "Creando..." : "Crear Propietario"}
+                  {busy ? "Generando…" : "Generar link"}
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      ) : null}
+
+      {inviteResult ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 overflow-y-auto">
+          <div className="relative w-full max-w-lg rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900">
+            <h3 className="font-bold text-slate-900 dark:text-white">Enviar invitación</h3>
+            <p className="mt-1 text-xs text-slate-500">Clave temporal: {inviteResult.tempPassword}</p>
+            <p className="mt-3 break-all text-xs text-slate-600 dark:text-slate-300">{inviteResult.activateUrl}</p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button
+                type="button"
+                onClick={() => navigator.clipboard.writeText(inviteResult.shareText)}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold dark:border-slate-700"
+              >
+                <Copy className="h-4 w-4" />
+                Copiar mensaje
+              </button>
+              {inviteResult.waUrl ? (
+                <a
+                  href={inviteResult.waUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-semibold text-white"
+                >
+                  <MessageCircle className="h-4 w-4" />
+                  WhatsApp
+                </a>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => setInviteResult(null)}
+                className="rounded-xl px-3 py-2 text-xs text-slate-500"
+              >
+                Cerrar
+              </button>
+            </div>
           </div>
         </div>
       ) : null}

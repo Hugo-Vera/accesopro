@@ -22,7 +22,11 @@ export default function LoginPage() {
         method: "POST",
         body: JSON.stringify({ email, password }),
       });
-      const me = await api<{ user: { role: string } | null }>("/auth/me");
+      const me = await api<{ user: { role: string; mustChangePassword?: boolean } | null }>("/auth/me");
+      if (me.user?.mustChangePassword) {
+        router.push("/activar");
+        return;
+      }
       router.push(me.user?.role === "resident" ? "/portal" : "/dashboard");
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo entrar");

@@ -93,7 +93,7 @@ const SECTIONS: Section[] = [
   {
     title: "Administración",
     items: [
-      { href: "/dashboard/propiedades", label: "Propiedades", module: "visitors", capability: "access.visitors.manage", adminOnly: true },
+      { href: "/dashboard/propiedades", label: "Propiedades", module: "visitors", capability: "access.owners.invite" },
       { href: "/dashboard/fichadas", label: "Fichadas", module: "attendance", capability: "access.attendance" },
       { href: "/dashboard/panico", label: "Pánico", module: "panic", capability: "ops.alarms" },
       { href: "/dashboard/fuego", label: "Fuego", module: "fire", capability: "ops.alarms" },

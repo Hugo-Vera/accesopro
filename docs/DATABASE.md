@@ -106,9 +106,11 @@ Visita: ingreso en carril 1 (`visit_passes.scanned_in_at`) y egreso en carril 2 
 | Tabla | Uso |
 |-------|-----|
 | `properties` | Lote, label, GPS casa (`map_lat`, `map_lng`), polígono GeoJSON (`lot_polygon`), dirección. Único `(site_id, lot_number)` |
-| `owner_profiles` | Vecino ↔ `users` ↔ `properties` (DNI, teléfonos, foto, sync Dahua) |
-| `property_family_members` | Grupo familiar del lote (foto / Dahua) |
-| `property_services` | Jardinero, empleada, horarios, días |
+| `owner_profiles` | Vecino ↔ `users` ↔ `properties` (DNI, WhatsApp, foto, sync Dahua) |
+| `property_family_members` | Grupo familiar del lote (foto / Dahua / vigencia) |
+| `property_services` | Jardinero, empleada, horarios, fechas, foto |
+| `dahua_period_slots` | Huella de horario → índice `AccessTimeSchedule` por ASI |
+| `credential_device_sync` | Enroll OK/error por lector (ingreso/salida) |
 | `visit_authorizations` | Autorización temporal (empleada, proveedor) |
 | `visit_passes` | QR de visita: `token`, vigencia, `scanned_in_at` / `scanned_out_at` |
 | `visitor_identities` | Persona filiatoria DNI (PDF417), lista negra |

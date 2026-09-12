@@ -807,7 +807,7 @@ hardware.get("/dahua/:id/live", async (c) => {
   const rawSubtype = c.req.query("subtype");
   const subtype = rawSubtype !== undefined && !isNaN(Number(rawSubtype))
     ? Number(rawSubtype)
-    : /facial|lector|asi|totem|pedestre/i.test(row.name) ? 2 : 2;
+    : 1;
   const agentBase = agentBaseUrl();
   const agentToken = process.env.SITE_AGENT_TOKEN ?? "accesopro-demo-agent";
   try {

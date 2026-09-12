@@ -140,12 +140,19 @@ export const PLAN_CATALOG: PlanDef[] = [
       "dahua.events",
       "dahua.open",
       "dahua.persons",
+      "dahua.face",
+      "dahua.fingerprint",
+      "dahua.card",
+      "dahua.password",
       "dahua.qr",
       "dahua.schedules",
+      "dahua.door",
+      "dahua.alarm",
       "dahua.evidence",
       "dahua.live",
       "dahua.intercom",
       "access.visitors.manage",
+      "access.owners.invite",
       "staff.employees",
       "tenant.grants",
     ],
@@ -171,12 +178,19 @@ export const PLAN_CATALOG: PlanDef[] = [
       "dahua.events",
       "dahua.open",
       "dahua.persons",
+      "dahua.face",
+      "dahua.fingerprint",
+      "dahua.card",
+      "dahua.password",
       "dahua.qr",
       "dahua.schedules",
+      "dahua.door",
+      "dahua.alarm",
       "dahua.evidence",
       "dahua.live",
       "dahua.intercom",
       "access.visitors.manage",
+      "access.owners.invite",
       "access.dni_enroll",
       "access.attendance",
       "staff.employees",
@@ -222,12 +236,19 @@ export type CapabilityKey =
   | "dahua.events"
   | "dahua.open"
   | "dahua.persons"
+  | "dahua.face"
+  | "dahua.fingerprint"
+  | "dahua.card"
+  | "dahua.password"
   | "dahua.qr"
   | "dahua.schedules"
+  | "dahua.door"
+  | "dahua.alarm"
   | "dahua.evidence"
   | "dahua.live"
   | "dahua.intercom"
   | "access.visitors.manage"
+  | "access.owners.invite"
   | "access.dni_enroll"
   | "access.attendance"
   | "staff.employees"
@@ -257,9 +278,15 @@ export const CAPABILITY_CATALOG: CapabilityDef[] = [
   { key: "access.dahua", group: "Dahua", name: "Equipos Dahua", summary: "Ver y administrar terminales del sitio.", moduleKey: "dahua_access" },
   { key: "dahua.events", group: "Dahua", name: "Eventos faciales", summary: "Cola de accesos y foto al pasar.", moduleKey: "dahua_access" },
   { key: "dahua.open", group: "Dahua", name: "Abrir desde Dahua", summary: "openDoor / relé del terminal.", moduleKey: "dahua_access" },
-  { key: "dahua.persons", group: "Dahua", name: "Personas en el lector", summary: "Alta de cara, huella, tarjeta y PIN.", moduleKey: "dahua_access" },
+  { key: "dahua.persons", group: "Dahua", name: "Personas en el lector", summary: "Padrón: quién existe, vigencia y baja.", moduleKey: "dahua_access" },
+  { key: "dahua.face", group: "Dahua", name: "Facial", summary: "Desbloqueo por cara y carga de foto.", moduleKey: "dahua_access" },
+  { key: "dahua.fingerprint", group: "Dahua", name: "Huella", summary: "Desbloqueo por huella digital.", moduleKey: "dahua_access" },
+  { key: "dahua.card", group: "Dahua", name: "Tarjeta", summary: "Desbloqueo por tarjeta / CardNo.", moduleKey: "dahua_access" },
+  { key: "dahua.password", group: "Dahua", name: "Contraseña del lector", summary: "PIN / clave en el ASI.", moduleKey: "dahua_access" },
   { key: "dahua.qr", group: "Dahua", name: "QR en el lector", summary: "QR nativo del ASI (paso por puerta).", moduleKey: "dahua_access" },
   { key: "dahua.schedules", group: "Dahua", name: "Periodos Dahua", summary: "Franjas horarias y festivos del equipo.", moduleKey: "dahua_access" },
+  { key: "dahua.door", group: "Dahua", name: "Parámetros de puerta", summary: "Estado normal, pulso y siempre abierto/cerrado.", moduleKey: "dahua_access" },
+  { key: "dahua.alarm", group: "Dahua", name: "Alarma del lector", summary: "Forzada / tamper del ASI.", moduleKey: "dahua_access" },
   {
     key: "dahua.evidence",
     group: "Dahua",
@@ -282,6 +309,7 @@ export const CAPABILITY_CATALOG: CapabilityDef[] = [
     moduleKey: "dahua_access",
   },
   { key: "access.visitors.manage", group: "Acceso", name: "Visitas", summary: "Gestionar visitas y propiedades.", moduleKey: "visitors" },
+  { key: "access.owners.invite", group: "Acceso", name: "Invitar propietario", summary: "Alta de vecino (email + WhatsApp) al lote.", moduleKey: "visitors" },
   { key: "access.dni_enroll", group: "Acceso", name: "Alta DNI", summary: "Enrolar con DNI en portería.", moduleKey: "dni_enroll" },
   { key: "access.attendance", group: "Personal", name: "Fichadas", summary: "Asistencia a partir de eventos Dahua.", moduleKey: "attendance" },
   { key: "staff.employees", group: "Personal", name: "Empleados", summary: "Alta de personal del lote (portal)." },
@@ -340,20 +368,60 @@ export const FEATURE_PACK_CATALOG: FeaturePackDef[] = [
     key: "dahua.persons",
     parentModule: "dahua_access",
     name: "Personas",
-    summary: "Registrar cara, huella, tarjeta y PIN en el lector.",
+    summary: "Padrón en el lector: alta, vigencia y baja. Los métodos (cara, QR, etc.) se venden aparte.",
     capabilityKey: "dahua.persons",
     href: "/dashboard/dahua/personas",
     defaultOn: true,
     sortOrder: 40,
   },
   {
+    key: "dahua.face",
+    parentModule: "dahua_access",
+    name: "Facial",
+    summary: "Desbloqueo por cara y carga de foto en portal y dashboard.",
+    capabilityKey: "dahua.face",
+    href: "/dashboard/dahua/personas",
+    defaultOn: true,
+    sortOrder: 42,
+  },
+  {
+    key: "dahua.fingerprint",
+    parentModule: "dahua_access",
+    name: "Huella",
+    summary: "Método huella digital en el ASI.",
+    capabilityKey: "dahua.fingerprint",
+    href: "/dashboard/dahua/personas",
+    defaultOn: false,
+    sortOrder: 44,
+  },
+  {
+    key: "dahua.card",
+    parentModule: "dahua_access",
+    name: "Tarjeta",
+    summary: "Método tarjeta / CardNo en el ASI.",
+    capabilityKey: "dahua.card",
+    href: "/dashboard/dahua/personas",
+    defaultOn: false,
+    sortOrder: 46,
+  },
+  {
+    key: "dahua.password",
+    parentModule: "dahua_access",
+    name: "Contraseña ASI",
+    summary: "PIN / clave en el lector.",
+    capabilityKey: "dahua.password",
+    href: "/dashboard/dahua/personas",
+    defaultOn: false,
+    sortOrder: 48,
+  },
+  {
     key: "dahua.qr",
     parentModule: "dahua_access",
     name: "QR del equipo",
-    summary: "Habilitar lectura/exposición de QR nativo del ASI.",
+    summary: "Lectura y emisión de QR nativo del ASI.",
     capabilityKey: "dahua.qr",
     href: "/dashboard/dahua/qr",
-    defaultOn: true,
+    defaultOn: false,
     sortOrder: 50,
   },
   {
@@ -396,6 +464,26 @@ export const FEATURE_PACK_CATALOG: FeaturePackDef[] = [
     defaultOn: false,
     sortOrder: 90,
   },
+  {
+    key: "dahua.door",
+    parentModule: "dahua_access",
+    name: "Parámetros de puerta",
+    summary: "Estado de puerta, pulso y siempre abierto/cerrado (instalador).",
+    capabilityKey: "dahua.door",
+    href: "/dashboard/dahua",
+    defaultOn: true,
+    sortOrder: 15,
+  },
+  {
+    key: "dahua.alarm",
+    parentModule: "dahua_access",
+    name: "Alarma del lector",
+    summary: "Forzada y tamper del ASI.",
+    capabilityKey: "dahua.alarm",
+    href: "/dashboard/dahua/eventos",
+    defaultOn: false,
+    sortOrder: 95,
+  },
 ];
 
 /** Plantillas base por rol (se cruzan con el plan del barrio). */
@@ -414,12 +502,19 @@ export const ROLE_TEMPLATES: Record<string, CapabilityKey[]> = {
     "dahua.events",
     "dahua.open",
     "dahua.persons",
+    "dahua.face",
+    "dahua.fingerprint",
+    "dahua.card",
+    "dahua.password",
     "dahua.qr",
     "dahua.schedules",
+    "dahua.door",
+    "dahua.alarm",
     "dahua.evidence",
     "dahua.live",
     "dahua.intercom",
     "access.visitors.manage",
+    "access.owners.invite",
     "access.dni_enroll",
     "access.attendance",
     "staff.employees",
@@ -438,7 +533,9 @@ export const ROLE_TEMPLATES: Record<string, CapabilityKey[]> = {
     "dahua.evidence",
     "dahua.live",
     "dahua.persons",
+    "dahua.face",
     "access.visitors.manage",
+    "access.owners.invite",
     "access.dni_enroll",
     "access.attendance",
   ],
@@ -470,6 +567,15 @@ export function featuresForModule(moduleKey: ModuleKey): FeaturePackDef[] {
 export function isFeatureKey(value: string): boolean {
   return FEATURE_PACK_CATALOG.some((f) => f.key === value);
 }
+
+/** Métodos de desbloqueo del ASI que se venden por pack y se escriben en DoorParam. */
+export const ASI_UNLOCK_METHOD_PACKS = [
+  "dahua.face",
+  "dahua.fingerprint",
+  "dahua.card",
+  "dahua.password",
+  "dahua.qr",
+] as const;
 
 /* —— Puntos de acceso (topología del predio; no es un módulo comercial) —— */
 

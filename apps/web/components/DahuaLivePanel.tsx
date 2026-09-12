@@ -23,9 +23,9 @@ export type LiveDevice = {
 
 export type LiveLane = "in" | "out";
 
-/** Clasifica la tecnología del equipo y define su resolución nativa */
+/** Clasifica la tecnología del equipo. Live ASI usa extra 1 (substream), no el display 272×480. */
 function getDeviceTech(d: LiveDevice | null) {
-  if (!d) return { type: "asi_facial", label: "Lector Facial", badge: "ASI 272×480", isFacial: true, subtype: 2 };
+  if (!d) return { type: "asi_facial", label: "Lector Facial", badge: "ASI extra", isFacial: true, subtype: 1 };
   const dt = d.deviceType;
   if (dt === "camera_ip" || /cam|ip|camara|cámara|nvr|dvr/i.test(d.name)) {
     return { type: "camera_ip", label: "Cámara IP", badge: "CAM IP 16:9", isFacial: false, subtype: 1 };
@@ -33,7 +33,7 @@ function getDeviceTech(d: LiveDevice | null) {
   if (dt === "vto_intercom" || /vto|intercom|portero/i.test(d.name)) {
     return { type: "vto_intercom", label: "Videoportero", badge: "VTO 16:9", isFacial: false, subtype: 1 };
   }
-  return { type: "asi_facial", label: "Lector Facial", badge: "ASI 272×480", isFacial: true, subtype: 2 };
+  return { type: "asi_facial", label: "Lector Facial", badge: "ASI extra", isFacial: true, subtype: 1 };
 }
 
 function laneGuess(d: LiveDevice): LiveLane | null {
@@ -225,7 +225,7 @@ export function DahuaLivePanel({
               }`}
               title={
                 tech.isFacial
-                  ? "Resolución de pantalla según datasheet: 272(H) × 480(V)"
+                  ? "Substream extra (RTSP subtype 1). No usa el main ni el display 272×480."
                   : "Resolución de cámara IP estándar: 16:9 HD"
               }
             >
@@ -319,7 +319,7 @@ export function DahuaLivePanel({
           {selected ? (
             <>
               <span className="font-mono text-[8.5px] font-semibold text-[#55819e]">
-                {tech.isFacial ? "272×480 (ASI)" : "16:9 HD"}
+                {tech.isFacial ? "substream extra" : "16:9 HD"}
               </span>
               <span className="max-w-[120px] truncate text-[10.5px] font-semibold text-slate-200">
                 {selected.name}

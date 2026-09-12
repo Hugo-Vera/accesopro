@@ -544,6 +544,17 @@ def _run_command(cmd: dict[str, Any]) -> dict[str, Any]:
         enable = bool(payload.get("transmissionEnable", True))
         valid_time = int(payload.get("validTime") or 15)
         return _client(dev).set_qr_config(enable, valid_time)
+    if action == "dahua_unlock_set":
+        dev = _device(payload.get("deviceId"))
+        if not dev:
+            return {"ok": False, "error": "Equipo no encontrado"}
+        return _client(dev).set_unlock_methods(
+            face=bool(payload.get("face", True)),
+            fingerprint=bool(payload.get("fingerprint", False)),
+            card=bool(payload.get("card", False)),
+            password=bool(payload.get("password", False)),
+            qr=bool(payload.get("qr", False)),
+        )
     if action == "dahua_schedules_get":
         dev = _device(payload.get("deviceId"))
         if not dev:
@@ -825,11 +836,11 @@ def _ensure_dahua_config() -> None:
 def dahua_live(
     device_id: str,
     channel: int = 1,
-    subtype: int = 2,
+    subtype: int = 1,
     authorization: str | None = Header(default=None),
     token: str | None = Query(default=None),
 ):
-    """MJPEG fluido desde RTSP (subtype 2 = stream nativo vertical en lectores faciales ASI, con fallback a 1)."""
+    """MJPEG desde RTSP extra 1. El ASI no usa main ni snapshot CGI (traba el facial)."""
     _authorize(authorization, token)
     _ensure_dahua_config()
     dev = _device(device_id)
@@ -838,7 +849,7 @@ def dahua_live(
     try:
         sub = int(subtype)
     except (TypeError, ValueError):
-        sub = 2
+        sub = 1
     ch = int(channel) or 1
 
     def gen():

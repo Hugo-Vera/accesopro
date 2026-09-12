@@ -722,4 +722,67 @@ class DahuaClient:
             return {"ok": False, "error": body[:300] or f"HTTP {res.status_code}", "face": face_msg}
         return {"ok": True, "response": body[:200] or "OK", "face": face_msg}
 
+    def get_access_control(self) -> dict[str, Any]:
+        text = self._get("/cgi-bin/configManager.cgi?action=getConfig&name=AccessControl")
+        info: dict[str, str] = {}
+        for line in text.splitlines():
+            if "=" in line:
+                k, v = line.split("=", 1)
+                info[k.strip()] = v.strip()
+        return {"ok": True, "raw": info}
+
+    def set_unlock_methods(
+        self,
+        *,
+        face: bool = True,
+        fingerprint: bool = False,
+        card: bool = False,
+        password: bool = False,
+        qr: bool = False,
+    ) -> dict[str, Any]:
+        method = 0
+        if password:
+            method |= 1
+        if fingerprint:
+            method |= 2
+        if card:
+            method |= 4
+        if face:
+            method |= 8
+        parts: list[str] = []
+        if card:
+            parts.append("Card")
+        if fingerprint:
+            parts.append("FingerPrint")
+        if face:
+            parts.append("Face")
+        if password:
+            parts.append("Password")
+        open_method = ",".join(parts) if parts else "Face"
+        flags = [
+            f"AccessControl[0].FaceEnable={'true' if face else 'false'}",
+            f"AccessControl[0].FingerEnable={'true' if fingerprint else 'false'}",
+            f"AccessControl[0].CardEnable={'true' if card else 'false'}",
+            f"AccessControl[0].PwdEnable={'true' if password else 'false'}",
+            f"AccessControl[0].Method={method}",
+            f"AccessControl[0].OpenMethod={open_method}",
+        ]
+        query = "&".join(flags)
+        res = self._request("GET", f"/cgi-bin/configManager.cgi?action=setConfig&{query}", timeout=8)
+        qr_res = self.set_qr_config(enable=qr, valid_time=15)
+        body = (res.text or "").strip()
+        return {
+            "ok": res.status_code == 200 and bool(qr_res.get("ok")),
+            "methods": {
+                "face": face,
+                "fingerprint": fingerprint,
+                "card": card,
+                "password": password,
+                "qr": qr,
+            },
+            "accessControl": body[:300],
+            "qr": qr_res,
+        }
+
+
 

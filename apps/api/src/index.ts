@@ -17,8 +17,10 @@ import {
 } from "./auth.js";
 import { agentRoutes } from "./agent.js";
 import { startEngineBridgePoller } from "./engineBridge.js";
+import { startRosterReconcilePoller } from "./rosterReconcile.js";
+import { isUnlockMethodPack, syncAsiUnlockMethods } from "./dahuaUnlock.js";
 import { db } from "./db/client.js";
-import { properties, sites, tenantModules, tenants, users, visitPasses, events } from "./db/schema.js";
+import { properties, ownerProfiles, sites, tenantModules, tenants, users, visitPasses, events } from "./db/schema.js";
 import { scanVisitPass, parseVisitQrPayload } from "./visitPass.js";
 import { accessPointsApi } from "./accessPoints.js";
 import { planApi } from "./plan.js";
@@ -100,9 +102,82 @@ app.post("/auth/login", async (c) => {
     email: row.email,
     name: row.name,
     role: row.role,
+    mustChangePassword: Boolean(row.mustChangePassword),
   };
   const capabilities = await resolveCapabilities(authUser);
   return c.json({ user: { ...authUser, capabilities } });
+});
+
+app.get("/auth/invite/:token", async (c) => {
+  const token = c.req.param("token")?.trim();
+  if (!token) return c.json({ error: "Falta el enlace" }, 400);
+  const row = await db.select().from(users).where(eq(users.inviteToken, token)).get();
+  if (!row || !row.inviteExpiresAt || row.inviteExpiresAt.getTime() < Date.now()) {
+    return c.json({ error: "El enlace venció o no es válido" }, 404);
+  }
+  const profile = await db.select().from(ownerProfiles).where(eq(ownerProfiles.userId, row.id)).get();
+  const property = profile
+    ? await db.select().from(properties).where(eq(properties.id, profile.propertyId)).get()
+    : null;
+  return c.json({
+    email: row.email,
+    name: row.name,
+    lotNumber: property?.lotNumber ?? null,
+    mustChangePassword: Boolean(row.mustChangePassword),
+  });
+});
+
+app.post("/auth/activate", async (c) => {
+  const body = await c.req.json<{ token?: string; password?: string; passwordConfirm?: string }>();
+  const token = body.token?.trim();
+  const password = body.password ?? "";
+  const passwordConfirm = body.passwordConfirm ?? "";
+  if (!token) return c.json({ error: "Falta el enlace de activación" }, 400);
+  if (password.length < 8) return c.json({ error: "La clave debe tener al menos 8 caracteres" }, 400);
+  if (password !== passwordConfirm) return c.json({ error: "Las claves no coinciden" }, 400);
+  const row = await db.select().from(users).where(eq(users.inviteToken, token)).get();
+  if (!row || !row.inviteExpiresAt || row.inviteExpiresAt.getTime() < Date.now()) {
+    return c.json({ error: "El enlace venció o no es válido" }, 404);
+  }
+  const hash = await bcrypt.hash(password, 10);
+  await db
+    .update(users)
+    .set({
+      passwordHash: hash,
+      mustChangePassword: false,
+      inviteToken: null,
+      inviteExpiresAt: null,
+    })
+    .where(eq(users.id, row.id));
+  const session = await createSession(row.id);
+  attachCookie(c, session);
+  const authUser = {
+    id: row.id,
+    tenantId: row.tenantId,
+    email: row.email,
+    name: row.name,
+    role: row.role,
+    mustChangePassword: false,
+  };
+  const capabilities = await resolveCapabilities(authUser);
+  return c.json({ user: { ...authUser, capabilities } });
+});
+
+app.post("/auth/change-password", async (c) => {
+  const token = getCookie(c, COOKIE) ?? c.req.header("authorization")?.replace(/^Bearer\s+/i, "");
+  const user = await userFromToken(token);
+  if (!user) return c.json({ error: "No autenticado" }, 401);
+  const body = await c.req.json<{ password?: string; passwordConfirm?: string }>();
+  const password = body.password ?? "";
+  const passwordConfirm = body.passwordConfirm ?? "";
+  if (password.length < 8) return c.json({ error: "La clave debe tener al menos 8 caracteres" }, 400);
+  if (password !== passwordConfirm) return c.json({ error: "Las claves no coinciden" }, 400);
+  const hash = await bcrypt.hash(password, 10);
+  await db
+    .update(users)
+    .set({ passwordHash: hash, mustChangePassword: false, inviteToken: null, inviteExpiresAt: null })
+    .where(eq(users.id, user.id));
+  return c.json({ ok: true });
 });
 
 app.post("/auth/logout", async (c) => {
@@ -316,6 +391,13 @@ app.patch("/api/tenants/:id/features", async (c) => {
   if (!body.key) return c.json({ error: "Falta key" }, 400);
   try {
     const pack = await setTenantFeature(tenantId, body.key, Boolean(body.enabled));
+    if (isUnlockMethodPack(body.key)) {
+      try {
+        await syncAsiUnlockMethods(tenantId);
+      } catch (err) {
+        console.error("sync ASI unlock methods:", err);
+      }
+    }
     return c.json({ ok: true, feature: serializeFeature({ ...pack, enabled: Boolean(body.enabled) }) });
   } catch (err) {
     return c.json({ error: err instanceof Error ? err.message : "No se pudo guardar" }, 400);
@@ -395,6 +477,7 @@ const host = process.env.HOST ?? "0.0.0.0";
 
 await seedIfEmpty();
 startEngineBridgePoller();
+startRosterReconcilePoller();
 
 serve({ fetch: app.fetch, port, hostname: host }, () => {
   console.log(`AccesoPro API en http://${host}:${port}`);

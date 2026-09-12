@@ -14,6 +14,9 @@ export const users = sqliteTable("users", {
   passwordHash: text("password_hash").notNull(),
   name: text("name").notNull(),
   role: text("role").notNull(),
+  mustChangePassword: integer("must_change_password", { mode: "boolean" }).notNull().default(false),
+  inviteToken: text("invite_token"),
+  inviteExpiresAt: integer("invite_expires_at", { mode: "timestamp_ms" }),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
 });
 
@@ -328,6 +331,7 @@ export const ownerProfiles = sqliteTable("owner_profiles", {
   fullName: text("full_name"),
   dni: text("dni"),
   phone: text("phone"),
+  whatsapp: text("whatsapp"),
   phoneAlt: text("phone_alt"),
   emergencyName: text("emergency_name"),
   emergencyPhone: text("emergency_phone"),
@@ -350,6 +354,11 @@ export const propertyFamilyMembers = sqliteTable("property_family_members", {
   photoBase64: text("photo_base64"),
   dahuaUserId: text("dahua_user_id"),
   dahuaSynced: integer("dahua_synced", { mode: "boolean" }).notNull().default(false),
+  fechaDesde: integer("fecha_desde", { mode: "timestamp_ms" }),
+  fechaHasta: integer("fecha_hasta", { mode: "timestamp_ms" }),
+  horaDesde: text("hora_desde"),
+  horaHasta: text("hora_hasta"),
+  diasSemana: text("dias_semana"),
   active: integer("active", { mode: "boolean" }).notNull().default(true),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
 });
@@ -367,6 +376,8 @@ export const propertyServices = sqliteTable("property_services", {
   horaDesde: text("hora_desde"),
   horaHasta: text("hora_hasta"),
   diasSemana: text("dias_semana"),
+  fechaDesde: integer("fecha_desde", { mode: "timestamp_ms" }),
+  fechaHasta: integer("fecha_hasta", { mode: "timestamp_ms" }),
   notes: text("notes"),
   photoBase64: text("photo_base64"),
   dahuaUserId: text("dahua_user_id"),
@@ -544,6 +555,32 @@ export const visitRecords = sqliteTable("visit_records", {
   notes: text("notes"),
   createdByUserId: text("created_by_user_id").references(() => users.id),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+});
+
+/** Plantilla AccessTimeSchedule reutilizada por huella de horario. */
+export const dahuaPeriodSlots = sqliteTable("dahua_period_slots", {
+  id: text("id").primaryKey(),
+  deviceId: text("device_id")
+    .notNull()
+    .references(() => dahuaDevices.id),
+  fingerprint: text("fingerprint").notNull(),
+  periodIndex: integer("period_index").notNull(),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+});
+
+/** Resultado de enroll por lector (ingreso / salida). */
+export const credentialDeviceSync = sqliteTable("credential_device_sync", {
+  id: text("id").primaryKey(),
+  siteId: text("site_id")
+    .notNull()
+    .references(() => sites.id),
+  dahuaUserId: text("dahua_user_id").notNull(),
+  deviceId: text("device_id")
+    .notNull()
+    .references(() => dahuaDevices.id),
+  status: text("status").notNull().default("pending"),
+  lastError: text("last_error"),
+  lastSyncedAt: integer("last_synced_at", { mode: "timestamp_ms" }),
 });
 
 

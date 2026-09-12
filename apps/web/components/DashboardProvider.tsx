@@ -90,6 +90,10 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
         router.replace("/");
         return;
       }
+      if (me.user.mustChangePassword) {
+        router.replace("/activar");
+        return;
+      }
       if (me.user.role === "resident") {
         router.replace("/portal");
         return;

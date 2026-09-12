@@ -80,7 +80,7 @@ async function ensureDemoGuard() {
       return;
     }
     const have = new Set(grants.map((g) => g.capabilityKey));
-    if (!have.has("dahua.evidence") || !have.has("dahua.live")) {
+    if (!have.has("dahua.evidence") || !have.has("dahua.live") || !have.has("access.owners.invite")) {
       await applyRoleTemplate(existing.id, "guard", null);
     }
     return;

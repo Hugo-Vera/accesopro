@@ -5,6 +5,7 @@ export type User = {
   name: string;
   role: string;
   capabilities?: string[];
+  mustChangePassword?: boolean;
 };
 
 export type ModuleRow = {

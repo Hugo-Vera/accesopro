@@ -94,15 +94,23 @@ type Pass = {
   qrPayload?: string;
 };
 
-const TABS = [
+type PortalFeatures = {
+  face: boolean;
+  qr: boolean;
+  fingerprint: boolean;
+  card: boolean;
+  password: boolean;
+};
+
+const ALL_TABS = [
   { key: "ficha", label: "Mi Ficha (Titular)", icon: User },
   { key: "familia", label: "Grupo Familiar", icon: Users },
   { key: "servicios", label: "Personal y Servicios", icon: Briefcase },
-  { key: "visitas", label: "Visitas y QR", icon: QrCode },
+  { key: "visitas", label: "Visitas y QR", icon: QrCode, needQr: true },
   { key: "historial", label: "Historial", icon: History },
 ] as const;
 
-type TabKey = (typeof TABS)[number]["key"];
+type TabKey = (typeof ALL_TABS)[number]["key"];
 
 const DAY_LABELS = ["Dom", "Lun", "Mar", "Mié", "Jue", "Vie", "Sáb"];
 
@@ -152,6 +160,13 @@ export function OwnerPortal() {
   const [showServiceModal, setShowServiceModal] = useState(false);
   const [showVisitModal, setShowVisitModal] = useState(false);
   const [panicEnabled, setPanicEnabled] = useState(false);
+  const [features, setFeatures] = useState<PortalFeatures>({
+    face: true,
+    qr: false,
+    fingerprint: false,
+    card: false,
+    password: false,
+  });
   const [sosBusy, setSosBusy] = useState(false);
   const [sosMsg, setSosMsg] = useState<string | null>(null);
   useEscapeKey(() => {
@@ -169,6 +184,7 @@ export function OwnerPortal() {
         services: Service[];
         familyMembers?: FamilyMember[];
         panicEnabled?: boolean;
+        features?: PortalFeatures;
       }>("/api/residents/me");
 
       setUserName(me.profile?.fullName || me.user.name);
@@ -177,9 +193,14 @@ export function OwnerPortal() {
       setServices(me.services);
       setFamily(me.familyMembers || []);
       setPanicEnabled(Boolean(me.panicEnabled));
+      if (me.features) setFeatures(me.features);
 
-      const p = await api<{ passes: Pass[] }>("/api/residents/me/visit-passes");
-      setPasses(p.passes);
+      if (me.features?.qr !== false) {
+        const p = await api<{ passes: Pass[] }>("/api/residents/me/visit-passes");
+        setPasses(p.passes);
+      } else {
+        setPasses([]);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error al cargar portal");
     }
@@ -188,6 +209,10 @@ export function OwnerPortal() {
   useEffect(() => {
     load();
   }, [load]);
+
+  useEffect(() => {
+    if (tab === "visitas" && !features.qr) setTab("ficha");
+  }, [tab, features.qr]);
 
   async function logout() {
     await api("/auth/logout", { method: "POST" });
@@ -370,7 +395,7 @@ export function OwnerPortal() {
 
       {/* Navegación por Solapas */}
       <nav className="flex flex-wrap gap-2 rounded-xl border border-slate-200 bg-white p-1.5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-        {TABS.map((t) => {
+        {ALL_TABS.filter((t) => !("needQr" in t && t.needQr) || features.qr).map((t) => {
           const Icon = t.icon;
           const active = tab === t.key;
           return (
@@ -411,6 +436,7 @@ export function OwnerPortal() {
         <section className="space-y-6">
           <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
             {/* Tarjeta de Reconocimiento Facial Titular */}
+            {features.face ? (
             <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 md:col-span-1">
               <h2 className="text-sm font-bold text-slate-900 dark:text-white">
                 Reconocimiento Facial
@@ -470,6 +496,7 @@ export function OwnerPortal() {
                 </div>
               </div>
             </div>
+            ) : null}
 
             {/* Formulario de Datos del Titular */}
             <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900 md:col-span-2">
@@ -1180,6 +1207,18 @@ export function OwnerPortal() {
                   if (fd.get(`day_${d}`) === "on") days.push(d);
                 });
 
+                const fechaDesde = String(fd.get("fechaDesde") || "").trim();
+                const fechaHasta = String(fd.get("fechaHasta") || "").trim();
+                let photoBase64: string | undefined;
+                const file = (fd.get("photo") as File | null);
+                if (file && file.size > 0) {
+                  photoBase64 = await new Promise((resolve) => {
+                    const r = new FileReader();
+                    r.onload = () => resolve(String(r.result || ""));
+                    r.readAsDataURL(file);
+                  });
+                }
+
                 try {
                   await api("/api/residents/me/services", {
                     method: "POST",
@@ -1190,7 +1229,10 @@ export function OwnerPortal() {
                       patente,
                       horaDesde,
                       horaHasta,
+                      fechaDesde: fechaDesde || undefined,
+                      fechaHasta: fechaHasta || undefined,
                       diasSemana: days.length > 0 ? days : undefined,
+                      photoBase64,
                     }),
                   });
                   setShowServiceModal(false);
@@ -1281,6 +1323,24 @@ export function OwnerPortal() {
                   />
                 </div>
               </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">Vigente desde</label>
+                  <input type="date" name="fechaDesde" className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100" />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">Vigente hasta</label>
+                  <input type="date" name="fechaHasta" className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100" />
+                </div>
+              </div>
+
+              {features.face ? (
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">Foto facial</label>
+                  <input type="file" name="photo" accept="image/*" className="mt-1 w-full text-xs" />
+                </div>
+              ) : null}
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">

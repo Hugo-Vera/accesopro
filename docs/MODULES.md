@@ -6,7 +6,7 @@ Fuente de verdad: `packages/catalog/src/index.ts` (`MODULE_CATALOG` + `PLAN_CATA
 |--------|-------|------------|--------------|-----------|-------|
 | Núcleo | `core` | — | Plano (pines), auth, tenants | `index.ts`, `auth.ts` | Siempre on |
 | Actuadores | `actuators` | — | `/dashboard/actuadores`, `/dashboard/puntos-acceso` | `hardware.ts`, `actuatorExec.ts`, `accessPoints.ts` | CRUD + cableado |
-| Acceso Dahua | `dahua_access` | actuators | `/dashboard/dahua/*` | `agent.ts`, `apps/agent` | Packs: equipos, eventos, abrir, personas, QR, periodos, evidencia, live, intercom |
+| Acceso Dahua | `dahua_access` | actuators | `/dashboard/dahua/*` | `agent.ts`, `apps/agent` | Packs: equipos, eventos, abrir, personas, facial, huella, tarjeta, PIN, QR, periodos, evidencia, live, intercom, puerta, alarma |
 | Chapas ALPR | `alpr` | actuators | `/dashboard`, `/dashboard/alpr` | `siteEngine.ts`, `engineBridge` | Motor :5051 |
 | Visitas | `visitors` | actuators | `/dashboard/visitas`, `/portal` | `visitors.ts`, `visitPass.ts`, `residents.ts` | QR portal + check-in portería |
 | Alta DNI | `dni_enroll` | visitors | `/dashboard/alta-dni` | `dniEnroll.ts` | PDF417/QR DNI en portería |
@@ -21,9 +21,15 @@ Fuente de verdad: `packages/catalog/src/index.ts` (`MODULE_CATALOG` + `PLAN_CATA
 | Equipos | `dahua.devices` | `access.dahua` | on | `/dashboard/dahua` |
 | Eventos y foto | `dahua.events` | `dahua.events` | on | `/dashboard/dahua/eventos` |
 | Abrir puerta | `dahua.open` | `dahua.open` | on | (botones openDoor) |
-| Personas | `dahua.persons` | `dahua.persons` | on | `/dashboard/dahua/personas` |
-| QR nativo | `dahua.qr` | `dahua.qr` | off | `/dashboard/dahua/qr` (≠ QR visita AccesoPro) |
+| Personas | `dahua.persons` | `dahua.persons` | on | `/dashboard/dahua/personas` (padrón) |
+| Facial | `dahua.face` | `dahua.face` | on | Foto portal + enroll ASI |
+| Huella | `dahua.fingerprint` | `dahua.fingerprint` | off | DoorParam ASI |
+| Tarjeta | `dahua.card` | `dahua.card` | off | DoorParam ASI |
+| Contraseña ASI | `dahua.password` | `dahua.password` | off | DoorParam ASI |
+| QR nativo | `dahua.qr` | `dahua.qr` | off | `/dashboard/dahua/qr` y portal visitas |
 | Periodos | `dahua.schedules` | `dahua.schedules` | off | `/dashboard/dahua/periodos` |
+| Parámetros de puerta | `dahua.door` | `dahua.door` | on | Equipos (instalador) |
+| Alarma lector | `dahua.alarm` | `dahua.alarm` | off | Eventos |
 | Evidencia | `dahua.evidence` | `dahua.evidence` | off | `/dashboard/dahua/evidencia` |
 | Live | `dahua.live` | `dahua.live` | off | `/dashboard/dahua/live` |
 | Intercom | `dahua.intercom` | `dahua.intercom` | off | AccesoPhone; `docs/INTERCOM.md` |

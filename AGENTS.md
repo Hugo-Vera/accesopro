@@ -16,7 +16,8 @@ No es un sistema contra incendio certificado. El módulo `fire` supervisa un con
 - **Plataforma:** tenants, planes comerciales y catálogo de módulos.
 - **Admin del barrio:** plano, actuadores, equipos, personas (dentro del plan contratado).
 - **Guardia / portería:** plano + live + relés (plantilla `guard`); el admin puede quitar/agregar grants.
-- **Vecino:** QR de visitas; portal `/portal` (autorizaciones, servicios, historial); SOS si `panic` está on.
+- **Vecino:** invite (email + WhatsApp) → `/activar` clave definitiva; portal `/portal` (ficha, familia, servicios, QR si el pack está on).
+- **Guardia:** puede **invitar propietario** (`access.owners.invite`) sin crear lotes.
 - **Visita:** solo su QR.
 
 ## Planes (Fase 1)
@@ -36,7 +37,7 @@ Demo guardia: `guardia@lasacacias.local` / `AccesoPro!2026`.
 ## Feature packs (funciones dentro de un módulo)
 
 Además del módulo contratado, el admin tilda **funciones** (`FEATURE_PACK_CATALOG` → `tenant_features`).
-Ej. `dahua_access` se parte en: equipos, eventos, abrir, personas, QR, periodos, evidencia, live.
+Ej. `dahua_access` se parte en: equipos, eventos, abrir, personas, **facial**, huella, tarjeta, PIN, QR (off por defecto), periodos, evidencia, live, intercom, puerta, alarma.
 Cada pack tiene dashboard + capability. Regla completa:
 
 `plan ∩ módulo ∩ feature pack ∩ grant del usuario`
