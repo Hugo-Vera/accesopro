@@ -751,23 +751,29 @@ async def lifespan(_app: FastAPI):
     alpr.stop()
 
 
-app = FastAPI(title="AccesoPro Site Agent", version="0.3.4", lifespan=lifespan)
+app = FastAPI(title="AccesoPro Site Agent", version="0.3.5", lifespan=lifespan)
 
 
 ATTACH_OK_S = 15.0
+REC_FRESH_S = 90.0
 
 
 def _reader_payload(dev: dict[str, Any]) -> dict[str, Any]:
     did = str(dev.get("id") or "")
     host = str(dev.get("host") or "")
     hb = _attach_heartbeat_at.get(did, 0.0)
-    attach_ok = bool(hb) and (time.time() - hb) <= ATTACH_OK_S
+    rec_at = _last_recno_at.get(did, 0.0)
+    now = time.time()
+    attach_ok = bool(hb) and (now - hb) <= ATTACH_OK_S
+    rec_fresh = bool(rec_at) and (now - rec_at) <= REC_FRESH_S
     rec = _cursors.get(did)
     stuck = _reader_stuck.get(did)
-    if not attach_ok:
+    if stuck == "face_stuck" and not rec_fresh:
+        hint = "face_stuck"
+    elif rec_fresh:
+        hint = "ok"
+    elif not attach_ok:
         hint = "attach_down"
-    elif stuck:
-        hint = stuck
     else:
         hint = "ok"
     return {
@@ -778,9 +784,10 @@ def _reader_payload(dev: dict[str, Any]) -> dict[str, Any]:
         "streamLive": bool(_stream_live.get(did)),
         "streamError": _stream_error.get(did),
         "recNo": rec[0] if rec else "",
-        "lastRecNoAt": _last_recno_at.get(did),
+        "lastRecNoAt": rec_at or None,
         "rtspClients": rtsp_clients_for_host(host),
         "stuckHint": hint,
+        "eventsViaPoller": rec_fresh and not attach_ok,
     }
 
 
@@ -799,7 +806,7 @@ def health():
         "product": "AccesoPro",
         "cameras": len(_config.get("cameras") or []),
         "dahua": len(_config.get("dahua") or []),
-        "version": "0.3.4",
+        "version": "0.3.5",
         "streamLive": {k: bool(v) for k, v in _stream_live.items()},
         "streamError": dict(_stream_error),
         "cursors": {k: {"recNo": a, "rawTime": b} for k, (a, b) in _cursors.items()},
@@ -926,9 +933,13 @@ def dahua_face_probe(
     current = str(payload.get("recNo") or "")
     base = str(baselineRecNo or "").strip()
     grew = bool(current) and _intish(current) > _intish(base)
+    rec_age = time.time() - (_last_recno_at.get(device_id) or 0)
     if grew:
         _reader_stuck.pop(device_id, None)
         result = "ok"
+    elif rec_age < 20:
+        _reader_stuck.pop(device_id, None)
+        result = "ok_poller"
     elif payload.get("attachOk"):
         _reader_stuck[device_id] = "face_stuck"
         result = "face_stuck"

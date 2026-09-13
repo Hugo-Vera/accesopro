@@ -339,12 +339,10 @@ def iter_mjpeg(
                 got = True
                 yield packed
             if got:
-                yield from iter_placeholder_mjpeg("Sin live")
                 return
             print(f"Live ffmpeg no entrego host={host} port={port} subtype={try_sub}", flush=True)
         if is_asi:
             print(f"Live RTSP no abrio host={host} port={port} extra=1, sin OpenCV ni snapshot CGI", flush=True)
-            yield from iter_placeholder_mjpeg("Sin live")
             return
 
     wait = _env_float("AGENT_LIVE_RTSP_WAIT", 12.0)
@@ -357,7 +355,6 @@ def iter_mjpeg(
             break
     if cap is None:
         print(f"Live RTSP no abrio host={host} port={port} extra=1, sin snapshot CGI", flush=True)
-        yield from iter_placeholder_mjpeg("Sin live")
         return
 
     fails = 0
@@ -389,8 +386,6 @@ def iter_mjpeg(
         print(f"Live RTSP error, sin snapshot CGI: {exc}")
     finally:
         cap.release()
-
-    yield from iter_placeholder_mjpeg("Sin live")
 
 
 class _LiveHub:
@@ -482,25 +477,42 @@ def _hub_producer(
     force_size: tuple[int, int] | None,
     target_fps: float | None,
 ) -> None:
-    try:
-        for packed in iter_mjpeg(
-            dev,
-            channel=channel,
-            subtype=subtype,
-            jpeg_quality=jpeg_quality,
-            max_width=max_width,
-            force_size=force_size,
-            target_fps=target_fps,
-        ):
-            if hub.stop.is_set() and hub.users <= 0:
-                break
-            raw = packed
-            marker = b"\r\n\r\n"
-            idx = packed.find(marker)
-            if idx >= 0:
-                raw = packed[idx + len(marker) :].rstrip(b"\r\n")
+    host = str(dev.get("host") or "")
+    placeholder = _placeholder_jpeg("Sin live")
+    while hub.users > 0:
+        if hub.stop.is_set() and hub.users <= 0:
+            break
+        n = 0
+        try:
+            for packed in iter_mjpeg(
+                dev,
+                channel=channel,
+                subtype=subtype,
+                jpeg_quality=jpeg_quality,
+                max_width=max_width,
+                force_size=force_size,
+                target_fps=target_fps,
+            ):
+                if hub.stop.is_set() and hub.users <= 0:
+                    break
+                n += 1
+                raw = packed
+                marker = b"\r\n\r\n"
+                idx = packed.find(marker)
+                if idx >= 0:
+                    raw = packed[idx + len(marker) :].rstrip(b"\r\n")
+                with hub.cv:
+                    hub.jpeg = raw
+                    hub.cv.notify_all()
+        except Exception as exc:  # noqa: BLE001
+            print(f"Live hub producer: {exc}", flush=True)
+        if hub.users <= 0:
+            break
+        if n == 0:
             with hub.cv:
-                hub.jpeg = raw
+                hub.jpeg = placeholder
                 hub.cv.notify_all()
-    except Exception as exc:  # noqa: BLE001
-        print(f"Live hub producer: {exc}")
+            print(f"Live hub reintenta RTSP host={host} en 2.5s", flush=True)
+        else:
+            print(f"Live hub RTSP cortado host={host}, reintenta", flush=True)
+        time.sleep(2.5)

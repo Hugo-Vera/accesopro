@@ -222,12 +222,18 @@ export function DahuaLivePanel({
       );
       if (after.result === "ok") {
         setProbeMsg(`Lector OK. RecNo ${baseline || "—"} → ${after.recNo || "—"}.`);
+      } else if (after.result === "ok_poller") {
+        setProbeMsg(
+          "El lector publica pases (RecordFinder). El attach CGI no es obligatorio. El live es RTSP aparte.",
+        );
       } else if (after.result === "face_stuck") {
         setProbeMsg(
           "Lector trabado: attach vivo y RecNo no subió. Cerrá el live, esperá 15 s; si sigue, reiniciá el ASI.",
         );
       } else {
-        setProbeMsg("Attach CGI caído. Revisá red/clave; no uses snapshot.cgi como ping.");
+        setProbeMsg(
+          "No hubo RecNo nuevo en 10 s. Si pasaste cara y no hay toast, reiniciá el ASI. No uses snapshot.cgi.",
+        );
       }
     } catch (err) {
       setProbeMsg(err instanceof Error ? err.message : "No se pudo probar el lector");
@@ -331,7 +337,7 @@ export function DahuaLivePanel({
             }}
             onError={() => {
               setError("Se cortó el live.");
-              setTimeout(() => setTick((n) => n + 1), 1400);
+              setTimeout(() => setTick((n) => n + 1), 4000);
             }}
           />
         ) : (
@@ -352,7 +358,7 @@ export function DahuaLivePanel({
           ) : stuckHint === "face_stuck" ? (
             <span className="font-mono text-[9px] font-extrabold text-amber-500">Lector trabado</span>
           ) : stuckHint === "attach_down" ? (
-            <span className="font-mono text-[9px] font-extrabold text-rose-400">CGI caído</span>
+            <span className="font-mono text-[9px] font-extrabold text-[#6b8498]">Sondeo</span>
           ) : (
             <span className="flex items-center gap-1 font-mono text-[9px] font-extrabold text-[#3dcf7a]">
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#3dcf7a]" />

@@ -201,13 +201,15 @@ class DahuaClient:
             f"{self.base}/cgi-bin/eventManager.cgi"
             "?action=attach&codes=[AccessControl]&heartbeat=5"
         )
+        last_error: Exception | None = None
         for auth in (
             HTTPDigestAuth(self.username, self.password),
             HTTPBasicAuth(self.username, self.password),
         ):
             try:
-                with self.session.get(url, auth=auth, stream=True, timeout=(8.0, None), verify=False) as res:
+                with self.session.get(url, auth=auth, stream=True, timeout=(8.0, 25.0), verify=False) as res:
                     if res.status_code in (401, 403):
+                        last_error = RuntimeError(f"attach HTTP {res.status_code}")
                         continue
                     if res.status_code != 200:
                         raise RuntimeError(f"attach HTTP {res.status_code}")
@@ -246,8 +248,12 @@ class DahuaClient:
                                 if ev:
                                     yield ev
                     return
-            except Exception as exc:  # noqa: BLE001
-                print(f"Dahua attach {self.base}: {exc}")
+            except Exception as extra:  # noqa: BLE001
+                print(f"Dahua attach {self.base}: {extra}")
+                last_error = extra
+                continue
+        if last_error:
+            raise last_error
 
     def probe(self) -> dict[str, Any]:
         info = self.system_info()
