@@ -14,6 +14,11 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
   const upstream = `${apiBase}/api/dahua/${encodeURIComponent(id)}/live${qs ? `?${qs}` : ""}`;
 
   try {
+    const ac = new AbortController();
+    const stop = () => ac.abort();
+    if (req.signal.aborted) stop();
+    else req.signal.addEventListener("abort", stop, { once: true });
+
     const cookie = req.headers.get("cookie") ?? "";
     const upstreamRes = await fetch(upstream, {
       headers: {
@@ -21,6 +26,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
         Cookie: cookie,
       },
       cache: "no-store",
+      signal: ac.signal,
     });
 
     if (!upstreamRes.ok) {
@@ -35,7 +41,30 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
       return new Response("Live sin cuerpo", { status: 502 });
     }
 
-    return new Response(upstreamRes.body, {
+    const reader = upstreamRes.body.getReader();
+    const cancelUp = () => {
+      stop();
+      void reader.cancel().catch(() => undefined);
+    };
+    const body = new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        try {
+          const next = await reader.read();
+          if (next.done) {
+            controller.close();
+            return;
+          }
+          controller.enqueue(next.value);
+        } catch {
+          controller.close();
+        }
+      },
+      cancel() {
+        cancelUp();
+      },
+    });
+
+    return new Response(body, {
       status: 200,
       headers: {
         "Content-Type":
@@ -46,6 +75,12 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ id: string 
       },
     });
   } catch (err) {
+    const aborted =
+      (typeof err === "object" && err !== null && "name" in err && (err as { name: string }).name === "AbortError") ||
+      (err instanceof Error && /abort/i.test(err.message));
+    if (aborted) {
+      return new Response(null, { status: 499 });
+    }
     const msg = err instanceof Error ? err.message : "Live proxy error";
     console.error("[live-proxy]", msg);
     return new Response(msg, { status: 503, headers: { "Content-Type": "text/plain; charset=utf-8" } });

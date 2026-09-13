@@ -211,7 +211,7 @@ def iter_ffmpeg_rtsp(
     url = rtsp_url(dev, channel=channel, subtype=subtype)
     host = str(dev.get("host") or "")
     port = int(dev.get("rtspPort") or dev.get("rtsp_port") or 554)
-    fps = max(5, min(20, int(round(float(target_fps)))))
+    fps = max(4, min(12, int(round(float(target_fps)))))
     width = max(320, min(1280, int(max_width)))
     cmd = [
         bin_path,
@@ -318,7 +318,7 @@ def iter_mjpeg(
     if jpeg_quality is None:
         jpeg_quality = _env_int("AGENT_LIVE_JPEG_QUALITY", 52)
     if target_fps is None:
-        target_fps = _env_float("AGENT_LIVE_FPS", 12.0)
+        target_fps = _env_float("AGENT_LIVE_FPS", 6.0 if _is_asi_reader(dev) else 12.0)
 
     try_subs = _live_try_subs(dev, subtype)
     host = str(dev.get("host") or "")
@@ -436,12 +436,18 @@ def iter_mjpeg_shared(
     if _is_asi_reader(dev):
         channel = 1
         subtype = 1
+        if max_width > 640:
+            max_width = 640
+        if target_fps is None:
+            target_fps = _env_float("AGENT_LIVE_FPS", 6.0)
     with _hubs_lock:
         hub = _hubs.get(key)
         if hub is None:
             hub = _LiveHub()
             _hubs[key] = hub
         hub.users += 1
+        if hub.users > 2:
+            print(f"Live hub users={hub.users} host={key} (proxy sin abort?)", flush=True)
         if hub.thread is None or not hub.thread.is_alive():
             hub.stop.clear()
             hub.thread = threading.Thread(
@@ -467,6 +473,12 @@ def iter_mjpeg_shared(
                 hub.stop.set()
 
 
+def _sleep_hub(hub: _LiveHub, seconds: float) -> None:
+    deadline = time.time() + max(0.4, float(seconds))
+    while time.time() < deadline and hub.users > 0:
+        time.sleep(0.4)
+
+
 def _hub_producer(
     hub: _LiveHub,
     dev: dict[str, Any],
@@ -479,6 +491,7 @@ def _hub_producer(
 ) -> None:
     host = str(dev.get("host") or "")
     placeholder = _placeholder_jpeg("Sin live")
+    backoff = 4.0
     while hub.users > 0:
         if hub.stop.is_set() and hub.users <= 0:
             break
@@ -512,7 +525,11 @@ def _hub_producer(
             with hub.cv:
                 hub.jpeg = placeholder
                 hub.cv.notify_all()
-            print(f"Live hub reintenta RTSP host={host} en 2.5s", flush=True)
+            wait = min(40.0, backoff)
+            print(f"Live hub reintenta RTSP host={host} en {wait:.0f}s", flush=True)
+            backoff = min(40.0, backoff * 2.0)
         else:
-            print(f"Live hub RTSP cortado host={host}, reintenta", flush=True)
-        time.sleep(2.5)
+            backoff = 4.0
+            wait = 5.0
+            print(f"Live hub RTSP cortado host={host}, reintenta en {wait:.0f}s", flush=True)
+        _sleep_hub(hub, wait)

@@ -390,7 +390,7 @@ def _record_age_seconds(rec: dict[str, Any]) -> float | None:
 
 
 def _poll_dahua() -> None:
-    """RecordFinder siempre: el attach a veces queda 'vivo' sin entregar eventos."""
+    """RecordFinder de respaldo: el attach a veces queda 'vivo' sin entregar eventos."""
     now = time.time()
     _load_sync_cursors()
     for dev in _config.get("dahua", []):
@@ -711,28 +711,28 @@ def _dahua_stream_worker() -> None:
 
 
 def _any_reader_needs_poll() -> bool:
-    found = False
+    now = time.time()
     for dev in _config.get("dahua", []):
         if dev.get("deviceType") == "camera_ip":
             continue
         did = dev.get("id")
         if not did:
             continue
-        found = True
-        if not _stream_live.get(did):
+        hb = _attach_heartbeat_at.get(did, 0.0)
+        if not hb or (now - hb) > 12.0:
             return True
-    return found
+    return False
 
 
 def _dahua_poller_worker() -> None:
-    """RecordFinder en paralelo al attach (el stream solo no basta en ASI6214)."""
+    """RecordFinder de respaldo. Con attach sano no martillar el SoC cada 1.6 s."""
     time.sleep(1.2)
     while not _stop.is_set():
         try:
             _poll_dahua()
         except Exception as exc:  # noqa: BLE001
             print(f"Poller worker: {exc}")
-        time.sleep(1.6)
+        time.sleep(1.6 if _any_reader_needs_poll() else 8.0)
 
 
 @asynccontextmanager
@@ -751,7 +751,7 @@ async def lifespan(_app: FastAPI):
     alpr.stop()
 
 
-app = FastAPI(title="AccesoPro Site Agent", version="0.3.5", lifespan=lifespan)
+app = FastAPI(title="AccesoPro Site Agent", version="0.3.6", lifespan=lifespan)
 
 
 ATTACH_OK_S = 15.0
@@ -806,7 +806,7 @@ def health():
         "product": "AccesoPro",
         "cameras": len(_config.get("cameras") or []),
         "dahua": len(_config.get("dahua") or []),
-        "version": "0.3.5",
+        "version": "0.3.6",
         "streamLive": {k: bool(v) for k, v in _stream_live.items()},
         "streamError": dict(_stream_error),
         "cursors": {k: {"recNo": a, "rawTime": b} for k, (a, b) in _cursors.items()},

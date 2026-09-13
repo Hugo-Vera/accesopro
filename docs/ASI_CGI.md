@@ -8,7 +8,7 @@ En AccesoPro el lector de este predio es un **ASI-6214S**. El encoder de video e
 
 | Uso | Protocolo | Comando | Notas |
 |-----|-----------|---------|--------|
-| Live portería | RTSP TCP 554 | `/cam/realmonitor?channel=1&subtype=1` | Extra 1. `subtype=0` es principal y satura la cara. `subtype=2` solo si el equipo declara extra 2; este ASI no lo usa para AccesoCam. El totem 272×480 no es un subtype CGI. |
+| Live portería | RTSP TCP 554 | `/cam/realmonitor?channel=1&subtype=1` | Extra 1 **apaisado** (p.ej. 640×480). `subtype=0` es principal y satura la cara. El LCD del ASI es otra tubería: totem vertical (cara + ROI). No es el mismo recorte ni el mismo aspect. |
 | Eventos en vivo | HTTP CGI Digest | `eventManager.cgi?action=attach&codes=[AccessControl]&heartbeat=5` | Heartbeat cada 5 s (rango 1–60 del manual). |
 | Historial / cursor RecNo | RPC `RecordFinder` (cola reciente) + CGI `recordFinder` de respaldo | El CGI `find&count=N` devuelve los **más viejos**; por eso el agent pide los últimos por RPC. |
 | Abrir | CGI | `accessControl.cgi?action=openDoor&channel=1` | |
@@ -27,9 +27,15 @@ En AccesoPro el lector de este predio es un **ASI-6214S**. El encoder de video e
 
 `snapshot.cgi` puntual (enroll «foto del lector») **solo** si no hay hub RTSP abierto contra esa IP.
 
+## Totem del ASI vs AccesoCam
+
+La pantalla del ASI-6214S es el **UI del equipo** (sensor en vertical, recorte de cara). AccesoCam **no** clona esa pantalla: Chrome no abre `rtsp://` y el extra 1 del PDF es un encode **apaisado**, a menudo una franja más ancha/alta del mismo sensor. Por eso en el totem se ve el torso de frente y en AccesoCam puede verse más techo/cortina y la cabeza abajo. Forzar el extra a 272×480 o abrir el main (`subtype=0`) para “que se vea igual” vuelve a trabar el facial.
+
 ## Un cliente de video por IP
 
 Varias pestañas / Ingreso+Salida reutilizan un hub MJPEG en el agent (`apps/agent/app/live.py`), clave = **host** del lector. Chrome nunca abre `rtsp://`.
+
+El MJPEG pasa Next → API → agent. Si el browser corta el `<img>` (scroll, refresh, error), **hay que abortar** esas conexiones. Si no, `rtspHubs.users` sube (8–9) y el ffmpeg queda prendido aunque quede una sola pestaña. Health: `rtspHubs` debería quedar en **1** con AccesoCam abierto.
 
 ## Probar si el lector está trabado (sin snapshot.cgi)
 

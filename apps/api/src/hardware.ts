@@ -904,10 +904,16 @@ hardware.get("/dahua/:id/live", async (c) => {
   const agentBase = agentBaseUrl();
   const agentToken = process.env.SITE_AGENT_TOKEN ?? "accesopro-demo-agent";
   try {
+    const incoming = c.req.raw.signal;
+    const ac = new AbortController();
+    const stop = () => ac.abort();
+    if (incoming.aborted) stop();
+    else incoming.addEventListener("abort", stop, { once: true });
     const res = await fetch(
       `${agentBase}/dahua/${id}/live?channel=${channel}&subtype=${subtype}`,
       {
         headers: { Authorization: `Bearer ${agentToken}` },
+        signal: ac.signal,
       },
     );
     if (!res.ok || !res.body) {
@@ -920,7 +926,29 @@ hardware.get("/dahua/:id/live", async (c) => {
         502,
       );
     }
-    return new Response(res.body, {
+    const reader = res.body.getReader();
+    const cancelUp = () => {
+      stop();
+      void reader.cancel().catch(() => undefined);
+    };
+    const body = new ReadableStream<Uint8Array>({
+      async pull(controller) {
+        try {
+          const next = await reader.read();
+          if (next.done) {
+            controller.close();
+            return;
+          }
+          controller.enqueue(next.value);
+        } catch {
+          controller.close();
+        }
+      },
+      cancel() {
+        cancelUp();
+      },
+    });
+    return new Response(body, {
       status: 200,
       headers: {
         "Content-Type": res.headers.get("Content-Type") || "multipart/x-mixed-replace; boundary=frame",
@@ -930,6 +958,12 @@ hardware.get("/dahua/:id/live", async (c) => {
       },
     });
   } catch (err) {
+    const aborted =
+      (typeof err === "object" && err !== null && "name" in err && (err as { name: string }).name === "AbortError") ||
+      (err instanceof Error && /abort/i.test(err.message));
+    if (aborted) {
+      return new Response(null, { status: 499 });
+    }
     return c.json(
       {
         error: err instanceof Error ? err.message : "No se pudo conectar al agent para live",

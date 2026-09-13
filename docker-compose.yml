@@ -131,7 +131,7 @@ services:
       SITE_AGENT_TOKEN: ${SITE_AGENT_TOKEN:-accesopro-demo-agent}
       UVICORN_WORKERS: "1"
       # Live: ffmpeg recode del extra RTSP. Bajar FPS si el NUC se pone pesado.
-      AGENT_LIVE_FPS: ${AGENT_LIVE_FPS:-12}
+      AGENT_LIVE_FPS: ${AGENT_LIVE_FPS:-6}
       AGENT_LIVE_JPEG_QUALITY: ${AGENT_LIVE_JPEG_QUALITY:-52}
     extra_hosts:
       - "host.docker.internal:host-gateway"
