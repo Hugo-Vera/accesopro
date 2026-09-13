@@ -25,7 +25,7 @@ Plataforma modular de acceso y seguridad para barrios cerrados (Argentina).
 | **Agent Dahua** | `apps/agent` | CGI Digest, openDoor, eventos faciales → API |
 | **Motor LAN** | `apps/site` | FastALPR, QR/DNI, barreras IN/OUT (fork AccesoSeguro) |
 | **Reglas Cursor** | `.cursor/rules` | Convenciones del proyecto para el IDE |
-| **Docs** | `docs/` | Arquitectura, estado de módulos, playbooks. Sitio físico RB4011 + NAT ASI (retome §0): `docs/SITE_RB4011.md` |
+| **Docs** | `docs/` | Arquitectura, estado de módulos, playbooks. Sitio físico RB4011 + NAT ASI (retome §0): `docs/SITE_RB4011.md`. CGI vs RTSP del ASI: `docs/ASI_CGI.md`. |
 
 ## `apps/web` — dashboard por sectores de UI
 

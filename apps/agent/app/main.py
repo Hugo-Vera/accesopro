@@ -13,7 +13,7 @@ from fastapi.responses import Response, StreamingResponse
 from .alpr import AlprWorker
 from .dahua import DahuaClient
 from .hikvision import HikvisionClient, looks_like_hikvision
-from .live import iter_mjpeg_shared
+from .live import hub_stats, iter_mjpeg_shared, rtsp_clients_for_host
 
 API = os.environ.get("ACCESOPRO_API_URL", "http://localhost:8787").rstrip("/")
 TOKEN = os.environ.get("SITE_AGENT_TOKEN", "accesopro-demo-agent")
@@ -136,9 +136,12 @@ _seen_records: set[str] = set()
 _stream_live: dict[str, bool] = {}
 _cursors: dict[str, tuple[str, str]] = {}
 _cursors_loaded = False
+_attach_heartbeat_at: dict[str, float] = {}
+_last_recno_at: dict[str, float] = {}
+_reader_stuck: dict[str, str] = {}
+_last_dispatch_at = 0.0
 _sync_tries = 0
 _last_config_at = 0.0
-_last_dispatch_at = 0.0
 _stream_threads: dict[str, threading.Thread] = {}
 _stream_error: dict[str, str] = {}
 
@@ -225,14 +228,19 @@ def _remember_cursor(dev_id: str, rec: dict[str, Any]) -> None:
     rec_no = str(rec.get("RecNo") or rec.get("Index") or "").strip()
     stamp = str(rec.get("CreateTime") or rec.get("Time") or rec.get("UTC") or "").strip()
     prev = _cursors.get(dev_id)
+    grew = False
     if not prev:
         _cursors[dev_id] = (rec_no, stamp)
-        return
-    if rec_no and _intish(rec_no) >= _intish(prev[0]):
+        grew = bool(rec_no)
+    elif rec_no and _intish(rec_no) >= _intish(prev[0]):
+        grew = _intish(rec_no) > _intish(prev[0])
         _cursors[dev_id] = (rec_no, stamp)
-        return
-    if stamp and prev[1] and stamp > prev[1]:
+    elif stamp and prev[1] and stamp > prev[1]:
         _cursors[dev_id] = (rec_no or prev[0], stamp)
+        grew = True
+    if grew:
+        _last_recno_at[dev_id] = time.time()
+        _reader_stuck.pop(dev_id, None)
 
 
 def _load_sync_cursors() -> None:
@@ -465,6 +473,12 @@ def _run_command(cmd: dict[str, Any]) -> dict[str, Any]:
         dev = _device(payload.get("deviceId"))
         if not dev:
             return {"ok": False, "error": "Equipo no encontrado"}
+        host = str(dev.get("host") or "")
+        if rtsp_clients_for_host(host) > 0:
+            return {
+                "ok": False,
+                "error": "Cerrá AccesoCam (live RTSP) antes de snapshot.cgi. Mezclarlos traba el ASI.",
+            }
         ch = int(payload.get("channel") or 1)
         if looks_like_hikvision(dev):
             return _hik_client(dev).snapshot(ch)
@@ -646,8 +660,11 @@ def _dahua_stream_one(dev_id: str) -> None:
             _stream_error.pop(dev_id, None)
             print(f"Stream attach -> {dev.get('name')} {dev.get('host')}")
             n = 0
-            for event in _client(dev).stream_events():
+            for event in _client(dev).stream_events(
+                on_heartbeat=lambda did=dev_id: _attach_heartbeat_at.__setitem__(did, time.time())
+            ):
                 _stream_live[dev_id] = True
+                _attach_heartbeat_at[dev_id] = time.time()
                 if _stop.is_set():
                     break
                 if isinstance(event, dict):
@@ -734,22 +751,61 @@ async def lifespan(_app: FastAPI):
     alpr.stop()
 
 
-app = FastAPI(title="AccesoPro Site Agent", version="0.3.3", lifespan=lifespan)
+app = FastAPI(title="AccesoPro Site Agent", version="0.3.4", lifespan=lifespan)
+
+
+ATTACH_OK_S = 15.0
+
+
+def _reader_payload(dev: dict[str, Any]) -> dict[str, Any]:
+    did = str(dev.get("id") or "")
+    host = str(dev.get("host") or "")
+    hb = _attach_heartbeat_at.get(did, 0.0)
+    attach_ok = bool(hb) and (time.time() - hb) <= ATTACH_OK_S
+    rec = _cursors.get(did)
+    stuck = _reader_stuck.get(did)
+    if not attach_ok:
+        hint = "attach_down"
+    elif stuck:
+        hint = stuck
+    else:
+        hint = "ok"
+    return {
+        "deviceId": did,
+        "host": host,
+        "attachOk": attach_ok,
+        "lastHeartbeatAt": hb or None,
+        "streamLive": bool(_stream_live.get(did)),
+        "streamError": _stream_error.get(did),
+        "recNo": rec[0] if rec else "",
+        "lastRecNoAt": _last_recno_at.get(did),
+        "rtspClients": rtsp_clients_for_host(host),
+        "stuckHint": hint,
+    }
 
 
 @app.get("/health")
 def health():
+    readers = {}
+    for dev in _config.get("dahua") or []:
+        if str(dev.get("deviceType") or "") == "camera_ip":
+            continue
+        did = str(dev.get("id") or "")
+        if did:
+            readers[did] = _reader_payload(dev)
     return {
         "ok": True,
         "role": "site-agent",
         "product": "AccesoPro",
         "cameras": len(_config.get("cameras") or []),
         "dahua": len(_config.get("dahua") or []),
-        "version": "0.3.3",
+        "version": "0.3.4",
         "streamLive": {k: bool(v) for k, v in _stream_live.items()},
         "streamError": dict(_stream_error),
         "cursors": {k: {"recNo": a, "rawTime": b} for k, (a, b) in _cursors.items()},
         "lastDispatchAt": _last_dispatch_at or None,
+        "rtspHubs": hub_stats(),
+        "readers": readers,
     }
 
 
@@ -771,7 +827,7 @@ def dahua_snapshot(
     authorization: str | None = Header(default=None),
     token: str | None = Query(default=None),
 ):
-    """JPEG directo del lector (para live de portería vía API)."""
+    """JPEG puntual del lector (enroll). Prohibido con live RTSP abierto en esa IP."""
     _authorize(authorization, token)
     if not _config.get("dahua"):
         try:
@@ -781,6 +837,12 @@ def dahua_snapshot(
     dev = _device(device_id)
     if not dev:
         raise HTTPException(status_code=404, detail="Equipo no encontrado")
+    host = str(dev.get("host") or "")
+    if rtsp_clients_for_host(host) > 0:
+        raise HTTPException(
+            status_code=409,
+            detail="Cerrá AccesoCam (live RTSP) antes de snapshot.cgi. Mezclarlos traba el ASI.",
+        )
     try:
         if looks_like_hikvision(dev):
             raw, ctype = _hik_client(dev).snapshot_jpeg(int(channel) or 1)
@@ -832,6 +894,49 @@ def _ensure_dahua_config() -> None:
         raise HTTPException(status_code=503, detail=f"Sin config: {exc}") from exc
 
 
+@app.get("/dahua/{device_id}/reader-status")
+def dahua_reader_status(
+    device_id: str,
+    authorization: str | None = Header(default=None),
+    token: str | None = Query(default=None),
+):
+    """Attach heartbeat + RecNo + clientes RTSP. No llama snapshot.cgi."""
+    _authorize(authorization, token)
+    _ensure_dahua_config()
+    dev = _device(device_id)
+    if not dev:
+        raise HTTPException(status_code=404, detail="Equipo no encontrado")
+    return {"ok": True, **_reader_payload(dev)}
+
+
+@app.post("/dahua/{device_id}/face-probe")
+def dahua_face_probe(
+    device_id: str,
+    baselineRecNo: str = Query(default=""),
+    authorization: str | None = Header(default=None),
+    token: str | None = Query(default=None),
+):
+    """Compará RecNo después de pasar una cara. No usa snapshot.cgi."""
+    _authorize(authorization, token)
+    _ensure_dahua_config()
+    dev = _device(device_id)
+    if not dev:
+        raise HTTPException(status_code=404, detail="Equipo no encontrado")
+    payload = _reader_payload(dev)
+    current = str(payload.get("recNo") or "")
+    base = str(baselineRecNo or "").strip()
+    grew = bool(current) and _intish(current) > _intish(base)
+    if grew:
+        _reader_stuck.pop(device_id, None)
+        result = "ok"
+    elif payload.get("attachOk"):
+        _reader_stuck[device_id] = "face_stuck"
+        result = "face_stuck"
+    else:
+        result = "attach_down"
+    return {"ok": True, "result": result, "baselineRecNo": base, **_reader_payload(dev)}
+
+
 @app.get("/dahua/{device_id}/live")
 def dahua_live(
     device_id: str,
@@ -846,11 +951,15 @@ def dahua_live(
     dev = _device(device_id)
     if not dev:
         raise HTTPException(status_code=404, detail="Equipo no encontrado")
+    dtype = str(dev.get("deviceType") or "")
     try:
         sub = int(subtype)
     except (TypeError, ValueError):
         sub = 1
     ch = int(channel) or 1
+    if dtype in {"asi_facial", "vto_intercom", "access_controller"}:
+        ch = 1
+        sub = 1
 
     def gen():
         try:

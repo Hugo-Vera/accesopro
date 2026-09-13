@@ -195,11 +195,11 @@ class DahuaClient:
                 res[k.strip()] = v.strip()
         return res if res else None
 
-    def stream_events(self):
-        """Attach HTTP del ASI. Respaldo RecordFinder en el poller si esto no entrega eventos."""
+    def stream_events(self, on_heartbeat=None):
+        """Attach HTTP del ASI (PDF Access Control: codes=[AccessControl], heartbeat=5)."""
         url = (
             f"{self.base}/cgi-bin/eventManager.cgi"
-            "?action=attach&codes=[AccessControl,FaceRecognition]&heartbeat=5"
+            "?action=attach&codes=[AccessControl]&heartbeat=5"
         )
         for auth in (
             HTTPDigestAuth(self.username, self.password),
@@ -211,6 +211,8 @@ class DahuaClient:
                         continue
                     if res.status_code != 200:
                         raise RuntimeError(f"attach HTTP {res.status_code}")
+                    if on_heartbeat:
+                        on_heartbeat()
                     buf = ""
                     for chunk in res.iter_content(chunk_size=512):
                         if not chunk:
@@ -236,6 +238,8 @@ class DahuaClient:
                             part, buf = buf[:cut], buf[cut + seplen :]
                             low = part.lower()
                             if "heartbeat" in low and "data=" not in low:
+                                if on_heartbeat:
+                                    on_heartbeat()
                                 continue
                             if "accesscontrol" in low or "facerecognition" in low or "data=" in low or "{" in part:
                                 ev = self._parse_event_content(part)

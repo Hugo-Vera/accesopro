@@ -114,6 +114,7 @@ type StatusProps = {
   actuatorCount: number;
   userName: string | null;
   compact?: boolean;
+  readerStuck?: boolean;
 };
 
 /** Solo telemetría real del barrio — sin dirección ni sensores inventados. */
@@ -125,6 +126,7 @@ export function OpsStatusPanels({
   actuatorCount,
   userName,
   compact,
+  readerStuck,
 }: StatusProps) {
   if (compact) {
     return (
@@ -137,6 +139,9 @@ export function OpsStatusPanels({
           ALPR · {engineOnline ? "OK" : "STBY"}
         </span>
         <span className="ops-sensor-chip">ASI · {deviceCount}</span>
+        {readerStuck ? (
+          <span className="ops-sensor-chip danger">Lector trabado</span>
+        ) : null}
         <span className="ops-sensor-chip">Relés · {actuatorCount}</span>
         <span className="ops-sensor-chip">{userName || "Operador"}</span>
       </div>
@@ -155,6 +160,7 @@ export function OpsStatusPanels({
           ALPR · {engineOnline ? "ONLINE" : "STANDBY"}
         </span>
         <span className="ops-sensor-chip">Lectores · {deviceCount}</span>
+        {readerStuck ? <span className="ops-sensor-chip danger">Lector trabado</span> : null}
         <span className="ops-sensor-chip">Relés · {actuatorCount}</span>
       </div>
       <div className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 dark:border-[#1f374c] dark:bg-[#081624]">

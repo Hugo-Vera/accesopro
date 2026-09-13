@@ -188,6 +188,17 @@ function fileToJpegBase64(file: File): Promise<{ b64: string; dataUrl: string }>
   });
 }
 
+async function assertAsiSnapshotAllowed(tenantId: string, deviceId: string) {
+  const st = await api<{ rtspClients?: number }>(
+    withTenant(`/api/dahua/${deviceId}/reader-status`, tenantId),
+  );
+  if ((st.rtspClients ?? 0) > 0) {
+    throw new Error(
+      "Cerrá AccesoCam (live RTSP) antes de sacar una foto del lector. Mezclar snapshot.cgi con RTSP traba el ASI.",
+    );
+  }
+}
+
 /** MODAL DE ALTA: Enrolamiento de nueva persona en lector Dahua ASI */
 function CreatePersonModal({
   isOpen,
@@ -295,6 +306,7 @@ function CreatePersonModal({
     setCapturingDahua(true);
     setError(null);
     try {
+      await assertAsiSnapshotAllowed(tenantId, deviceId);
       const res = await fetch(apiUrl(t(`/api/dahua/${deviceId}/snapshot`)), {
         headers: { "Cache-Control": "no-cache" },
       });
@@ -626,6 +638,7 @@ function CreatePersonModal({
                   <div className="space-y-3">
                     <p className="text-xs text-slate-600 dark:text-slate-400">
                       Pedile a la persona que mire al frente del terminal <strong className="text-slate-800 dark:text-slate-200">{deviceName}</strong>.
+                      Cerrá AccesoCam antes: snapshot.cgi con RTSP traba el ASI.
                     </p>
                     <button
                       type="button"
@@ -941,6 +954,7 @@ function EditPersonModal({
     setCapturingDahua(true);
     setError(null);
     try {
+      await assertAsiSnapshotAllowed(tenantId, deviceId);
       const res = await fetch(apiUrl(t(`/api/dahua/${deviceId}/snapshot`)), {
         headers: { "Cache-Control": "no-cache" },
       });

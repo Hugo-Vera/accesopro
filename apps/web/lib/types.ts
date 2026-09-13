@@ -64,6 +64,19 @@ export type CamLaneStatus = {
   configured: boolean;
 };
 
+export type ReaderStatus = {
+  deviceId?: string;
+  host?: string;
+  attachOk?: boolean;
+  lastHeartbeatAt?: number | null;
+  streamLive?: boolean;
+  streamError?: string | null;
+  recNo?: string;
+  lastRecNoAt?: number | null;
+  rtspClients?: number;
+  stuckHint?: "ok" | "attach_down" | "face_stuck" | string;
+};
+
 export type Status = {
   agentOnline: boolean | null;
   engineOnline: boolean | null;
@@ -74,4 +87,5 @@ export type Status = {
   cameraOut?: CamLaneStatus | null;
   evidenceIn?: boolean;
   evidenceOut?: boolean;
+  readers?: Record<string, ReaderStatus>;
 };

@@ -3,7 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api, withTenant } from "@/lib/api";
-import type { CamLaneStatus, FeatureRow, ModuleRow, PlanRow, Status, Tenant, User } from "@/lib/types";
+import type { CamLaneStatus, FeatureRow, ModuleRow, PlanRow, ReaderStatus, Status, Tenant, User } from "@/lib/types";
 
 function mapStatus(st: {
   agentOnline: boolean;
@@ -15,6 +15,7 @@ function mapStatus(st: {
   cameraOut?: CamLaneStatus | null;
   evidenceIn?: boolean;
   evidenceOut?: boolean;
+  readers?: Record<string, ReaderStatus>;
 }): Status {
   return {
     agentOnline: st.agentOnline,
@@ -26,6 +27,7 @@ function mapStatus(st: {
     cameraOut: st.cameraOut ?? null,
     evidenceIn: Boolean(st.evidenceIn),
     evidenceOut: Boolean(st.evidenceOut),
+    readers: st.readers ?? {},
   };
 }
 
@@ -78,6 +80,7 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
     cameraOut: null,
     evidenceIn: false,
     evidenceOut: false,
+    readers: {},
   });
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);

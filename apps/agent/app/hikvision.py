@@ -18,6 +18,9 @@ TIMEOUT = 6
 def looks_like_hikvision(dev: dict[str, Any] | None) -> bool:
     if not dev:
         return False
+    dtype = str(dev.get("deviceType") or "").strip().lower()
+    if dtype in {"asi_facial", "vto_intercom", "access_controller"}:
+        return False
     brand = str(dev.get("cameraBrand") or dev.get("camera_brand") or "").strip().lower()
     if brand == "hikvision":
         return True

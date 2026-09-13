@@ -60,6 +60,22 @@ hardware.get("/status", async (c) => {
       /* motor sin subsystems */
     }
   }
+  let readers: Record<string, unknown> = {};
+  if (agentOnline(scoped.site.lastSeenAt)) {
+    try {
+      const agentToken = process.env.SITE_AGENT_TOKEN ?? "accesopro-demo-agent";
+      const hr = await fetch(`${agentBaseUrl()}/health`, {
+        headers: { Authorization: `Bearer ${agentToken}` },
+        signal: AbortSignal.timeout(4000),
+      });
+      if (hr.ok) {
+        const hj = (await hr.json()) as { readers?: Record<string, unknown> };
+        readers = hj.readers ?? {};
+      }
+    } catch {
+      /* agent health opcional */
+    }
+  }
   return c.json({
     agentOnline: agentOnline(scoped.site.lastSeenAt),
     engineOnline: engine.online,
@@ -75,6 +91,7 @@ hardware.get("/status", async (c) => {
       : null,
     evidenceIn,
     evidenceOut,
+    readers,
   });
 });
 
@@ -701,6 +718,13 @@ hardware.get("/dahua/:id/snapshot", async (c) => {
         },
       });
     }
+    if (res.status === 409) {
+      const detail = await res.json().catch(() => ({} as { detail?: string; error?: string }));
+      return c.json(
+        { error: (detail as { detail?: string }).detail || (detail as { error?: string }).error || "Live RTSP abierto" },
+        409,
+      );
+    }
   } catch {
     // cae al comando en cola
   }
@@ -719,6 +743,75 @@ hardware.get("/dahua/:id/snapshot", async (c) => {
       "Cache-Control": "no-store",
     },
   });
+});
+
+hardware.get("/dahua/:id/reader-status", async (c) => {
+  const denied = await denyUnlessCapability(c.get("user"), "dahua.live");
+  if (denied) return denied;
+  const scoped = await scopedSiteWithModule(c, "dahua_access");
+  if ("error" in scoped) return scoped.error;
+  const id = c.req.param("id");
+  if (!id) return c.json({ error: "Falta id" }, 400);
+  if (!agentOnline(scoped.site.lastSeenAt)) {
+    return c.json({ error: "El agent del sitio no está en línea." }, 503);
+  }
+  const row = await db
+    .select()
+    .from(dahuaDevices)
+    .where(and(eq(dahuaDevices.id, id), eq(dahuaDevices.siteId, scoped.site.id)))
+    .get();
+  if (!row) return c.json({ error: "Equipo no encontrado" }, 404);
+  const agentBase = agentBaseUrl();
+  const agentToken = process.env.SITE_AGENT_TOKEN ?? "accesopro-demo-agent";
+  try {
+    const res = await fetch(`${agentBase}/dahua/${id}/reader-status`, {
+      headers: { Authorization: `Bearer ${agentToken}` },
+      signal: AbortSignal.timeout(8000),
+    });
+    const body = await res.json().catch(() => ({}));
+    return c.json(body, res.status === 200 ? 200 : 502);
+  } catch (err) {
+    return c.json(
+      { error: err instanceof Error ? err.message : "No se pudo leer el estado del lector" },
+      502,
+    );
+  }
+});
+
+hardware.post("/dahua/:id/face-probe", async (c) => {
+  const denied = await denyUnlessCapability(c.get("user"), "dahua.live");
+  if (denied) return denied;
+  const scoped = await scopedSiteWithModule(c, "dahua_access");
+  if ("error" in scoped) return scoped.error;
+  const id = c.req.param("id");
+  if (!id) return c.json({ error: "Falta id" }, 400);
+  if (!agentOnline(scoped.site.lastSeenAt)) {
+    return c.json({ error: "El agent del sitio no está en línea." }, 503);
+  }
+  const row = await db
+    .select()
+    .from(dahuaDevices)
+    .where(and(eq(dahuaDevices.id, id), eq(dahuaDevices.siteId, scoped.site.id)))
+    .get();
+  if (!row) return c.json({ error: "Equipo no encontrado" }, 404);
+  const baseline = c.req.query("baselineRecNo") || "";
+  const agentBase = agentBaseUrl();
+  const agentToken = process.env.SITE_AGENT_TOKEN ?? "accesopro-demo-agent";
+  const qs = baseline ? `?baselineRecNo=${encodeURIComponent(baseline)}` : "";
+  try {
+    const res = await fetch(`${agentBase}/dahua/${id}/face-probe${qs}`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${agentToken}` },
+      signal: AbortSignal.timeout(8000),
+    });
+    const body = await res.json().catch(() => ({}));
+    return c.json(body, res.ok ? 200 : 502);
+  } catch (err) {
+    return c.json(
+      { error: err instanceof Error ? err.message : "No se pudo completar la prueba de cara" },
+      502,
+    );
+  }
 });
 
 hardware.get("/dahua/:id/record-snapshot", async (c) => {

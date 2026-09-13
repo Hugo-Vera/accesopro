@@ -356,6 +356,7 @@ export function HomeDashboard() {
           actuatorCount={manualActs.length}
           userName={user?.name ?? null}
           compact
+          readerStuck={Object.values(status.readers ?? {}).some((r) => r.stuckHint === "face_stuck")}
         />
       </div>
 

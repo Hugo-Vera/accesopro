@@ -12,11 +12,22 @@ import cv2
 import numpy as np
 
 # TCP suele ser más estable en LAN/Windows que UDP.
-# stimeout en microsegundos: no esperar 30s si el NAT no entrega el stream.
 _ffmpeg_opts = os.environ.get("OPENCV_FFMPEG_CAPTURE_OPTIONS") or "rtsp_transport;tcp"
 if "stimeout" not in _ffmpeg_opts:
     _ffmpeg_opts = f"{_ffmpeg_opts}|stimeout;4000000"
 os.environ["OPENCV_FFMPEG_CAPTURE_OPTIONS"] = _ffmpeg_opts
+
+_ASI_TYPES = {"asi_facial", "vto_intercom", "access_controller"}
+
+
+def _is_asi_reader(dev: dict[str, Any]) -> bool:
+    return str(dev.get("deviceType") or "").strip().lower() in _ASI_TYPES
+
+
+def _hub_key(dev: dict[str, Any]) -> str:
+    """Un RTSP por IP del lector, no por fila de dispositivo."""
+    host = str(dev.get("host") or "").strip().lower()
+    return host or str(dev.get("id") or "live")
 
 
 def rtsp_url(dev: dict[str, Any], channel: int = 1, subtype: int = 1, rtsp_port: int = 554) -> str:
@@ -28,6 +39,9 @@ def rtsp_url(dev: dict[str, Any], channel: int = 1, subtype: int = 1, rtsp_port:
     ch = int(channel) or 1
     sub = int(subtype)
     custom = str(dev.get("rtspUrl") or dev.get("rtsp_url") or "").strip()
+    # ASI/VTO: PDF Access Control = /cam/realmonitor extra 1. Nunca Hikvision ni main.
+    if _is_asi_reader(dev):
+        return f"rtsp://{user}:{password}@{host}:{port}/cam/realmonitor?channel=1&subtype=1"
     if "Streaming/Channels" in custom:
         code = ch * 100 + (2 if sub in (1, 2) else 1)
         return f"rtsp://{user}:{password}@{host}:{port}/Streaming/Channels/{code}"
@@ -39,7 +53,6 @@ def rtsp_url(dev: dict[str, Any], channel: int = 1, subtype: int = 1, rtsp_port:
                 path = parsed.path
         except Exception:
             pass
-    # subtype 0 = principal, 1 = extra 1, 2 = extra 2 (vertical ASI)
     return f"rtsp://{user}:{password}@{host}:{port}{path}?channel={ch}&subtype={sub}"
 
 
@@ -117,56 +130,6 @@ def _open_rtsp_limited(url: str, timeout: float = 5.0) -> Any | None:
     return None
 
 
-def _snapshot_jpeg(dev: dict[str, Any], channel: int) -> bytes:
-    from .dahua import DahuaClient
-    from .hikvision import HikvisionClient, looks_like_hikvision
-
-    host = str(dev.get("host") or "")
-    user = str(dev.get("username") or "")
-    password = str(dev.get("password") or "")
-    port = int(dev.get("port") or 80)
-    if looks_like_hikvision(dev):
-        return HikvisionClient(host, user, password, port).snapshot_jpeg(channel)[0]
-    return DahuaClient(host, user, password, port).snapshot_jpeg(channel)[0]
-
-
-def iter_snapshot_mjpeg(
-    dev: dict[str, Any],
-    channel: int = 1,
-    jpeg_quality: int = 52,
-    max_width: int = 720,
-    force_size: tuple[int, int] | None = None,
-    target_fps: float = 4.0,
-) -> Iterator[bytes]:
-    """Live por snapshot CGI (HTTP). Sirve cuando el RTSP no atraviesa el NAT."""
-    min_interval = 1.0 / max(1.0, float(target_fps))
-    fails = 0
-    host = str(dev.get("host") or "")
-    http_port = int(dev.get("port") or 80)
-    print(f"Live snapshot CGI host={host} http={http_port} channel={channel}")
-    while True:
-        started = time.monotonic()
-        try:
-            raw = _snapshot_jpeg(dev, channel)
-            fails = 0
-        except Exception as exc:  # noqa: BLE001
-            fails += 1
-            if fails > 12:
-                raise RuntimeError(f"Sin snapshot del lector: {exc}") from exc
-            time.sleep(0.45)
-            continue
-        frame = cv2.imdecode(np.frombuffer(raw, dtype=np.uint8), cv2.IMREAD_COLOR)
-        if frame is None:
-            jpg = raw
-        else:
-            packed = _fit_frame(frame, jpeg_quality, max_width, force_size)
-            jpg = packed if packed else raw
-        yield _pack_jpeg(jpg)
-        wait = min_interval - (time.monotonic() - started)
-        if wait > 0:
-            time.sleep(wait)
-
-
 def _placeholder_jpeg(message: str = "Sin live") -> bytes:
     img = np.zeros((240, 320, 3), dtype=np.uint8)
     img[:] = (18, 14, 8)
@@ -193,7 +156,7 @@ def iter_placeholder_mjpeg(message: str = "Sin live") -> Iterator[bytes]:
 
 def _live_try_subs(dev: dict[str, Any], requested: int) -> list[int]:
     """ASI: solo extra 1. Nunca main (0): satura el motor facial."""
-    if str(dev.get("deviceType") or "") == "asi_facial":
+    if _is_asi_reader(dev):
         return [1]
     sub = int(requested)
     if sub == 1:
@@ -261,13 +224,13 @@ def iter_ffmpeg_rtsp(
         "-flags",
         "low_delay",
         "-probesize",
-        "32",
+        "1000000",
         "-analyzeduration",
-        "0",
+        "1000000",
         "-rtsp_transport",
         "tcp",
         "-timeout",
-        "5000000",
+        "8000000",
         "-i",
         url,
         "-an",
@@ -289,26 +252,57 @@ def iter_ffmpeg_rtsp(
         stderr=subprocess.PIPE,
         bufsize=0,
     )
+    err_chunks: list[bytes] = []
+    first_frame = threading.Event()
 
     def _drain_err() -> None:
         try:
-            if proc.stderr:
-                proc.stderr.read()
+            if not proc.stderr:
+                return
+            while True:
+                chunk = proc.stderr.read(1024)
+                if not chunk:
+                    break
+                err_chunks.append(chunk)
+                if sum(len(x) for x in err_chunks) > 8000:
+                    del err_chunks[:-6]
+        except Exception:  # noqa: BLE001
+            return
+
+    def _watchdog() -> None:
+        if first_frame.wait(12):
+            return
+        print(f"Live ffmpeg sin frames en 12s host={host} port={port} subtype={subtype}", flush=True)
+        try:
+            proc.kill()
         except Exception:  # noqa: BLE001
             return
 
     threading.Thread(target=_drain_err, daemon=True, name="ffmpeg-err").start()
+    threading.Thread(target=_watchdog, daemon=True, name="ffmpeg-watch").start()
     print(f"Live ffmpeg RTSP host={host} port={port} subtype={subtype} fps={fps}", flush=True)
+    n = 0
     try:
         if not proc.stdout:
             return
-        yield from (_pack_jpeg(jpg) for jpg in _iter_jpegs_from_pipe(proc.stdout.read))
+        for jpg in _iter_jpegs_from_pipe(proc.stdout.read):
+            n += 1
+            if n == 1:
+                first_frame.set()
+            yield _pack_jpeg(jpg)
     finally:
+        first_frame.set()
         try:
             proc.kill()
             proc.wait(timeout=2)
         except Exception:  # noqa: BLE001
             pass
+        if n == 0:
+            err = b"".join(err_chunks).decode("utf-8", "replace").replace("\n", " ").strip()
+            print(
+                f"Live ffmpeg no entrego host={host} port={port} subtype={subtype} err={err[:400]}",
+                flush=True,
+            )
 
 
 def iter_mjpeg(
@@ -320,31 +314,16 @@ def iter_mjpeg(
     force_size: tuple[int, int] | None = None,
     target_fps: float | None = None,
 ) -> Iterator[bytes]:
-    """
-    Live del dashboard: RTSP extra 1 via ffmpeg (sin OpenCV). No cae al main
-    ni a snapshot.cgi. Snapshot CGI solo con AGENT_LIVE_PREFER_SNAPSHOT=1 (NAT).
-    """
+    """Live del dashboard: RTSP extra 1 via ffmpeg. Sin snapshot.cgi (traba el ASI)."""
     if jpeg_quality is None:
         jpeg_quality = _env_int("AGENT_LIVE_JPEG_QUALITY", 52)
     if target_fps is None:
         target_fps = _env_float("AGENT_LIVE_FPS", 12.0)
 
-    prefer_snap = os.environ.get("AGENT_LIVE_PREFER_SNAPSHOT", "").strip() in {"1", "true", "yes"}
-    if prefer_snap:
-        snap_fps = _env_float("AGENT_LIVE_SNAPSHOT_FPS", 4.0)
-        yield from iter_snapshot_mjpeg(
-            dev,
-            channel=channel,
-            jpeg_quality=jpeg_quality,
-            max_width=max_width,
-            force_size=force_size,
-            target_fps=snap_fps,
-        )
-        return
-
     try_subs = _live_try_subs(dev, subtype)
     host = str(dev.get("host") or "")
     port = int(dev.get("rtspPort") or dev.get("rtsp_port") or 554)
+    is_asi = _is_asi_reader(dev)
 
     if shutil.which("ffmpeg"):
         for try_sub in try_subs:
@@ -363,6 +342,10 @@ def iter_mjpeg(
                 yield from iter_placeholder_mjpeg("Sin live")
                 return
             print(f"Live ffmpeg no entrego host={host} port={port} subtype={try_sub}", flush=True)
+        if is_asi:
+            print(f"Live RTSP no abrio host={host} port={port} extra=1, sin OpenCV ni snapshot CGI", flush=True)
+            yield from iter_placeholder_mjpeg("Sin live")
+            return
 
     wait = _env_float("AGENT_LIVE_RTSP_WAIT", 12.0)
     cap = None
@@ -424,6 +407,26 @@ _hubs: dict[str, _LiveHub] = {}
 _hubs_lock = threading.Lock()
 
 
+def hub_stats() -> dict[str, dict[str, Any]]:
+    with _hubs_lock:
+        return {
+            key: {
+                "users": hub.users,
+                "alive": bool(hub.thread and hub.thread.is_alive()),
+            }
+            for key, hub in _hubs.items()
+        }
+
+
+def rtsp_clients_for_host(host: str) -> int:
+    key = str(host or "").strip().lower()
+    if not key:
+        return 0
+    with _hubs_lock:
+        hub = _hubs.get(key)
+        return int(hub.users) if hub else 0
+
+
 def iter_mjpeg_shared(
     dev: dict[str, Any],
     channel: int = 1,
@@ -433,8 +436,11 @@ def iter_mjpeg_shared(
     force_size: tuple[int, int] | None = None,
     target_fps: float | None = None,
 ) -> Iterator[bytes]:
-    """Un solo RTSP/CGI por equipo: varias pestañas reutilizan el último JPEG."""
-    key = str(dev.get("id") or dev.get("host") or "live")
+    """Un solo RTSP por IP: varias pestañas reutilizan el último JPEG."""
+    key = _hub_key(dev)
+    if _is_asi_reader(dev):
+        channel = 1
+        subtype = 1
     with _hubs_lock:
         hub = _hubs.get(key)
         if hub is None:
@@ -498,4 +504,3 @@ def _hub_producer(
                 hub.cv.notify_all()
     except Exception as exc:  # noqa: BLE001
         print(f"Live hub producer: {exc}")
-

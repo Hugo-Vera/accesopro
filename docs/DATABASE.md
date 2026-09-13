@@ -94,7 +94,7 @@ access_point 1 ── N cameras     (access_point_cameras)
 El ASI es la fuente de accesos en vivo. La tabla `events` es la fuente del historial en el dashboard.
 
 1. El agent lee `GET /agent/sync-state`: último `recNo` / `rawTime` por `deviceId` (últimas 80 filas, no el ASI entero).
-2. Stream HTTP `eventManager.attach` es el camino principal (un hilo por lector).
+2. Stream HTTP `eventManager.cgi?action=attach&codes=[AccessControl]&heartbeat=5` (PDF Access Control). Detalle: `docs/ASI_CGI.md`.
 3. RecordFinder (poll) solo corre si el stream está caído: pide 5–12 registros nuevos respecto del cursor.
 4. `POST /agent/events` deduplica por `deviceId`+`recNo`.
 5. El dashboard hidrata `GET /api/events?limit=24`. La página Eventos usa `limit=80`.

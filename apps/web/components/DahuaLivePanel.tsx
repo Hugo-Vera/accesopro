@@ -113,6 +113,8 @@ export function DahuaLivePanel({
   const [tick, setTick] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [inView, setInView] = useState(true);
+  const [probeMsg, setProbeMsg] = useState<string | null>(null);
+  const [probing, setProbing] = useState(false);
 
   const devices = devicesProp ?? devicesLocal;
   const controlled = typeof onDeviceChange === "function";
@@ -137,6 +139,9 @@ export function DahuaLivePanel({
   const tech = getDeviceTech(selected);
   const subtype = tech.subtype;
   const laneTitle = lane ? LANE_LABEL[lane] : null;
+
+  const reader = selected?.id ? status.readers?.[selected.id] : undefined;
+  const stuckHint = reader?.stuckHint ?? "ok";
 
   const streamSrc = useMemo(() => {
     if (!streamEnabled || !inView) return null;
@@ -195,6 +200,40 @@ export function DahuaLivePanel({
     if (controlled) onDeviceChange?.(next);
     else setLocalId(next);
     setTick((n) => n + 1);
+  }
+
+  async function probeFace() {
+    if (!tenantId || !selected?.id || probing) return;
+    setProbing(true);
+    setProbeMsg("Anoté RecNo. Pasá una cara conocida (10 s).");
+    setError(null);
+    try {
+      const before = await api<{ recNo?: string }>(
+        withTenant(`/api/dahua/${selected.id}/reader-status`, tenantId),
+      );
+      const baseline = String(before.recNo ?? "");
+      await new Promise((r) => setTimeout(r, 10000));
+      const after = await api<{ result?: string; recNo?: string; stuckHint?: string }>(
+        withTenant(
+          `/api/dahua/${selected.id}/face-probe?baselineRecNo=${encodeURIComponent(baseline)}`,
+          tenantId,
+        ),
+        { method: "POST" },
+      );
+      if (after.result === "ok") {
+        setProbeMsg(`Lector OK. RecNo ${baseline || "—"} → ${after.recNo || "—"}.`);
+      } else if (after.result === "face_stuck") {
+        setProbeMsg(
+          "Lector trabado: attach vivo y RecNo no subió. Cerrá el live, esperá 15 s; si sigue, reiniciá el ASI.",
+        );
+      } else {
+        setProbeMsg("Attach CGI caído. Revisá red/clave; no uses snapshot.cgi como ping.");
+      }
+    } catch (err) {
+      setProbeMsg(err instanceof Error ? err.message : "No se pudo probar el lector");
+    } finally {
+      setProbing(false);
+    }
   }
 
   return (
@@ -287,7 +326,9 @@ export function DahuaLivePanel({
             src={streamSrc}
             alt={selected?.name || "Live feed"}
             className="ops-cam-frame-wide select-none"
-            onLoad={() => setError(null)}
+            onLoad={() => {
+              setError(null);
+            }}
             onError={() => {
               setError("Se cortó el live.");
               setTimeout(() => setTick((n) => n + 1), 1400);
@@ -308,6 +349,10 @@ export function DahuaLivePanel({
         <div className="flex min-w-0 items-center gap-2">
           {emptyOut || !streamEnabled ? (
             <span className="font-mono text-[9px] font-extrabold text-[#6b8498]">STANDBY</span>
+          ) : stuckHint === "face_stuck" ? (
+            <span className="font-mono text-[9px] font-extrabold text-amber-500">Lector trabado</span>
+          ) : stuckHint === "attach_down" ? (
+            <span className="font-mono text-[9px] font-extrabold text-rose-400">CGI caído</span>
           ) : (
             <span className="flex items-center gap-1 font-mono text-[9px] font-extrabold text-[#3dcf7a]">
               <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#3dcf7a]" />
@@ -329,6 +374,17 @@ export function DahuaLivePanel({
         </div>
 
         <div className="flex items-center gap-2 text-[#8fa6b8]">
+          {tech.isFacial && selected && streamEnabled ? (
+            <button
+              type="button"
+              className="font-mono text-[8.5px] font-bold uppercase tracking-wide text-slate-300 hover:text-white disabled:opacity-40"
+              title="Pasá una cara. Compara RecNo. No usa snapshot.cgi."
+              disabled={!selected || probing || !status.agentOnline}
+              onClick={() => void probeFace()}
+            >
+              {probing ? "Probando…" : "Probar lector"}
+            </button>
+          ) : null}
           <button
             type="button"
             className="transition-colors hover:text-[#2bb8d9] disabled:opacity-40"
@@ -349,6 +405,9 @@ export function DahuaLivePanel({
         </div>
       </div>
 
+      {probeMsg ? (
+        <p className="border-t border-[var(--ap-line-soft)] px-3 py-1 text-[11px] text-slate-300">{probeMsg}</p>
+      ) : null}
       {error ? (
         <p className="border-t border-[var(--ap-line-soft)] px-3 py-1 text-[11px] text-danger">{error}</p>
       ) : null}

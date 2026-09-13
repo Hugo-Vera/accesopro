@@ -49,7 +49,7 @@ API: `GET/PATCH /api/tenants/:id/features`. UI: Configuración → Módulos (blo
 - **Nube / AccesoPro:** dashboard Next (`apps/web`), API módulos (`apps/api`), Dahua CGI agent (`apps/agent`).
 - Eventos faciales: sync incremental ASI → SQLite (`GET /agent/sync-state` + stream; sin dump del historial del lector al arrancar). Live/toast: `docs/PLAN_PORTERIA.md`.
 - **LAN / AccesoSeguro:** `apps/site` — FastALPR, evidencias, QR DNI, barreras. Corre en :5051. No mezclar ese HTML con el dashboard AccesoPro.
-- RTSP y claves de equipos no van a git (`apps/site/config.yaml` está ignorado). En este predio hay NAT WAN de prueba al ASI (HTTP/SDK/RTSP TCP): **`docs/SITE_RB4011.md`** (sección 0, a mano).
+- RTSP y claves de equipos no van a git (`apps/site/config.yaml` está ignorado). En este predio hay NAT WAN de prueba al ASI (HTTP/SDK/RTSP TCP): **`docs/SITE_RB4011.md`** (sección 0, a mano). CGI vs RTSP del ASI (no mezclar `snapshot.cgi` con live): **`docs/ASI_CGI.md`**.
 
 ## Catálogo de módulos
 
@@ -74,7 +74,7 @@ Plano del predio = core (`/dashboard/plano`). Mapa OSM o Google (`NEXT_PUBLIC_MA
 
 Monorepo: `apps/web` (Next.js), `apps/api` (Hono), `apps/agent` (Dahua CGI), `apps/site` (AccesoSeguro / FastALPR). Postgres lo usa el sitio ALPR.
 
-Mapa detallado: `docs/ARCHITECTURE.md`. Estado por módulo: `docs/MODULES.md`. Base de datos: `docs/DATABASE.md`. Pendientes: `docs/PENDING.md`. Inventario + plan punta a punta: `docs/ROADMAP.md`. Ops IN/OUT: `docs/OPS_LANES.md`. Sitio físico RB4011 + NAT ASI: `docs/SITE_RB4011.md`. Intercom: `docs/INTERCOM.md`. Smoke: `docs/E2E_SMOKE.md`.
+Mapa detallado: `docs/ARCHITECTURE.md`. Estado por módulo: `docs/MODULES.md`. Base de datos: `docs/DATABASE.md`. Pendientes: `docs/PENDING.md`. Inventario + plan punta a punta: `docs/ROADMAP.md`. Ops IN/OUT: `docs/OPS_LANES.md`. Sitio físico RB4011 + NAT ASI: `docs/SITE_RB4011.md`. CGI/RTSP ASI: `docs/ASI_CGI.md`. Intercom: `docs/INTERCOM.md`. Smoke: `docs/E2E_SMOKE.md`.
 
 ## Convenciones
 

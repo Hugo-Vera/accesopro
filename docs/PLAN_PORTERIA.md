@@ -94,6 +94,8 @@ Personas (editar/huella/PIN), evidencia galería, intercom FreePBX, DNI, pánico
 
 Si el live se pone pesado en un NUC chico: `AGENT_LIVE_FPS=8` en `.env` del host.
 
+CGI vs RTSP y prueba de lector trabado: **`docs/ASI_CGI.md`**. No usar `snapshot.cgi` como ping.
+
 ## Reglas que no romper
 
 - Módulos comerciales ≠ fila del punto de acceso.

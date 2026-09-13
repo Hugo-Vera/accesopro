@@ -67,7 +67,7 @@ http://200.59.9.117:18080
 rtsp://admin:CLAVE@200.59.9.117:18554/cam/realmonitor?channel=1&subtype=1
 ```
 
-Subtype: **1** extra (DESCRIBE 200 OK). El live del agent prueba **2** (vertical facial) y cae a **1**. Transporte: **TCP** (`rtsp_transport;tcp`). No se publicó RTP UDP 20000-40000.
+Subtype: **1** extra (DESCRIBE 200 OK). AccesoCam usa solo extra 1 (`docs/ASI_CGI.md`). No extra 2 ni `snapshot.cgi` junto al RTSP. Transporte: **TCP**. No se publicó RTP UDP 20000-40000.
 
 CGI LAN (Digest): `RTSP.Enable=true` `RTSP.Port=554`. DESCRIBE al 554 LAN = 200. OpenCV en `.99` puede timeout; no significa que el puerto esté cerrado.
 
