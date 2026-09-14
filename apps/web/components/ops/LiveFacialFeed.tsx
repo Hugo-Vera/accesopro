@@ -342,8 +342,8 @@ export function LiveFacialFeed({
             const alert = parseFacialEvent(e);
             if (!alert) return null;
             const id = String(e.id);
-            // Primeras 4 filas cargan ya; el resto espera IntersectionObserver
-            const loadPhoto = idx < 4 || visibleIds.has(id);
+            // Compacto: 2 fotos. El FileManager RPC del ASI no banca 4 en paralelo.
+            const loadPhoto = (compact ? idx < 2 : idx < 4) || visibleIds.has(id);
 
             return (
               <button

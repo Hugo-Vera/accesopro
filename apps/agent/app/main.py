@@ -28,6 +28,8 @@ def _new_http() -> httpx.Client:
 
 
 _http = _new_http()
+_record_snap_lock = threading.Lock()
+_record_snap_cache: dict[str, tuple[bytes, str]] = {}
 
 
 def _reset_http() -> None:
@@ -896,8 +898,19 @@ def dahua_record_snapshot(
     dev = _device(device_id)
     if not dev:
         raise HTTPException(status_code=404, detail="Equipo no encontrado")
+    cache_key = f"{device_id}:{url.strip()}"
+    hit = _record_snap_cache.get(cache_key)
+    if hit:
+        return Response(content=hit[0], media_type=hit[1], headers={"Cache-Control": "public, max-age=86400"})
     try:
-        raw, ctype = _client(dev).get_record_snapshot(url)
+        with _record_snap_lock:
+            hit = _record_snap_cache.get(cache_key)
+            if hit:
+                return Response(content=hit[0], media_type=hit[1], headers={"Cache-Control": "public, max-age=86400"})
+            raw, ctype = _client(dev).get_record_snapshot(url)
+            if len(_record_snap_cache) > 80:
+                _record_snap_cache.clear()
+            _record_snap_cache[cache_key] = (raw, ctype)
         return Response(content=raw, media_type=ctype, headers={"Cache-Control": "public, max-age=86400"})
     except Exception as exc:  # noqa: BLE001
         msg = str(exc)
