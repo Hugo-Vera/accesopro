@@ -2,8 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { CheckCircle2, AlertTriangle, X, DoorOpen, ScanFace } from "lucide-react";
+import { CheckCircle2, AlertTriangle, X, DoorOpen } from "lucide-react";
 import { useEscapeKey } from "@/hooks/useEscapeKey";
+import { EventPhoto } from "@/components/ops/EventPhoto";
+import { useDash } from "@/components/DashboardProvider";
 
 export type FacialEventAlert = {
   id: string;
@@ -18,6 +20,8 @@ export type FacialEventAlert = {
   doorName?: string;
   /** Carril del evento: toast e historial del mismo sentido. */
   lane?: "in" | "out";
+  /** JPEG ya copiado al barrio (no consultar el ASI). */
+  photoStored?: boolean;
 };
 
 interface Props {
@@ -27,6 +31,7 @@ interface Props {
 }
 
 export function LiveFacialAlertToast({ alert, onDismiss, onOpenRelay }: Props) {
+  const { tenantId } = useDash();
   const onDismissRef = useRef(onDismiss);
   onDismissRef.current = onDismiss;
   const [animKey, setAnimKey] = useState(0);
@@ -63,6 +68,16 @@ export function LiveFacialAlertToast({ alert, onDismiss, onOpenRelay }: Props) {
     };
     window.addEventListener("ap:facial-alert", handler as EventListener);
     return () => window.removeEventListener("ap:facial-alert", handler as EventListener);
+  }, []);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent<FacialEventAlert>).detail;
+      if (!detail?.id) return;
+      setLiveAlert((prev) => (prev?.id === detail.id ? { ...prev, ...detail } : prev));
+    };
+    window.addEventListener("ap:facial-photo", handler as EventListener);
+    return () => window.removeEventListener("ap:facial-photo", handler as EventListener);
   }, []);
 
   useEffect(() => {
@@ -157,18 +172,23 @@ export function LiveFacialAlertToast({ alert, onDismiss, onOpenRelay }: Props) {
               overflow: "hidden",
             }}
           >
-            <div
+            <EventPhoto
+              eventId={shown.id}
+              tenantId={tenantId}
+              photoStored={shown.photoStored}
+              createdAt={shown.createdAt}
+              alt={shown.personName}
+              forceRetry
+              placeholderApproved={isApproved}
               style={{
-                position: "absolute",
-                inset: 0,
-                display: "grid",
-                placeItems: "center",
-                color: "#64748b",
-                background: isApproved ? "#d1fae5" : "#ffe4e6",
+                width: "100%",
+                height: "100%",
+                objectFit: "cover",
+                objectPosition: "center top",
+                position: "relative",
+                zIndex: 1,
               }}
-            >
-              <ScanFace size={36} strokeWidth={1.5} />
-            </div>
+            />
           </div>
 
           <div

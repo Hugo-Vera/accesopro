@@ -9,6 +9,7 @@ import { agentOnline, nid, normalizePlate, scopedSite, scopedSiteWithModule } fr
 import { parseDeviceLaneSector, parseDeviceSentido, syncDeviceLaneWiring } from "./accessPoints.js";
 import { denyUnlessCapability } from "./grants.js";
 import { tenantFeatureEnabled, assertFeature } from "./features.js";
+import { clearSiteEventPhotos, readEventPhoto } from "./eventPhotos.js";
 
 export { fireActuator } from "./actuatorExec.js";
 
@@ -1344,6 +1345,30 @@ hardware.get("/events", async (c) => {
   });
 });
 
+/** Foto local del evento. 404 si aún no se copió; no proxy al ASI. */
+hardware.get("/events/:id/photo", async (c) => {
+  const scoped = await scopedSite(c);
+  if ("error" in scoped) return scoped.error;
+  const id = c.req.param("id");
+  const row = await db
+    .select({ id: events.id })
+    .from(events)
+    .where(and(eq(events.id, id), eq(events.siteId, scoped.site.id)))
+    .get();
+  if (!row) return c.json({ error: "Evento no encontrado" }, 404);
+  const buf = readEventPhoto(scoped.site.id, id);
+  if (!buf) {
+    return new Response("missing", { status: 404, headers: { "Cache-Control": "no-store" } });
+  }
+  return new Response(new Uint8Array(buf), {
+    status: 200,
+    headers: {
+      "Content-Type": "image/jpeg",
+      "Cache-Control": "public, max-age=86400",
+    },
+  });
+});
+
 hardware.post("/events/clear", async (c) => {
   const scoped = await scopedSite(c);
   if ("error" in scoped) return scoped.error;
@@ -1369,6 +1394,9 @@ hardware.post("/events/clear", async (c) => {
         .where(and(eq(events.siteId, scoped.site.id), eq(events.type, typeFilter)));
     } else {
       await db.delete(events).where(eq(events.siteId, scoped.site.id));
+    }
+    if (!typeFilter || typeFilter === "dahua_access") {
+      clearSiteEventPhotos(scoped.site.id);
     }
   }
 

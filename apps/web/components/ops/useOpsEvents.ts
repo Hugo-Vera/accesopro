@@ -146,12 +146,34 @@ export function useOpsEvents({ tenantId, enabled, onAlert }: Options) {
     const pushRows = (rows: EventRow[], toastNewest: boolean) => {
       if (!rows.length || closed) return;
       const fresh: EventRow[] = [];
+      const updates: EventRow[] = [];
       for (const raw of rows) {
         if (!raw?.id) continue;
         const row = toRow(raw);
-        if (seenRef.current.has(row.id)) continue;
+        if (seenRef.current.has(row.id)) {
+          if (row.payload.photoStored === true) updates.push(row);
+          continue;
+        }
         seenRef.current.add(row.id);
         fresh.push(row);
+      }
+      if (updates.length) {
+        setEvents((prev) => {
+          const byId = new Map(updates.map((u) => [u.id, u]));
+          return prev.map((e) => {
+            const u = byId.get(e.id);
+            return u ? { ...e, payload: { ...e.payload, ...u.payload } } : e;
+          });
+        });
+        for (const u of updates) {
+          const alert = parseFacialEvent(u);
+          if (!alert) continue;
+          try {
+            window.dispatchEvent(new CustomEvent("ap:facial-photo", { detail: alert }));
+          } catch {
+            /* ignore */
+          }
+        }
       }
       if (!fresh.length) return;
 
@@ -268,8 +290,7 @@ export function useOpsEvents({ tenantId, enabled, onAlert }: Options) {
                 markHydratedFrom(rows);
                 connectSse();
               } else {
-                const newcomers = list.filter((e) => e?.id && !seenRef.current.has(String(e.id)));
-                pushRows(newcomers, true);
+                pushRows(list, true);
               }
             }
           } catch (err) {

@@ -7,6 +7,7 @@ import { actuatorsForDahuaDevice, resolveDeviceLane } from "./accessPoints.js";
 import { fireActuator } from "./actuatorExec.js";
 import { matchesSentido, sentidoOf } from "./engineBridge.js";
 import { broadcastRealtimeEvent } from "./eventStream.js";
+import { looksLikeJpeg, saveEventPhoto } from "./eventPhotos.js";
 import { markVisitStayByCard } from "./visitPass.js";
 
 type AgentEnv = { Variables: { siteId: string } };
@@ -284,5 +285,44 @@ agentRoutes.post("/events", async (c) => {
     createdAt: eventDate.getTime(),
   });
 
-  return c.json({ ok: true, openActuatorId });
+  return c.json({ ok: true, id: eventId, openActuatorId });
+});
+
+/** JPEG del evento, copiado por el agent (una vez). El browser no pega al ASI. */
+agentRoutes.post("/events/:id/photo", async (c) => {
+  const siteId = c.get("siteId");
+  const eventId = c.req.param("id");
+  const row = await db
+    .select()
+    .from(events)
+    .where(and(eq(events.id, eventId), eq(events.siteId, siteId)))
+    .get();
+  if (!row) return c.json({ error: "Evento no encontrado" }, 404);
+
+  const buf = Buffer.from(await c.req.arrayBuffer());
+  if (!looksLikeJpeg(buf)) return c.json({ error: "JPEG inválido" }, 400);
+
+  saveEventPhoto(siteId, eventId, buf);
+
+  let payload: Record<string, unknown> = {};
+  try {
+    payload = JSON.parse(row.payload) as Record<string, unknown>;
+  } catch {
+    payload = {};
+  }
+  payload.photoStored = true;
+  await db.update(events).set({ payload: JSON.stringify(payload) }).where(eq(events.id, eventId));
+
+  const site = await db.select().from(sites).where(eq(sites.id, siteId)).get();
+  const createdAt =
+    row.createdAt instanceof Date ? row.createdAt.getTime() : Number(row.createdAt) || Date.now();
+  broadcastRealtimeEvent({
+    id: eventId,
+    siteId,
+    tenantId: site?.tenantId,
+    type: row.type,
+    payload,
+    createdAt,
+  });
+  return c.json({ ok: true });
 });

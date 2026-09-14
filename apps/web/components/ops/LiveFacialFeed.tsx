@@ -6,12 +6,8 @@ import { createPortal } from "react-dom";
 import { ScanFace, X, CheckCircle2, AlertTriangle } from "lucide-react";
 import { IconUserCheck } from "@/components/DashboardIcons";
 import { useDash } from "@/components/DashboardProvider";
-import {
-  markSnapshotFailed,
-  parseFacialEvent,
-  snapshotProxyUrl,
-  type EventRow,
-} from "@/components/ops/parseFacialEvent";
+import { parseFacialEvent, type EventRow } from "@/components/ops/parseFacialEvent";
+import { EventPhoto } from "@/components/ops/EventPhoto";
 import type { FacialEventAlert } from "@/components/LiveFacialAlertToast";
 import { useEscapeKey } from "@/hooks/useEscapeKey";
 
@@ -43,16 +39,11 @@ function FeedThumb({
   alert,
   className,
   tenantId,
-  loadPhoto,
 }: {
   alert: FacialEventAlert;
   className?: string;
   tenantId?: string | null;
-  /** Solo pedir al ASI cuando la fila es visible (evita 40×400 al cargar). */
-  loadPhoto: boolean;
 }) {
-  const photoProxy =
-    loadPhoto ? snapshotProxyUrl(alert.deviceId, alert.snapshotUrl, tenantId) : null;
   return (
     <div
       className={`relative flex-shrink-0 overflow-hidden bg-slate-900 ${className ?? ""} ${
@@ -61,27 +52,25 @@ function FeedThumb({
           : "border-rose-400 dark:border-rose-600"
       }`}
     >
-      {photoProxy ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img
-          src={photoProxy}
-          alt={alert.personName}
-          loading="lazy"
-          decoding="async"
-          className="h-full w-full object-cover object-top"
-          onError={(ev) => {
-            markSnapshotFailed(alert.deviceId, alert.snapshotUrl);
-            ev.currentTarget.style.display = "none";
-          }}
-        />
+      <EventPhoto
+        eventId={alert.id}
+        tenantId={tenantId}
+        photoStored={alert.photoStored}
+        createdAt={alert.createdAt}
+        alt={alert.personName}
+        className="h-full w-full object-cover object-top"
+        style={{ position: "relative", zIndex: 1, height: "100%", width: "100%", objectFit: "cover", objectPosition: "center top" }}
+        placeholderApproved={alert.approved}
+      />
+      {!alert.photoStored ? (
+        <div className="pointer-events-none absolute inset-0 -z-10 grid place-items-center bg-slate-100 text-slate-400 dark:bg-slate-800">
+          {alert.approved ? (
+            <IconUserCheck className="h-6 w-6 text-emerald-600" />
+          ) : (
+            <ScanFace className="h-6 w-6 text-rose-500" />
+          )}
+        </div>
       ) : null}
-      <div className="absolute inset-0 -z-10 grid place-items-center bg-slate-100 text-slate-400 dark:bg-slate-800">
-        {alert.approved ? (
-          <IconUserCheck className="h-6 w-6 text-emerald-600" />
-        ) : (
-          <ScanFace className="h-6 w-6 text-rose-500" />
-        )}
-      </div>
     </div>
   );
 }
@@ -97,8 +86,6 @@ function EventDetailModal({
   tenantId?: string | null;
   onClose: () => void;
 }) {
-  const [photoFailed, setPhotoFailed] = useState(false);
-  const photoProxy = !photoFailed ? snapshotProxyUrl(alert.deviceId, alert.snapshotUrl, tenantId) : null;
   const isApproved = alert.approved;
   const accent = isApproved ? "#10b981" : "#f43f5e";
   const accentSoft = isApproved ? "#34d399" : "#fb7185";
@@ -142,37 +129,24 @@ function EventDetailModal({
               overflow: "hidden",
             }}
           >
-            {photoProxy ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={photoProxy}
-                alt={alert.personName}
-                style={{
-                  width: "100%",
-                  height: "100%",
-                  objectFit: "cover",
-                  objectPosition: "center top",
-                  display: "block",
-                }}
-                onError={() => {
-                  markSnapshotFailed(alert.deviceId, alert.snapshotUrl);
-                  setPhotoFailed(true);
-                }}
-              />
-            ) : (
-              <div
-                style={{
-                  position: "absolute",
-                  inset: 0,
-                  display: "grid",
-                  placeItems: "center",
-                  color: "#64748b",
-                  background: isApproved ? "#d1fae5" : "#ffe4e6",
-                }}
-              >
-                <ScanFace size={48} strokeWidth={1.5} />
-              </div>
-            )}
+            <EventPhoto
+              eventId={alert.id}
+              tenantId={tenantId}
+              photoStored={alert.photoStored}
+              createdAt={createdAt}
+              alt={alert.personName}
+              forceRetry={!alert.photoStored}
+              placeholderApproved={isApproved}
+              style={{
+                width: "100%",
+                height: "100%",
+                objectFit: "cover",
+                objectPosition: "center top",
+                display: "block",
+                position: "relative",
+                zIndex: 1,
+              }}
+            />
           </div>
 
           <div
@@ -331,7 +305,6 @@ export function LiveFacialFeed({
                 <FeedThumb
                   alert={alert}
                   tenantId={tenantId}
-                  loadPhoto={false}
                   className={`self-stretch border-r-2 ${compact ? "w-[96px] min-h-[128px]" : "w-[88px] min-h-[116px]"}`}
                 />
                 <div

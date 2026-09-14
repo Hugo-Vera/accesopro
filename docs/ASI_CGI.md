@@ -13,7 +13,7 @@ En AccesoPro el lector de este predio es un **ASI-6214S**. El encoder de video e
 | Historial / cursor RecNo | RPC `RecordFinder` | **Solo si el attach cayó.** Con attach sano queda apagado: un login+6 RPC cada 8 s trababa el SoC. |
 | Abrir | CGI | `accessControl.cgi?action=openDoor&channel=1` | Puntual. |
 | Personas / cara | CGI | `FaceInfoManager.cgi`, `recordUpdater` AccessControlCard | Alta, foto de enroll, baja. El reconcile **no** baja JPEG de todas las caras. |
-| Foto del **evento** | RPC `FileManager` + `/RPC2_Loadfile` | Solo al **abrir** un evento (modal). Toast e historial ya no las piden en lote. |
+| Foto del **evento** | RPC `FileManager` + `/RPC2_Loadfile` | **Una vez**, desde el **agent**, al toque (si el JPEG no está, reintento 120/250/450 ms). Se guarda en `apps/api/data/evidence/{site}/{eventId}.jpg`. Toast, historial, Eventos y Evidencia leen `GET /api/events/:id/photo`. El browser **no** pega FileManager. |
 
 ## Qué no se usa en el ASI (aunque exista en cámaras)
 
@@ -52,7 +52,7 @@ Health: `GET :8790/health` (también `cgi` = inflight / last60s / byKind / recen
 | `recNo` / `recAgeSec` | Último pase visto. Si `recAgeSec` > 180 y nadie pasó cara: `stuckHint=idle`. |
 | `pollerActive` | `true` solo con attach caído (ahí sí corre RecordFinder). |
 | `rtspClients` | Debe ser 0 con AccesoCam apagado. |
-| `cgi.last60s` | Con attach sano debería ser ~0 (salvo un openDoor o un modal de foto). |
+| `cgi.last60s` | Con attach sano debería ser ~0 (salvo un openDoor o la copia de foto de un pase). |
 | `stuckHint` | `ok` / `idle` / `attach_down` / `face_stuck`. |
 
 Config del lector (on demand, liviano): `GET :8790/dahua/{id}/inspect` o API `GET /api/dahua/{id}/inspect`.
@@ -71,7 +71,7 @@ Probar si está trabado:
 1. **RTSP extra 1** (AccesoCam). En el ASI-6214S comparte SoC con la cara. Arranca **apagado**. Si el attach se cae, el agent corta el hub RTSP.
 2. **eventManager attach** AccessControl — necesario para toast/historial. Un hilo, heartbeat 5 s. **Esto es lo único en bucle.**
 3. **RecordFinder** — solo si attach cayó (cada 1.6 s). Con attach sano: **apagado**.
-4. **FileManager / SnapURL** — una foto, al abrir el modal de un evento. No en el toast ni en el listado.
+4. **FileManager / SnapURL** — una copia por evento, en el agent (cola de 1). El dashboard sirve el JPEG local. Sin backfill de pases viejos.
 5. **snapshot.cgi** — enroll / test de Dispositivos. Bloqueado si hay RTSP.
 6. **openDoor / probe / inspect / personas** — puntuales. El padrón periódico no baja `AccessFace.list`.
 

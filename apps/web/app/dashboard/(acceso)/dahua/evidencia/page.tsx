@@ -1,12 +1,13 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Camera, X } from "lucide-react";
+import { X } from "lucide-react";
 import { FeatureGate, PageHeader } from "@/components/PageHeader";
 import { api, withTenant } from "@/lib/api";
 import { useDash } from "@/components/DashboardProvider";
 import { useEscapeKey } from "@/hooks/useEscapeKey";
-import { snapshotProxyUrl } from "@/components/ops/parseFacialEvent";
+import { eventPhotoUrl } from "@/components/ops/parseFacialEvent";
+import { EventPhoto } from "@/components/ops/EventPhoto";
 
 type EventRow = {
   id: string;
@@ -30,28 +31,22 @@ export default function DahuaEvidenciaPage() {
       .catch((err) => setError(err instanceof Error ? err.message : "Error"));
   }, [tenantId]);
 
-  const withPhoto = events.filter((e) => {
-    const url = String(e.payload.snapshotUrl || e.payload.FilePath || e.payload.filePath || "");
-    return Boolean(url) || Boolean(e.payload.deviceId);
-  });
+  const withPhoto = events.filter((e) => e.payload.photoStored === true);
 
   return (
     <FeatureGate feature="dahua.evidence" capability="dahua.evidence">
       <PageHeader
         title="Evidencia del lector"
-        subtitle="Fotos copiadas al historial del barrio (más retenible que el SD del ASI)."
+        subtitle="Fotos copiadas al historial del barrio (no se vuelven a pedir al ASI)."
       />
       {error ? <p className="mb-3 text-sm text-rose-600">{error}</p> : null}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-4">
         {withPhoto.length === 0 ? (
           <p className="col-span-full rounded-xl border border-dashed border-slate-300 p-8 text-center text-sm text-slate-500 dark:border-slate-600">
-            Todavía no hay fotos en el historial. Los pases faciales con snapshot aparecen acá.
+            Todavía no hay fotos locales. Los pases nuevos copian el JPEG al barrio una sola vez.
           </p>
         ) : (
           withPhoto.map((e) => {
-            const deviceId = String(e.payload.deviceId || "");
-            const snap = String(e.payload.snapshotUrl || e.payload.FilePath || "");
-            const src = snapshotProxyUrl(deviceId, snap, tenantId);
             const name = String(e.payload.personName || e.payload.CardName || "Acceso");
             return (
               <button
@@ -60,15 +55,23 @@ export default function DahuaEvidenciaPage() {
                 className="overflow-hidden rounded-xl border border-slate-200 bg-white text-left dark:border-slate-700 dark:bg-slate-900"
                 onClick={() => setSelected(e)}
               >
-                <div className="aspect-[3/4] bg-slate-100 dark:bg-slate-800">
-                  {selected?.id === e.id && src ? (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={src} alt="" className="h-full w-full object-cover" />
-                  ) : (
-                    <div className="grid h-full place-items-center text-slate-400">
-                      <Camera className="h-8 w-8" />
-                    </div>
-                  )}
+                <div className="relative aspect-[3/4] bg-slate-100 dark:bg-slate-800">
+                  <EventPhoto
+                    eventId={e.id}
+                    tenantId={tenantId}
+                    photoStored
+                    createdAt={e.createdAt}
+                    alt=""
+                    className="h-full w-full object-cover"
+                    style={{
+                      width: "100%",
+                      height: "100%",
+                      objectFit: "cover",
+                      objectPosition: "center top",
+                      position: "relative",
+                      zIndex: 1,
+                    }}
+                  />
                 </div>
                 <div className="p-2">
                   <p className="truncate text-[12px] font-semibold text-slate-800 dark:text-slate-100">{name}</p>
@@ -92,21 +95,29 @@ export default function DahuaEvidenciaPage() {
                 <X className="h-5 w-5 text-slate-500" />
               </button>
             </div>
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              src={
-                snapshotProxyUrl(
-                  String(selected.payload.deviceId || ""),
-                  String(selected.payload.snapshotUrl || selected.payload.FilePath || ""),
-                  tenantId,
-                ) || ""
-              }
-              alt=""
-              className="w-full rounded-lg"
-            />
+            <div className="relative min-h-[240px]">
+              <EventPhoto
+                eventId={selected.id}
+                tenantId={tenantId}
+                photoStored
+                createdAt={selected.createdAt}
+                alt=""
+                className="w-full rounded-lg"
+                style={{ width: "100%", display: "block", position: "relative", zIndex: 1 }}
+              />
+            </div>
             <p className="mt-2 text-sm font-semibold text-slate-800 dark:text-slate-100">
               {String(selected.payload.personName || selected.payload.CardName || "Acceso")}
             </p>
+            {eventPhotoUrl(selected.id, tenantId) ? (
+              <a
+                href={eventPhotoUrl(selected.id, tenantId) || ""}
+                download={`captura_${selected.id}.jpg`}
+                className="mt-2 inline-block text-xs font-semibold text-blue-600"
+              >
+                Descargar JPG
+              </a>
+            ) : null}
           </div>
         </div>
       ) : null}

@@ -6,7 +6,7 @@ import { drizzle } from "drizzle-orm/libsql";
 import * as schema from "./schema.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const dataDir = resolve(here, "../../data");
+export const dataDir = resolve(here, "../../data");
 mkdirSync(dataDir, { recursive: true });
 
 const url = process.env.DATABASE_URL ?? `file:${resolve(dataDir, "accesopro.db")}`;

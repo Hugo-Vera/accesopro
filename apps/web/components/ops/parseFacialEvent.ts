@@ -70,7 +70,16 @@ export function parseFacialEvent(
     snapshotUrl,
     reason,
     lane,
+    photoStored: p.photoStored === true,
   };
+}
+
+export function eventPhotoUrl(eventId: string, tenantId?: string | null) {
+  if (!eventId) return null;
+  const qs = new URLSearchParams();
+  if (tenantId) qs.set("tenantId", tenantId);
+  const q = qs.toString();
+  return apiUrl(`/api/events/${encodeURIComponent(eventId)}/photo${q ? `?${q}` : ""}`);
 }
 
 export function snapshotProxyUrl(deviceId: string, snapshotUrl?: string, tenantId?: string | null) {

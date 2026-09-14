@@ -24,7 +24,8 @@ import {
   Camera,
   ShieldAlert,
 } from "lucide-react";
-import { markSnapshotFailed, snapshotProxyUrl } from "@/components/ops/parseFacialEvent";
+import { eventPhotoUrl } from "@/components/ops/parseFacialEvent";
+import { EventPhoto } from "@/components/ops/EventPhoto";
 import { useEscapeKey } from "@/hooks/useEscapeKey";
 
 type EventRow = {
@@ -249,8 +250,9 @@ export default function DahuaEventosPage() {
     );
   }
 
-  function getSnapshotUrl(deviceId?: string, rawUrl?: string) {
-    return snapshotProxyUrl(deviceId || "", rawUrl, tenantId);
+  function getSnapshotUrl(eventId?: string) {
+    if (!eventId) return null;
+    return eventPhotoUrl(eventId, tenantId);
   }
 
   return (
@@ -406,9 +408,14 @@ export default function DahuaEventosPage() {
                     );
                     const cardNo = String(p.cardNo || p.CardNo || p.UserID || "—");
                     const devName = String(p.deviceName || "Lector Facial ASI");
-                    const devId = String(p.deviceId || "");
-                    const snapshotUrl = String(p.snapshotUrl || p.URL || "");
-                    const hasSnap = Boolean(getSnapshotUrl(devId, snapshotUrl));
+                    const photoStored = p.photoStored === true;
+                    const createdMs =
+                      typeof e.createdAt === "number"
+                        ? e.createdAt
+                        : Date.parse(String(e.createdAt));
+                    const recent =
+                      Number.isFinite(createdMs) && Date.now() - createdMs < 20000;
+                    const hasSnap = photoStored || recent;
                     const rawDate = e.createdAt ? new Date(e.createdAt) : new Date();
 
                     return (
@@ -421,10 +428,30 @@ export default function DahuaEventosPage() {
                           <button
                             type="button"
                             onClick={() => setSelectedPhotoEvent(e)}
-                            title="Ver captura (se pide al ASI solo al abrir)"
+                            title="Ver captura local"
                             className="group relative inline-grid h-10 w-10 place-items-center overflow-hidden rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-slate-400 shadow-2xs hover:scale-105 transition-transform"
                           >
-                            {hasSnap ? <Eye className="h-4 w-4" /> : <Camera className="h-4 w-4 opacity-50" />}
+                            {hasSnap ? (
+                              <EventPhoto
+                                eventId={e.id}
+                                tenantId={tenantId}
+                                photoStored={photoStored}
+                                createdAt={e.createdAt}
+                                alt=""
+                                className="h-full w-full object-cover object-top"
+                                style={{
+                                  width: "100%",
+                                  height: "100%",
+                                  objectFit: "cover",
+                                  objectPosition: "center top",
+                                  position: "relative",
+                                  zIndex: 1,
+                                }}
+                                placeholderApproved={isApproved}
+                              />
+                            ) : (
+                              <Camera className="h-4 w-4 opacity-50" />
+                            )}
                           </button>
                         </td>
 
@@ -533,25 +560,22 @@ export default function DahuaEventosPage() {
 
               {/* Imagen Grande */}
               <div className="overflow-hidden rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-950/90 aspect-[3/4] flex items-center justify-center relative shadow-inner">
-                {getSnapshotUrl(selectedPhotoEvent.payload.deviceId, selectedPhotoEvent.payload.snapshotUrl || selectedPhotoEvent.payload.URL) ? (
-                  <img
-                    src={getSnapshotUrl(selectedPhotoEvent.payload.deviceId, selectedPhotoEvent.payload.snapshotUrl || selectedPhotoEvent.payload.URL)!}
-                    alt="Captura de rostro"
-                    className="h-full w-full object-contain"
-                    onError={(ev) => {
-                      markSnapshotFailed(
-                        String(selectedPhotoEvent.payload.deviceId || ""),
-                        String(selectedPhotoEvent.payload.snapshotUrl || selectedPhotoEvent.payload.URL || ""),
-                      );
-                      ev.currentTarget.style.display = "none";
-                    }}
-                  />
-                ) : (
-                  <div className="text-center text-slate-500 p-4">
-                    <Camera className="mx-auto h-8 w-8 opacity-40 mb-2" />
-                    <p className="text-xs">Imagen no disponible en memoria</p>
-                  </div>
-                )}
+                <EventPhoto
+                  eventId={selectedPhotoEvent.id}
+                  tenantId={tenantId}
+                  photoStored={selectedPhotoEvent.payload.photoStored === true}
+                  createdAt={selectedPhotoEvent.createdAt}
+                  alt="Captura de rostro"
+                  forceRetry={selectedPhotoEvent.payload.photoStored !== true}
+                  className="h-full w-full object-contain"
+                  style={{
+                    height: "100%",
+                    width: "100%",
+                    objectFit: "contain",
+                    position: "relative",
+                    zIndex: 1,
+                  }}
+                />
               </div>
 
               {/* Ficha de Detalles */}
@@ -583,9 +607,9 @@ export default function DahuaEventosPage() {
               </div>
 
               <div className="mt-4 flex items-center justify-end gap-2">
-                {getSnapshotUrl(selectedPhotoEvent.payload.deviceId, selectedPhotoEvent.payload.snapshotUrl || selectedPhotoEvent.payload.URL) && (
+                {getSnapshotUrl(selectedPhotoEvent.id) && selectedPhotoEvent.payload.photoStored === true && (
                   <a
-                    href={getSnapshotUrl(selectedPhotoEvent.payload.deviceId, selectedPhotoEvent.payload.snapshotUrl || selectedPhotoEvent.payload.URL)!}
+                    href={getSnapshotUrl(selectedPhotoEvent.id)!}
                     download={`captura_dahua_${selectedPhotoEvent.id}.jpg`}
                     className="inline-flex items-center gap-1.5 rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-800 px-3.5 py-2 text-xs font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors"
                   >

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import queue
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -30,6 +31,7 @@ def _new_http() -> httpx.Client:
 _http = _new_http()
 _record_snap_lock = threading.Lock()
 _record_snap_cache: dict[str, tuple[bytes, str]] = {}
+_photo_q: queue.Queue[tuple[str, str, str]] = queue.Queue(maxsize=64)
 
 
 def _reset_http() -> None:
@@ -51,6 +53,69 @@ def api_post(path: str, payload: dict[str, Any]) -> dict[str, Any]:
     res = _http.post(f"{API}{path}", json=payload)
     res.raise_for_status()
     return res.json()
+
+
+def api_post_bytes(path: str, data: bytes, content_type: str) -> dict[str, Any]:
+    res = _http.post(f"{API}{path}", content=data, headers={**HEADERS, "Content-Type": content_type})
+    res.raise_for_status()
+    ctype = res.headers.get("content-type", "")
+    if ctype.startswith("application/json"):
+        return res.json()
+    return {"ok": True}
+
+
+def _enqueue_event_photo(dev_id: str, event_id: str, snap_url: str) -> None:
+    url = str(snap_url or "").strip()
+    if not dev_id or not event_id or not url:
+        return
+    try:
+        _photo_q.put_nowait((dev_id, event_id, url))
+    except queue.Full:
+        print(f"Cola de fotos llena, se omite {event_id}")
+
+
+def _event_photo_worker() -> None:
+    """Una FileManager por evento, al toque. Si el JPEG aún no está en disco, reintento corto."""
+    while not _stop.is_set():
+        try:
+            item = _photo_q.get(timeout=0.4)
+        except queue.Empty:
+            continue
+        dev_id, event_id, snap_url = item
+        try:
+            if _stop.is_set():
+                break
+            dev = _device(dev_id)
+            if not dev:
+                print(f"Foto evento {event_id}: equipo {dev_id} no está en config")
+                continue
+            raw = b""
+            last_err = "sin JPEG"
+            # 0 / 120 / 250 / 450 ms: el archivo suele existir cuando llega el attach.
+            for wait in (0.0, 0.12, 0.25, 0.45):
+                if wait:
+                    time.sleep(wait)
+                if _stop.is_set():
+                    break
+                try:
+                    with _record_snap_lock:
+                        raw, _ctype = _client(dev).get_record_snapshot(snap_url)
+                    if raw and len(raw) >= 80 and raw[0] == 0xFF and raw[1] == 0xD8:
+                        break
+                    last_err = "JPEG inválido"
+                    raw = b""
+                except Exception as exc:  # noqa: BLE001
+                    last_err = str(exc)
+                    raw = b""
+            if not raw or raw[0] != 0xFF:
+                print(f"Foto evento {event_id}: no se copió ({last_err})")
+                continue
+            api_post_bytes(f"/agent/events/{event_id}/photo", raw, "image/jpeg")
+            print(f"Foto evento {event_id}: copiada ({len(raw)} bytes)")
+        except Exception as exc:  # noqa: BLE001
+            print(f"Foto evento {event_id}: {exc}")
+        finally:
+            _photo_q.task_done()
 
 
 def on_plate(camera_id: str, plate: str, confidence: float) -> None:
@@ -333,7 +398,7 @@ def _dispatch_access_event(dev: dict[str, Any], rec: dict[str, Any], *, skip_deb
     _last_person_access[debounce_key] = now
 
     try:
-        api_post(
+        posted = api_post(
             "/agent/events",
             {
                 "type": "dahua_access",
@@ -350,7 +415,7 @@ def _dispatch_access_event(dev: dict[str, Any], rec: dict[str, Any], *, skip_deb
                     "cardNo": rec.get("CardNo") or "",
                     "recNo": rec_no,
                     "rawTime": stamp,
-                    "snapshotUrl": rec.get("URL") or "",
+                    "snapshotUrl": rec.get("URL") or rec.get("SnapURL") or "",
                 },
             },
         )
@@ -362,6 +427,10 @@ def _dispatch_access_event(dev: dict[str, Any], rec: dict[str, Any], *, skip_deb
             # Conservar las claves más recientes aproximando con clear parcial
             _seen_records.clear()
             _seen_records.add(key)
+        event_id = str(posted.get("id") or "")
+        snap = str(rec.get("URL") or rec.get("SnapURL") or "")
+        if event_id and snap and not posted.get("duplicate"):
+            _enqueue_event_photo(dev_id, event_id, snap)
     except Exception as exc:  # noqa: BLE001
         print(f"Evento Dahua no enviado: {exc}")
 
@@ -793,17 +862,19 @@ async def lifespan(_app: FastAPI):
     t_hb = threading.Thread(target=_heartbeat_worker, daemon=True, name="HeartbeatWorker")
     t_poll = threading.Thread(target=_dahua_poller_worker, daemon=True, name="PollerWorker")
     t_stream = threading.Thread(target=_dahua_stream_worker, daemon=True, name="StreamWorker")
+    t_photo = threading.Thread(target=_event_photo_worker, daemon=True, name="EventPhotoWorker")
     t_cmd.start()
     t_hb.start()
     t_poll.start()
     t_stream.start()
+    t_photo.start()
     print(f"AccesoPro agent multithreaded workers started -> {API}")
     yield
     _stop.set()
     alpr.stop()
 
 
-app = FastAPI(title="AccesoPro Site Agent", version="0.3.9", lifespan=lifespan)
+app = FastAPI(title="AccesoPro Site Agent", version="0.3.10", lifespan=lifespan)
 
 
 ATTACH_OK_S = 15.0
