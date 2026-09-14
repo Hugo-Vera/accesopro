@@ -832,13 +832,15 @@
   min-height: 160px;
 }
 
-/* Extra RTSP del ASI es apaisado 4:3. El totem del equipo es otra vista (vertical). */
+/* Extra 1 recodificado a 384×640 (como la foto de evidencia). El totem LCD sigue aparte. */
 .ops-cam-viewport--facial {
-  flex: 0 0 auto;
+  flex: 1 1 auto;
   width: 100%;
-  aspect-ratio: 4 / 3;
+  max-width: 220px;
+  margin-inline: auto;
+  aspect-ratio: 384 / 640;
   min-height: 0;
-  max-height: 280px;
+  max-height: 360px;
   padding: 0;
 }
 

@@ -114,6 +114,7 @@ export function DahuaLivePanel({
   const [error, setError] = useState<string | null>(null);
   const [inView, setInView] = useState(true);
   const retryRef = useRef<number | null>(null);
+  const [liveOn, setLiveOn] = useState(false);
   const [probeMsg, setProbeMsg] = useState<string | null>(null);
   const [probing, setProbing] = useState(false);
 
@@ -145,7 +146,7 @@ export function DahuaLivePanel({
   const stuckHint = reader?.stuckHint ?? "ok";
 
   const streamSrc = useMemo(() => {
-    if (!streamEnabled || !inView) return null;
+    if (!streamEnabled || !inView || !liveOn) return null;
     if (!tenantId || !selected?.id || !status.agentOnline) return null;
     const q = withTenant(
       `/api/dahua/${selected.id}/live?channel=${channel}&subtype=${subtype}&_=${tick}`,
@@ -155,6 +156,7 @@ export function DahuaLivePanel({
   }, [
     streamEnabled,
     inView,
+    liveOn,
     tenantId,
     selected?.id,
     channel,
@@ -175,6 +177,21 @@ export function DahuaLivePanel({
       if (retryRef.current) window.clearTimeout(retryRef.current);
     };
   }, []);
+
+  useEffect(() => {
+    if (!tech.isFacial) {
+      setLiveOn(true);
+      return;
+    }
+    setLiveOn(false);
+  }, [selected?.id, tech.isFacial]);
+
+  useEffect(() => {
+    if (!tech.isFacial) return;
+    if (stuckHint === "attach_down" || stuckHint === "face_stuck") {
+      setLiveOn(false);
+    }
+  }, [stuckHint, tech.isFacial]);
 
   useEffect(() => {
     if (devicesProp) return;
@@ -270,7 +287,7 @@ export function DahuaLivePanel({
               }`}
               title={
                 tech.isFacial
-                  ? "RTSP extra 1 apaisado. La pantalla del ASI es el totem vertical, no este stream."
+                  ? "RTSP extra 1 recuadro 384×640, igual que la foto de evidencia. No usa snapshot.cgi."
                   : "Resolución de cámara IP estándar: 16:9 HD"
               }
             >
@@ -328,6 +345,13 @@ export function DahuaLivePanel({
                 "El live ya corre en Ingreso. Acá solo filtra el historial para no abrir un segundo RTSP."}
             </p>
           </div>
+        ) : !liveOn ? (
+          <div className="grid max-w-[260px] place-items-center px-3 text-center">
+            <p className="text-[12px] font-semibold text-slate-300">Live apagado</p>
+            <p className="mt-1.5 text-[11px] leading-snug text-[#6b8498]">
+              Historial y cara siguen. Encender AccesoCam abre RTSP extra y en este ASI suele trabar el facial.
+            </p>
+          </div>
         ) : streamSrc ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
@@ -363,7 +387,7 @@ export function DahuaLivePanel({
 
       <div className="ops-cam-bottom-hud flex items-center justify-between px-2.5 py-1 text-xs">
         <div className="flex min-w-0 items-center gap-2">
-          {emptyOut || !streamEnabled ? (
+          {emptyOut || !streamEnabled || (tech.isFacial && !liveOn) ? (
             <span className="font-mono text-[9px] font-extrabold text-[#6b8498]">STANDBY</span>
           ) : stuckHint === "face_stuck" ? (
             <span className="font-mono text-[9px] font-extrabold text-amber-500">Lector trabado</span>
@@ -378,7 +402,7 @@ export function DahuaLivePanel({
           {selected ? (
             <>
               <span className="font-mono text-[8.5px] font-semibold text-[#55819e]">
-                {tech.isFacial ? "Extra 1 apaisado" : "16:9 HD"}
+                {tech.isFacial ? "384×640 extra" : "16:9 HD"}
               </span>
               <span className="max-w-[120px] truncate text-[10.5px] font-semibold text-slate-200">
                 {selected.name}
@@ -394,6 +418,21 @@ export function DahuaLivePanel({
             <button
               type="button"
               className="font-mono text-[8.5px] font-bold uppercase tracking-wide text-slate-300 hover:text-white disabled:opacity-40"
+              title={
+                liveOn
+                  ? "Corta el RTSP para que el motor de cara trabaje."
+                  : "Abre extra 1. En este ASI el live suele trabar el facial."
+              }
+              disabled={!selected || !status.agentOnline}
+              onClick={() => setLiveOn((on) => !on)}
+            >
+              {liveOn ? "Cortar live" : "Ver live"}
+            </button>
+          ) : null}
+          {tech.isFacial && selected && streamEnabled ? (
+            <button
+              type="button"
+              className="font-mono text-[8.5px] font-bold uppercase tracking-wide text-slate-300 hover:text-white disabled:opacity-40"
               title="Pasá una cara. Compara RecNo. No usa snapshot.cgi."
               disabled={!selected || probing || !status.agentOnline}
               onClick={() => void probeFace()}
@@ -405,7 +444,7 @@ export function DahuaLivePanel({
             type="button"
             className="transition-colors hover:text-[#2bb8d9] disabled:opacity-40"
             title="Refrescar stream"
-            disabled={!selected}
+            disabled={!selected || !liveOn}
             onClick={() => setTick((n) => n + 1)}
           >
             <IconRefresh className="h-3.5 w-3.5" />

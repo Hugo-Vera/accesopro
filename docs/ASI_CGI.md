@@ -8,7 +8,7 @@ En AccesoPro el lector de este predio es un **ASI-6214S**. El encoder de video e
 
 | Uso | Protocolo | Comando | Notas |
 |-----|-----------|---------|--------|
-| Live portería | RTSP TCP 554 | `/cam/realmonitor?channel=1&subtype=1` | Extra 1 **apaisado** (p.ej. 640×480). `subtype=0` es principal y satura la cara. El LCD del ASI es otra tubería: totem vertical (cara + ROI). No es el mismo recorte ni el mismo aspect. |
+| Live portería | RTSP TCP 554 | `/cam/realmonitor?channel=1&subtype=1` | Extra 1. ffmpeg lo recuadra a **384×640** (proporción de la foto de evidencia). Sigue siendo un solo RTSP; no es `SnapURL` ni `snapshot.cgi`. `subtype=0` satura la cara. |
 | Eventos en vivo | HTTP CGI Digest | `eventManager.cgi?action=attach&codes=[AccessControl]&heartbeat=5` | Heartbeat cada 5 s (rango 1–60 del manual). |
 | Historial / cursor RecNo | RPC `RecordFinder` (cola reciente) + CGI `recordFinder` de respaldo | El CGI `find&count=N` devuelve los **más viejos**; por eso el agent pide los últimos por RPC. |
 | Abrir | CGI | `accessControl.cgi?action=openDoor&channel=1` | |
@@ -29,7 +29,7 @@ En AccesoPro el lector de este predio es un **ASI-6214S**. El encoder de video e
 
 ## Totem del ASI vs AccesoCam
 
-La pantalla del ASI-6214S es el **UI del equipo** (sensor en vertical, recorte de cara). AccesoCam **no** clona esa pantalla: Chrome no abre `rtsp://` y el extra 1 del PDF es un encode **apaisado**, a menudo una franja más ancha/alta del mismo sensor. Por eso en el totem se ve el torso de frente y en AccesoCam puede verse más techo/cortina y la cabeza abajo. Forzar el extra a 272×480 o abrir el main (`subtype=0`) para “que se vea igual” vuelve a trabar el facial.
+La pantalla del ASI-6214S es el **UI del equipo**. La foto de evidencia 384×640 sale del evento (`SnapURL`), no es live. AccesoCam, si se enciende, usa el extra 1 recodificado a 384×640. El recode no abre otro stream, pero **el extra 1 en sí** comparte SoC con la cara: en este predio el attach se cae y RecNo se congela. Por eso AccesoCam arranca apagado. Pedir SnapURL en bucle o el main (`subtype=0`) también traba.
 
 ## Un cliente de video por IP
 
@@ -49,3 +49,14 @@ No usar `snapshot.cgi` como ping: puede trabarlo más.
 6. Attach caído (`attachOk=false`) → CGI/red/401, no hace falta reiniciar el SoC primero.
 
 Health del agent: `attachOk`, `lastHeartbeatAt`, `recNo`, `lastRecNoAt`, `rtspClients`, `stuckHint` (`ok` / `attach_down` / `face_stuck`).
+
+## Qué carga el ASI (orden)
+
+1. **RTSP extra 1** (AccesoCam). El dashboard lo abría solo al entrar a portería. En el ASI-6214S comparte SoC con la cara: attach CGI se cae y RecNo deja de subir. AccesoCam arranca **apagado**; el guardia lo enciende si hace falta. Si el attach se cae, el agent corta el hub RTSP.
+2. **eventManager attach** AccessControl — necesario para toast/historial. Un hilo, heartbeat 5 s.
+3. **RecordFinder** — respaldo cada 8 s si attach está sano; 1.6 s solo si attach cayó (y ya sin RTSP).
+4. **SnapURL** de evidencia — archivo del evento, no live. Historial pide las 4 filas visibles.
+5. **snapshot.cgi** — enroll / test de Dispositivos. Bloqueado si hay RTSP.
+6. **openDoor / probe / personas** — puntuales, no en bucle.
+
+No mezclar 1+5. El heartbeat del agent (`/agent/heartbeat`) **no** habla con el ASI.

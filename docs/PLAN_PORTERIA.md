@@ -87,7 +87,7 @@ Personas (editar/huella/PIN), evidencia galería, intercom FreePBX, DNI, pánico
 | Pieza | Cambio | Por qué |
 |-------|--------|---------|
 | Live | Route Next `/api/dahua/:id/live` sin buffer | El rewrite de Next atrasaba el MJPEG |
-| Live | RTSP extra 1 via ffmpeg (~6 fps ASI); AccesoCam 4:3 `contain` | Chrome no abre `rtsp://`. OpenCV recodificaba y recortaba. Sin snapshot CGI |
+| Live | RTSP extra 1 via ffmpeg (~6 fps ASI); AccesoCam 384×640 `cover` | Chrome no abre `rtsp://`. Recuadro como la foto de evidencia. Sin snapshot CGI |
 | Toast | SSE `ping` + reconnect 1,2 s; poll 1 s si SSE cae | No esperar 8 s a un evento |
 | Toast | Auto-cierre 12 s | La fila de historial es la actividad; el toast avisa |
 | Agent | Cliente HTTP reutilizado; debounce 1,2 s | Menos latencia al POST |

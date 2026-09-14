@@ -84,6 +84,18 @@ def _pack_jpeg(jpg: bytes) -> bytes:
     )
 
 
+def _cover_to(frame: Any, tw: int, th: int) -> Any:
+    """Recorte tipo evidencia (384×640) sin rotar ni pedir snapshot.cgi."""
+    h, w = frame.shape[:2]
+    scale = max(tw / max(w, 1), th / max(h, 1))
+    nw = max(tw, int(round(w * scale)))
+    nh = max(th, int(round(h * scale)))
+    frame = cv2.resize(frame, (nw, nh), interpolation=cv2.INTER_AREA)
+    x = max(0, (nw - tw) // 2)
+    y = max(0, (nh - th) // 2)
+    return frame[y : y + th, x : x + tw]
+
+
 def _fit_frame(
     frame: Any,
     jpeg_quality: int,
@@ -93,9 +105,7 @@ def _fit_frame(
     h, w = frame.shape[:2]
     if force_size:
         tw, th = int(force_size[0]), int(force_size[1])
-        if tw < th and w >= h:
-            frame = cv2.rotate(frame, cv2.ROTATE_90_CLOCKWISE)
-        frame = cv2.resize(frame, (tw, th), interpolation=cv2.INTER_AREA)
+        frame = _cover_to(frame, tw, th)
     elif w > max_width:
         frame = cv2.resize(frame, (max_width, max(1, int(h * max_width / w))), interpolation=cv2.INTER_AREA)
     ok, buf = cv2.imencode(".jpg", frame, [int(cv2.IMWRITE_JPEG_QUALITY), int(jpeg_quality)])
@@ -213,6 +223,11 @@ def iter_ffmpeg_rtsp(
     port = int(dev.get("rtspPort") or dev.get("rtsp_port") or 554)
     fps = max(4, min(12, int(round(float(target_fps)))))
     width = max(320, min(1280, int(max_width)))
+    # ASI: mismo extra 1, recuadro 384×640 como la foto del evento. No es SnapURL ni main.
+    if _is_asi_reader(dev):
+        vf = "scale=384:640:force_original_aspect_ratio=increase,crop=384:640"
+    else:
+        vf = f"scale={width}:-2"
     cmd = [
         bin_path,
         "-nostdin",
@@ -237,7 +252,7 @@ def iter_ffmpeg_rtsp(
         "-r",
         str(fps),
         "-vf",
-        f"scale={width}:-2",
+        vf,
         "-q:v",
         str(_ffmpeg_q(jpeg_quality)),
         "-f",
@@ -422,6 +437,22 @@ def rtsp_clients_for_host(host: str) -> int:
         return int(hub.users) if hub else 0
 
 
+def stop_hub_for_host(host: str) -> int:
+    """Corta el RTSP de esa IP. El attach CGI y la cara recuperan el SoC."""
+    key = str(host or "").strip().lower()
+    if not key:
+        return 0
+    with _hubs_lock:
+        hub = _hubs.get(key)
+        if not hub:
+            return 0
+        n = int(hub.users)
+        hub.stop.set()
+        with hub.cv:
+            hub.cv.notify_all()
+        return n
+
+
 def iter_mjpeg_shared(
     dev: dict[str, Any],
     channel: int = 1,
@@ -436,8 +467,8 @@ def iter_mjpeg_shared(
     if _is_asi_reader(dev):
         channel = 1
         subtype = 1
-        if max_width > 640:
-            max_width = 640
+        max_width = 384
+        force_size = (384, 640)
         if target_fps is None:
             target_fps = _env_float("AGENT_LIVE_FPS", 6.0)
     with _hubs_lock:
@@ -492,7 +523,7 @@ def _hub_producer(
     host = str(dev.get("host") or "")
     placeholder = _placeholder_jpeg("Sin live")
     backoff = 4.0
-    while hub.users > 0:
+    while hub.users > 0 and not hub.stop.is_set():
         if hub.stop.is_set() and hub.users <= 0:
             break
         n = 0
@@ -506,7 +537,7 @@ def _hub_producer(
                 force_size=force_size,
                 target_fps=target_fps,
             ):
-                if hub.stop.is_set() and hub.users <= 0:
+                if hub.stop.is_set() or hub.users <= 0:
                     break
                 n += 1
                 raw = packed

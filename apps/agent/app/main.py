@@ -13,7 +13,7 @@ from fastapi.responses import Response, StreamingResponse
 from .alpr import AlprWorker
 from .dahua import DahuaClient
 from .hikvision import HikvisionClient, looks_like_hikvision
-from .live import hub_stats, iter_mjpeg_shared, rtsp_clients_for_host
+from .live import hub_stats, iter_mjpeg_shared, rtsp_clients_for_host, stop_hub_for_host
 
 API = os.environ.get("ACCESOPRO_API_URL", "http://localhost:8787").rstrip("/")
 TOKEN = os.environ.get("SITE_AGENT_TOKEN", "accesopro-demo-agent")
@@ -710,6 +710,24 @@ def _dahua_stream_worker() -> None:
         time.sleep(4.0)
 
 
+def _shed_rtsp_if_attach_down() -> None:
+    """Si el attach CGI se cayó, el extra RTSP suele ser la causa. Cortarlo primero."""
+    now = time.time()
+    for dev in _config.get("dahua", []):
+        if dev.get("deviceType") == "camera_ip":
+            continue
+        did = str(dev.get("id") or "")
+        host = str(dev.get("host") or "")
+        if not did or not host:
+            continue
+        hb = _attach_heartbeat_at.get(did, 0.0)
+        if not hb or (now - hb) <= 20.0:
+            continue
+        n = stop_hub_for_host(host)
+        if n > 0:
+            print(f"RTSP cortado host={host}: attach caído, el extra satura el facial", flush=True)
+
+
 def _any_reader_needs_poll() -> bool:
     now = time.time()
     for dev in _config.get("dahua", []):
@@ -729,6 +747,7 @@ def _dahua_poller_worker() -> None:
     time.sleep(1.2)
     while not _stop.is_set():
         try:
+            _shed_rtsp_if_attach_down()
             _poll_dahua()
         except Exception as exc:  # noqa: BLE001
             print(f"Poller worker: {exc}")
@@ -751,7 +770,7 @@ async def lifespan(_app: FastAPI):
     alpr.stop()
 
 
-app = FastAPI(title="AccesoPro Site Agent", version="0.3.6", lifespan=lifespan)
+app = FastAPI(title="AccesoPro Site Agent", version="0.3.7", lifespan=lifespan)
 
 
 ATTACH_OK_S = 15.0
@@ -806,7 +825,7 @@ def health():
         "product": "AccesoPro",
         "cameras": len(_config.get("cameras") or []),
         "dahua": len(_config.get("dahua") or []),
-        "version": "0.3.6",
+        "version": "0.3.7",
         "streamLive": {k: bool(v) for k, v in _stream_live.items()},
         "streamError": dict(_stream_error),
         "cursors": {k: {"recNo": a, "rawTime": b} for k, (a, b) in _cursors.items()},
