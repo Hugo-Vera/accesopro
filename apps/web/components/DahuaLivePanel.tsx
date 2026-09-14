@@ -113,7 +113,7 @@ export function DahuaLivePanel({
   const [tick, setTick] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [inView, setInView] = useState(true);
-  const retryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const retryRef = useRef<number | null>(null);
   const [probeMsg, setProbeMsg] = useState<string | null>(null);
   const [probing, setProbing] = useState(false);
 
