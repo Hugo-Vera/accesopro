@@ -8,7 +8,7 @@ En AccesoPro el lector de este predio es un **ASI-6214S**. El encoder de video e
 
 | Uso | Protocolo | Comando | Notas |
 |-----|-----------|---------|--------|
-| Live portería | RTSP TCP 554 | `/cam/realmonitor?channel=1&subtype=1` | Extra 1. ffmpeg lo recuadra a **384×640** (proporción de la foto de evidencia). Sigue siendo un solo RTSP; no es `SnapURL` ni `snapshot.cgi`. `subtype=0` satura la cara. |
+| Live portería | RTSP TCP 554 | `/cam/realmonitor?channel=1&subtype=1` | Extra 1 entero. ffmpeg solo escala (sin crop). AccesoCam hace `contain` en el recuadro. `subtype=0` satura la cara. |
 | Eventos en vivo | HTTP CGI Digest | `eventManager.cgi?action=attach&codes=[AccessControl]&heartbeat=5` | Heartbeat cada 5 s (rango 1–60 del manual). |
 | Historial / cursor RecNo | RPC `RecordFinder` (cola reciente) + CGI `recordFinder` de respaldo | El CGI `find&count=N` devuelve los **más viejos**; por eso el agent pide los últimos por RPC. |
 | Abrir | CGI | `accessControl.cgi?action=openDoor&channel=1` | |
@@ -29,7 +29,7 @@ En AccesoPro el lector de este predio es un **ASI-6214S**. El encoder de video e
 
 ## Totem del ASI vs AccesoCam
 
-La pantalla del ASI-6214S es el **UI del equipo**. La foto de evidencia 384×640 sale del evento (`SnapURL`), no es live. AccesoCam, si se enciende, usa el extra 1 recodificado a 384×640. El recode no abre otro stream, pero **el extra 1 en sí** comparte SoC con la cara: en este predio el attach se cae y RecNo se congela. Por eso AccesoCam arranca apagado. Pedir SnapURL en bucle o el main (`subtype=0`) también traba.
+La pantalla del ASI-6214S es el **UI del equipo**. La foto de evidencia 384×640 sale del evento (`SnapURL`), no es live. AccesoCam, si se enciende, muestra el extra 1 **completo** (`contain`, sin recorte). El extra comparte SoC con la cara: en este predio el attach se cae si el live queda abierto. AccesoCam arranca apagado. Pedir SnapURL en bucle o el main (`subtype=0`) también traba.
 
 ## Un cliente de video por IP
 

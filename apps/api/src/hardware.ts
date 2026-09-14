@@ -5,12 +5,10 @@ import { requireAuth } from "./auth.js";
 import { db } from "./db/client.js";
 import { accessPointActuators, accessPointCameras, accessPointDevices, actuators, cameras, commands, dahuaDevices, departments, events, plates } from "./db/schema.js";
 import { enqueue, fireActuator, waitCommand } from "./actuatorExec.js";
-import { processEngineAccessEvents } from "./engineBridge.js";
 import { agentOnline, nid, normalizePlate, scopedSite, scopedSiteWithModule } from "./scope.js";
 import { parseDeviceLaneSector, parseDeviceSentido, syncDeviceLaneWiring } from "./accessPoints.js";
 import { denyUnlessCapability } from "./grants.js";
 import { tenantFeatureEnabled, assertFeature } from "./features.js";
-import { engineDetections, engineGet, engineHealth, engineOps, enginePost, enginePut, engineRelay, maskSecrets, safeMediaPath, siteFetch } from "./siteEngine.js";
 
 export { fireActuator } from "./actuatorExec.js";
 
@@ -45,21 +43,6 @@ hardware.get("/status", async (c) => {
     .from(events)
     .where(and(eq(events.siteId, scoped.site.id), eq(events.type, "plate"), gte(events.createdAt, start)))
     .get();
-  const engine = await engineHealth();
-  let evidenceIn = false;
-  let evidenceOut = false;
-  if (engine.online) {
-    try {
-      const sub = (await engineGet("/api/subsystems")) as {
-        snapshot_enabled_in?: boolean;
-        snapshot_enabled_out?: boolean;
-      };
-      evidenceIn = Boolean(sub.snapshot_enabled_in);
-      evidenceOut = Boolean(sub.snapshot_enabled_out);
-    } catch {
-      /* motor sin subsystems */
-    }
-  }
   let readers: Record<string, unknown> = {};
   if (agentOnline(scoped.site.lastSeenAt)) {
     try {
@@ -78,19 +61,9 @@ hardware.get("/status", async (c) => {
   }
   return c.json({
     agentOnline: agentOnline(scoped.site.lastSeenAt),
-    engineOnline: engine.online,
-    engineUrl: process.env.SITE_ENGINE_URL ?? "http://127.0.0.1:5051",
     lastSeenAt: scoped.site.lastSeenAt,
     eventsToday: Number(today?.n ?? 0),
     platesToday: Number(platesToday?.n ?? 0),
-    cameraIn: engine.online
-      ? { running: Boolean(engine.in?.running), host: engine.in?.cameraHost ?? "", configured: Boolean(engine.in?.configured) }
-      : null,
-    cameraOut: engine.online
-      ? { running: Boolean(engine.out?.running), host: engine.out?.cameraHost ?? "", configured: Boolean(engine.out?.configured) }
-      : null,
-    evidenceIn,
-    evidenceOut,
     readers,
   });
 });
@@ -98,177 +71,27 @@ hardware.get("/status", async (c) => {
 hardware.get("/alpr/live", async (c) => {
   const scoped = await scopedSite(c);
   if ("error" in scoped) return scoped.error;
-  const engine = await engineHealth();
-  if (!engine.online) {
-    return c.json({
-      engineOnline: false,
-      engineUrl: process.env.SITE_ENGINE_URL ?? "http://127.0.0.1:5051",
-      detections: [],
-      in: null,
-      out: null,
-      error: "AccesoSeguro no responde. Tiene que estar corriendo en la LAN (:5051).",
-    });
-  }
-  try {
-    const detections = await engineDetections(40);
-    return c.json({
-      engineOnline: true,
-      engineUrl: process.env.SITE_ENGINE_URL ?? "http://127.0.0.1:5051",
-      in: engine.in,
-      out: engine.out,
-      detections: detections.items,
-      total: detections.total,
-    });
-  } catch (err) {
-    return c.json(
-      {
-        engineOnline: true,
-        engineUrl: process.env.SITE_ENGINE_URL ?? "http://127.0.0.1:5051",
-        detections: [],
-        error: err instanceof Error ? err.message : "No se pudieron leer detecciones",
-      },
-      502,
-    );
-  }
-});
-
-hardware.get("/alpr/media", async (c) => {
-  const scoped = await scopedSite(c);
-  if ("error" in scoped) return scoped.error;
-  const path = safeMediaPath(c.req.query("p"));
-  if (!path) return c.json({ error: "Ruta de evidencia inválida" }, 400);
-  try {
-    const res = await siteFetch(`/${path}`);
-    if (!res.ok) return c.json({ error: "Evidencia no encontrada" }, 404);
-    const type = res.headers.get("content-type") ?? "image/jpeg";
-    return new Response(await res.arrayBuffer(), {
-      headers: { "Content-Type": type, "Cache-Control": "private, max-age=120" },
-    });
-  } catch {
-    return c.json({ error: "No se pudo leer la evidencia" }, 502);
-  }
-});
-
-hardware.get("/alpr/ops", async (c) => {
-  const scoped = await scopedSite(c);
-  if ("error" in scoped) return scoped.error;
-  try {
-    const ops = await engineOps();
-    if (ops.health.online) {
-      await processEngineAccessEvents(scoped.site, ops.events);
-    }
-    return c.json({
-      engineOnline: ops.health.online,
-      engineUrl: process.env.SITE_ENGINE_URL ?? "http://127.0.0.1:5051",
-      in: ops.health.online ? ops.health.in : null,
-      out: ops.health.online ? ops.health.out : null,
-      stats: ops.stats,
-      relay: ops.relay,
-      events: ops.events,
-    });
-  } catch {
-    return c.json({
-      engineOnline: false,
-      engineUrl: process.env.SITE_ENGINE_URL ?? "http://127.0.0.1:5051",
-      in: null,
-      out: null,
-      stats: null,
-      relay: null,
-      events: [],
-    });
-  }
-});
-
-hardware.post("/alpr/relay/:action", async (c) => {
-  const denied = await denyUnlessCapability(c.get("user"), "ops.relay");
-  if (denied) return denied;
-  const scoped = await scopedSite(c);
-  if ("error" in scoped) return scoped.error;
-  const action = c.req.param("action");
-  if (action !== "open" && action !== "close") {
-    return c.json({ error: "Acción inválida" }, 400);
-  }
-  const body = await c.req.json<{ sentido?: string }>().catch(() => ({ sentido: "in" }));
-  const sentido = body.sentido === "out" ? "out" : "in";
-  try {
-    const result = await engineRelay(action, sentido);
-    return c.json({ ok: true, result });
-  } catch (err) {
-    return c.json({ error: err instanceof Error ? err.message : "Fallo el relé" }, 502);
-  }
-});
-
-const ENGINE_GET = new Set([
-  "/api/config",
-  "/api/subsystems",
-  "/api/config/evidence",
-  "/api/com-ports",
-  "/api/auth/operadores",
-  "/api/camera-config",
-]);
-const ENGINE_POST = new Set([
-  "/api/config",
-  "/api/subsystems/toggle",
-  "/api/config/evidence",
-  "/api/evidencia/purge-manual",
-  "/api/camera-config",
-  "/api/auth/operadores",
-]);
-
-function enginePath(raw: string | undefined) {
-  const path = (raw ?? "").trim();
-  const base = path.split("?")[0];
-  if (!base.startsWith("/api/")) return null;
-  return { path, base };
-}
-
-hardware.get("/alpr/engine", async (c) => {
-  const denied = await denyUnlessCapability(c.get("user"), "core.config");
-  if (denied) return denied;
-  const scoped = await scopedSite(c);
-  if ("error" in scoped) return scoped.error;
-  const parsed = enginePath(c.req.query("p"));
-  if (!parsed || !ENGINE_GET.has(parsed.base)) return c.json({ error: "Ruta no permitida" }, 403);
-  try {
-    const data = await engineGet(parsed.path);
-    return c.json(maskSecrets(data));
-  } catch (err) {
-    return c.json({ error: err instanceof Error ? err.message : "Motor no responde" }, 502);
-  }
-});
-
-hardware.post("/alpr/engine", async (c) => {
-  const denied = await denyUnlessCapability(c.get("user"), "core.config");
-  if (denied) return denied;
-  const scoped = await scopedSite(c);
-  if ("error" in scoped) return scoped.error;
-  const parsed = enginePath(c.req.query("p"));
-  if (!parsed || !ENGINE_POST.has(parsed.base)) return c.json({ error: "Ruta no permitida" }, 403);
-  try {
-    const body = await c.req.json().catch(() => ({}));
-    const data = await enginePost(parsed.path, body);
-    return c.json(maskSecrets(data));
-  } catch (err) {
-    return c.json({ error: err instanceof Error ? err.message : "No se pudo guardar" }, 502);
-  }
-});
-
-hardware.put("/alpr/engine", async (c) => {
-  const denied = await denyUnlessCapability(c.get("user"), "core.config");
-  if (denied) return denied;
-  const scoped = await scopedSite(c);
-  if ("error" in scoped) return scoped.error;
-  const parsed = enginePath(c.req.query("p"));
-  if (!parsed || !/^\/api\/auth\/operadores\/\d+$/.test(parsed.base)) {
-    return c.json({ error: "Ruta no permitida" }, 403);
-  }
-  try {
-    const body = await c.req.json().catch(() => ({}));
-    const data = await enginePut(parsed.path, body);
-    return c.json(maskSecrets(data));
-  } catch (err) {
-    return c.json({ error: err instanceof Error ? err.message : "No se pudo guardar" }, 502);
-  }
+  const rows = await db
+    .select()
+    .from(events)
+    .where(and(eq(events.siteId, scoped.site.id), eq(events.type, "plate")))
+    .orderBy(desc(events.createdAt))
+    .limit(40);
+  const detections = rows.map((r) => {
+    const p = safeJson(r.payload) as Record<string, unknown> | null;
+    const list = String(p?.list ?? "");
+    const conf = typeof p?.ocrConf === "number" ? p.ocrConf : typeof p?.confidence === "number" ? p.confidence : null;
+    return {
+      id: r.id,
+      fecha: r.createdAt instanceof Date ? r.createdAt.toISOString() : new Date(Number(r.createdAt)).toISOString(),
+      sentido: r.sentido || String(p?.sentido ?? "in"),
+      patente: String(p?.plate ?? p?.patente ?? ""),
+      ocrConf: conf,
+      autorizado: list === "white" ? true : list === "black" ? false : null,
+      thumb: typeof p?.thumb === "string" ? p.thumb : null,
+    };
+  });
+  return c.json({ detections, total: detections.length });
 });
 
 hardware.get("/dahua", async (c) => {
@@ -1249,30 +1072,8 @@ hardware.get("/actuators", async (c) => {
   const scoped = await scopedSiteWithModule(c, "actuators");
   if ("error" in scoped) return scoped.error;
   const rows = await db.select().from(actuators).where(eq(actuators.siteId, scoped.site.id));
-  let relay: { open_in?: boolean; open_out?: boolean; simulated?: boolean } | null = null;
-  try {
-    const res = await siteFetch("/api/relay/status");
-    if (res.ok) relay = (await res.json()) as { open_in?: boolean; open_out?: boolean; simulated?: boolean };
-  } catch {
-    relay = null;
-  }
-  const ordered = [...rows].sort((a, b) => {
-    const rank = (r: (typeof rows)[number]) =>
-      r.driver === "engine" && r.engineSentido === "in" ? 0 : r.driver === "engine" && r.engineSentido === "out" ? 1 : 2;
-    return rank(a) - rank(b) || a.name.localeCompare(b.name, "es");
-  });
-  return c.json({
-    actuators: ordered.map((r) => ({
-      ...r,
-      open:
-        r.driver === "engine" && r.engineSentido === "in"
-          ? Boolean(relay?.open_in)
-          : r.driver === "engine" && r.engineSentido === "out"
-            ? Boolean(relay?.open_out)
-            : null,
-    })),
-    relay,
-  });
+  const ordered = [...rows].sort((a, b) => a.name.localeCompare(b.name, "es"));
+  return c.json({ actuators: ordered });
 });
 
 hardware.post("/actuators", async (c) => {
@@ -1282,8 +1083,6 @@ hardware.post("/actuators", async (c) => {
   if ("error" in scoped) return scoped.error;
   const parsed = parseActuatorBody(await c.req.json().catch(() => ({})));
   if ("error" in parsed) return c.json({ error: parsed.error }, 400);
-  const taken = await sentidoTaken(scoped.site.id, parsed.engineSentido);
-  if (taken) return c.json({ error: "Ese lado del motor LAN ya tiene un actuador" }, 409);
   const id = nid();
   await db.insert(actuators).values({
     id,
@@ -1307,8 +1106,6 @@ hardware.patch("/actuators/:id", async (c) => {
   if (!row) return c.json({ error: "Actuador no encontrado" }, 404);
   const parsed = parseActuatorBody({ ...row, ...(await c.req.json().catch(() => ({}))) });
   if ("error" in parsed) return c.json({ error: parsed.error }, 400);
-  const taken = await sentidoTaken(scoped.site.id, parsed.engineSentido, row.id);
-  if (taken) return c.json({ error: "Ese lado del motor LAN ya tiene un actuador" }, 409);
   await db
     .update(actuators)
     .set(parsed)
@@ -1350,7 +1147,6 @@ hardware.get("/commands", async (c) => {
 hardware.get("/debug", async (c) => {
   const scoped = await scopedSite(c);
   if ("error" in scoped) return scoped.error;
-  const engine = await engineHealth();
   const acts = await db.select().from(actuators).where(eq(actuators.siteId, scoped.site.id));
   const cmds = await db
     .select()
@@ -1361,7 +1157,6 @@ hardware.get("/debug", async (c) => {
   return c.json({
     agentOnline: agentOnline(scoped.site.lastSeenAt),
     agentLastSeenAt: scoped.site.lastSeenAt,
-    engineOnline: engine.online,
     actuators: acts.map((a) => ({
       id: a.id,
       name: a.name,
@@ -1393,12 +1188,6 @@ hardware.get("/debug", async (c) => {
     comandosAccesoPro: [
       { action: "open", via: "cola del agent", uso: "Abrir actuador Dahua o IP" },
       { action: "probe_dahua", via: "cola del agent", uso: "Leer modelo/serial del equipo" },
-      { action: "engine.relay", via: "API motor LAN :5051", uso: "Abrir/cerrar barrera IN u OUT" },
-      {
-        action: "engine_bridge",
-        via: "poll /api/events/recent",
-        uso: "QR/DNI autorizado → actuadores con QR; chapa autorizada → actuadores con Chapa",
-      },
     ],
     commands: cmds.map((r) => ({
       id: r.id,
@@ -1582,10 +1371,9 @@ function parseActuatorBody(raw: Record<string, unknown>): ActuatorInput | { erro
   const name = String(raw.name ?? "").trim();
   if (!name) return { error: "Falta el nombre del actuador" };
   const driver = raw.driver === "dahua" || raw.driver === "ip" || raw.driver === "engine" ? raw.driver : null;
-  if (!driver) return { error: "Elegí driver: motor LAN, Dahua o IP" };
+  if (!driver) return { error: "Elegí driver: Dahua o IP" };
   const kind = raw.kind === "gate" || raw.kind === "barrier" ? raw.kind : "door";
-  const engineSentido = driver === "engine" ? (raw.engineSentido === "out" ? "out" : raw.engineSentido === "in" ? "in" : null) : null;
-  if (driver === "engine" && !engineSentido) return { error: "El motor LAN necesita lado IN o OUT" };
+  const engineSentido = raw.engineSentido === "out" ? "out" : raw.engineSentido === "in" ? "in" : null;
   if (driver === "dahua" && !String(raw.dahuaDeviceId ?? "").trim()) return { error: "Elegí el equipo Dahua" };
   if (driver === "ip" && !String(raw.httpUrl ?? "").trim()) return { error: "Falta la URL del relé IP" };
   return {
@@ -1597,17 +1385,11 @@ function parseActuatorBody(raw: Record<string, unknown>): ActuatorInput | { erro
     httpUrl: driver === "ip" ? String(raw.httpUrl).trim() : null,
     pulseMs: Math.max(200, Number(raw.pulseMs) || 1000),
     engineSentido,
-    triggerAlpr: flag(raw, "triggerAlpr", driver === "engine"),
+    triggerAlpr: flag(raw, "triggerAlpr", false),
     triggerDahua: flag(raw, "triggerDahua", driver === "dahua"),
     triggerQr: flag(raw, "triggerQr", false),
     triggerManual: flag(raw, "triggerManual", true),
   };
-}
-
-async function sentidoTaken(siteId: string, sentido: "in" | "out" | null, exceptId?: string) {
-  if (!sentido) return false;
-  const rows = await db.select().from(actuators).where(eq(actuators.siteId, siteId));
-  return rows.some((r) => r.engineSentido === sentido && r.id !== exceptId);
 }
 
 function safeJson(raw: string | null) {

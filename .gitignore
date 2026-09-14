@@ -16,10 +16,6 @@ Thumbs.db
 apps/api/data/
 apps/web/.next/
 apps/agent/.venv/
-apps/site/.venv/
-apps/site/config.yaml
-apps/site/evidencia/
-apps/site/nssm.exe
 *.log
 .turbo/
 cookie.txt

@@ -17,14 +17,11 @@ if (-not (Test-Path "$Root\.env")) {
 }
 
 $env:ACCESOPRO_API_URL = "http://127.0.0.1:8787"
-$env:ACCESOPRO_BRIDGE_KEY = "accesopro-bridge"
-$env:SITE_ENGINE_URL = "http://127.0.0.1:5051"
 
 $env:HOST = "0.0.0.0"
 $env:NEXT_PUBLIC_API_URL = ""
 
 Write-Host "AccesoPro — levantando API (:8787) y Web (:3000) en 0.0.0.0"
-Write-Host "Motor ALPR: cd apps\site && python run.py  (puerto 5051, si módulo alpr)"
 Write-Host "Agent Dahua: cd apps\agent && uvicorn app.main:app --port 8790"
 
 Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$Root'; `$env:HOST='0.0.0.0'; npm run dev:api"

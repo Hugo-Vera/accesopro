@@ -23,15 +23,16 @@ type Props = {
   compact?: boolean;
 };
 
-/** Hora 24 h — mismo formato en historial ingreso y salida. */
+/** Fecha + hora 24 h (sin segundos) — historial ingreso y salida. */
 function timeLabel(createdAt: string | number | undefined) {
-  if (!createdAt) return "--:--:--";
-  return new Date(createdAt).toLocaleTimeString("es-AR", {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hour12: false,
-  });
+  if (!createdAt) return "--/-- --:--";
+  const d = new Date(createdAt);
+  if (!Number.isFinite(d.getTime())) return "--/-- --:--";
+  const dd = String(d.getDate()).padStart(2, "0");
+  const mm = String(d.getMonth() + 1).padStart(2, "0");
+  const hh = String(d.getHours()).padStart(2, "0");
+  const min = String(d.getMinutes()).padStart(2, "0");
+  return `${dd}/${mm} ${hh}:${min}`;
 }
 
 function methodLabel(method: string) {
@@ -364,48 +365,46 @@ export function LiveFacialFeed({
                   alert={alert}
                   tenantId={tenantId}
                   loadPhoto={loadPhoto}
-                  className={`self-stretch border-r-2 ${compact ? "w-[44px] min-h-[56px]" : "w-[72px] min-h-[96px]"}`}
+                  className={`self-stretch border-r-2 ${compact ? "w-[96px] min-h-[128px]" : "w-[88px] min-h-[116px]"}`}
                 />
                 <div
-                  className={`flex min-w-0 flex-1 flex-col justify-center gap-0.5 ${
-                    compact ? "px-2 py-1.5" : "px-3 py-2.5"
+                  className={`flex min-w-0 flex-1 flex-col justify-center gap-1 ${
+                    compact ? "px-2.5 py-2" : "px-3 py-2.5"
                   }`}
                 >
-                  <div className="flex min-w-0 items-baseline justify-between gap-2">
-                    <p
-                      className={`min-w-0 truncate font-bold leading-tight text-slate-900 dark:text-white ${
-                        compact ? "text-[12.5px]" : "text-[14px]"
-                      }`}
-                    >
-                      {alert.personName}
-                    </p>
+                  <p
+                    className={`min-w-0 truncate font-bold leading-tight text-slate-900 dark:text-white ${
+                      compact ? "text-[15px]" : "text-[14px]"
+                    }`}
+                  >
+                    {alert.personName}
+                  </p>
+                  <p
+                    className={`min-w-0 truncate text-slate-600 dark:text-slate-400 ${
+                      compact ? "text-[11.5px]" : "text-[12px]"
+                    }`}
+                  >
+                    {compact
+                      ? methodLabel(alert.method)
+                      : `${alert.deviceName} · ${methodLabel(alert.method)}`}
+                  </p>
+                  <div className="flex min-w-0 items-center justify-between gap-2">
                     <time
                       dateTime={new Date(e.createdAt).toISOString()}
                       className="ops-hist-time shrink-0 font-mono tabular-nums text-slate-500 dark:text-slate-400"
                     >
                       {timeLabel(e.createdAt)}
                     </time>
-                  </div>
-                  <div className="flex min-w-0 items-center justify-between gap-2">
-                    <p
-                      className={`min-w-0 truncate text-slate-600 dark:text-slate-400 ${
-                        compact ? "text-[10.5px]" : "text-[12px]"
-                      }`}
-                    >
-                      {compact
-                        ? methodLabel(alert.method)
-                        : `${alert.deviceName} · ${methodLabel(alert.method)}`}
-                    </p>
                     <span
-                      className={`inline-flex shrink-0 items-center rounded px-1.5 py-0.5 font-extrabold uppercase tracking-wider ${
-                        compact ? "text-[9px]" : "text-[10px]"
+                      className={`inline-flex shrink-0 items-center rounded px-1.5 py-0.5 font-bold tracking-wide ${
+                        compact ? "text-[11px]" : "text-[10px]"
                       } ${
                         alert.approved
                           ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300"
                           : "bg-rose-100 text-rose-800 dark:bg-rose-950/70 dark:text-rose-300"
                       }`}
                     >
-                      {alert.approved ? "OK" : "NO"}
+                      {alert.approved ? "Aprobado" : "Denegado"}
                     </span>
                   </div>
                   {!compact && alert.reason ? (

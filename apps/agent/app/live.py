@@ -223,11 +223,8 @@ def iter_ffmpeg_rtsp(
     port = int(dev.get("rtspPort") or dev.get("rtsp_port") or 554)
     fps = max(4, min(12, int(round(float(target_fps)))))
     width = max(320, min(1280, int(max_width)))
-    # ASI: mismo extra 1, recuadro 384×640 como la foto del evento. No es SnapURL ni main.
-    if _is_asi_reader(dev):
-        vf = "scale=384:640:force_original_aspect_ratio=increase,crop=384:640"
-    else:
-        vf = f"scale={width}:-2"
+    # Extra 1 entero: scale al ancho, sin crop. El CSS hace contain en AccesoCam.
+    vf = f"scale={width}:-2"
     cmd = [
         bin_path,
         "-nostdin",
@@ -467,8 +464,9 @@ def iter_mjpeg_shared(
     if _is_asi_reader(dev):
         channel = 1
         subtype = 1
-        max_width = 384
-        force_size = (384, 640)
+        if max_width > 640:
+            max_width = 640
+        force_size = None
         if target_fps is None:
             target_fps = _env_float("AGENT_LIVE_FPS", 6.0)
     with _hubs_lock:

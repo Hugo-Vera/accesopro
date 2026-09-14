@@ -3,30 +3,18 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api, withTenant } from "@/lib/api";
-import type { CamLaneStatus, FeatureRow, ModuleRow, PlanRow, ReaderStatus, Status, Tenant, User } from "@/lib/types";
+import type { FeatureRow, ModuleRow, PlanRow, ReaderStatus, Status, Tenant, User } from "@/lib/types";
 
 function mapStatus(st: {
   agentOnline: boolean;
-  engineOnline?: boolean;
-  engineUrl?: string;
   eventsToday: number;
   platesToday: number;
-  cameraIn?: CamLaneStatus | null;
-  cameraOut?: CamLaneStatus | null;
-  evidenceIn?: boolean;
-  evidenceOut?: boolean;
   readers?: Record<string, ReaderStatus>;
 }): Status {
   return {
     agentOnline: st.agentOnline,
-    engineOnline: st.engineOnline ?? null,
-    engineUrl: st.engineUrl ?? null,
     eventsToday: st.eventsToday,
     platesToday: st.platesToday,
-    cameraIn: st.cameraIn ?? null,
-    cameraOut: st.cameraOut ?? null,
-    evidenceIn: Boolean(st.evidenceIn),
-    evidenceOut: Boolean(st.evidenceOut),
     readers: st.readers ?? {},
   };
 }
@@ -72,14 +60,8 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
   const [kpis, setKpis] = useState<Dash["kpis"]>(null);
   const [status, setStatus] = useState<Status>({
     agentOnline: null,
-    engineOnline: null,
-    engineUrl: null,
     eventsToday: 0,
     platesToday: 0,
-    cameraIn: null,
-    cameraOut: null,
-    evidenceIn: false,
-    evidenceOut: false,
     readers: {},
   });
   const [error, setError] = useState<string | null>(null);
@@ -160,9 +142,7 @@ export function DashboardProvider({ children }: { children: React.ReactNode }) {
         .then((st) => {
           if (cancelled) return;
           setStatus(mapStatus(st));
-          // Si AccesoSeguro no responde, poll menos seguido para no trabar el hilo / API.
-          const ms = st.engineOnline === false ? 20000 : 8000;
-          timer = setTimeout(tick, ms);
+          timer = setTimeout(tick, 8000);
         })
         .catch(() => {
           if (cancelled) return;

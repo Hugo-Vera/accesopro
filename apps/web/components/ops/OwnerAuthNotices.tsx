@@ -82,9 +82,20 @@ function LiveDwell({ inAt }: { inAt: string | number }) {
   return <p className="mt-0.5 text-[9.5px] font-semibold text-sky-700 dark:text-sky-300">En predio {label}</p>;
 }
 
-function NoticeCard({ p }: { p: OwnerPassNotice }) {
+function NoticeCard({ p, compact }: { p: OwnerPassNotice; compact?: boolean }) {
   const tone = statusTone(p.status);
   const stay = formatStay(p.stayMs ?? stayFromRange(p.scannedInAt, p.scannedOutAt));
+  if (compact) {
+    return (
+      <article className={`ops-auth-card ops-auth-card--${tone} ops-auth-card--strip`}>
+        <p className="truncate text-[11.5px] font-bold leading-tight text-slate-900 dark:text-white">{p.guestName}</p>
+        <p className="mt-0.5 truncate text-[10px] text-slate-500 dark:text-slate-400">
+          {p.lot} · {p.ownerName}
+        </p>
+        <span className={`ops-auth-pill ops-auth-pill--${tone} mt-1`}>{statusLabel(p)}</span>
+      </article>
+    );
+  }
   return (
     <article className={`ops-auth-card ops-auth-card--${tone}`}>
       <div className="flex items-start gap-1.5">
@@ -130,9 +141,11 @@ type Tab = "pending" | "closed";
 type Props = {
   tenantId: string | null;
   enabled: boolean;
+  /** strip = barra naranja abajo en portería. */
+  layout?: "rail" | "strip";
 };
 
-export function OwnerAuthNotices({ tenantId, enabled }: Props) {
+export function OwnerAuthNotices({ tenantId, enabled, layout = "rail" }: Props) {
   const [pending, setPending] = useState<OwnerPassNotice[]>([]);
   const [closed, setClosed] = useState<OwnerPassNotice[]>([]);
   const [tab, setTab] = useState<Tab>("pending");
@@ -175,7 +188,7 @@ export function OwnerAuthNotices({ tenantId, enabled }: Props) {
 
   if (!enabled) {
     return (
-      <aside className="ops-auth-rail ops-subpanel">
+      <aside className={layout === "strip" ? "ops-auth-strip" : "ops-auth-rail ops-subpanel"}>
         <p className="ops-section-title">AUTORIZACIONES</p>
         <p className="mt-3 text-[11px] text-slate-500">Módulo visitas no contratado</p>
       </aside>
@@ -183,61 +196,107 @@ export function OwnerAuthNotices({ tenantId, enabled }: Props) {
   }
 
   const list = tab === "pending" ? pending : closed;
+  const strip = layout === "strip";
 
   return (
-    <aside className="ops-auth-rail ops-subpanel flex min-h-0 flex-col" aria-label="Autorizaciones de propietarios">
-      <div className="mb-1.5 flex flex-shrink-0 items-center justify-between border-b border-slate-200 pb-1.5 dark:border-[#172d3e]">
-        <p className="ops-section-title">AUTORIZACIONES</p>
-        <Link
-          href="/dashboard/visitas"
-          className="font-mono text-[9px] font-bold text-blue-600 hover:text-blue-700 dark:text-[#38bdf8]"
-        >
-          VER →
-        </Link>
-      </div>
+    <aside
+      className={
+        strip
+          ? "ops-auth-strip flex min-h-0 flex-col"
+          : "ops-auth-rail ops-subpanel flex min-h-0 flex-col"
+      }
+      aria-label="Autorizaciones de propietarios"
+    >
+      {strip ? (
+        <div className="ops-auth-strip-head">
+          <p className="ops-section-title">AUTORIZACIONES</p>
+          <div className="ops-auth-tabs ops-auth-tabs--inline">
+            <button
+              type="button"
+              className={`ops-auth-tab ${tab === "pending" ? "active" : ""}`}
+              onClick={() => setTab("pending")}
+            >
+              Pendientes
+              <span className="ops-auth-tab-count">{pending.length}</span>
+            </button>
+            <button
+              type="button"
+              className={`ops-auth-tab ${tab === "closed" ? "active" : ""}`}
+              onClick={() => setTab("closed")}
+            >
+              Cerradas
+              <span className="ops-auth-tab-count">{closed.length}</span>
+            </button>
+          </div>
+          <Link
+            href="/dashboard/visitas"
+            className="ml-auto font-mono text-[9px] font-bold text-blue-600 hover:text-blue-700 dark:text-[#38bdf8]"
+          >
+            VER →
+          </Link>
+        </div>
+      ) : (
+        <>
+          <div className="mb-1.5 flex flex-shrink-0 items-center justify-between border-b border-slate-200 pb-1.5 dark:border-[#172d3e]">
+            <p className="ops-section-title">AUTORIZACIONES</p>
+            <Link
+              href="/dashboard/visitas"
+              className="font-mono text-[9px] font-bold text-blue-600 hover:text-blue-700 dark:text-[#38bdf8]"
+            >
+              VER →
+            </Link>
+          </div>
+          <div className="ops-auth-tabs mb-2 flex flex-shrink-0 gap-1">
+            <button
+              type="button"
+              className={`ops-auth-tab ${tab === "pending" ? "active" : ""}`}
+              onClick={() => setTab("pending")}
+            >
+              Pendientes
+              <span className="ops-auth-tab-count">{pending.length}</span>
+            </button>
+            <button
+              type="button"
+              className={`ops-auth-tab ${tab === "closed" ? "active" : ""}`}
+              onClick={() => setTab("closed")}
+            >
+              Cerradas
+              <span className="ops-auth-tab-count">{closed.length}</span>
+            </button>
+          </div>
+          <p className="mb-1.5 flex-shrink-0 text-[10px] leading-snug text-slate-500 dark:text-[#6b8498]">
+            {tab === "pending"
+              ? "De todos los propietarios · vigentes / en predio"
+              : "Vencidas, revocadas o con egreso"}
+          </p>
+        </>
+      )}
 
-      <div className="ops-auth-tabs mb-2 flex flex-shrink-0 gap-1">
-        <button
-          type="button"
-          className={`ops-auth-tab ${tab === "pending" ? "active" : ""}`}
-          onClick={() => setTab("pending")}
-        >
-          Pendientes
-          <span className="ops-auth-tab-count">{pending.length}</span>
-        </button>
-        <button
-          type="button"
-          className={`ops-auth-tab ${tab === "closed" ? "active" : ""}`}
-          onClick={() => setTab("closed")}
-        >
-          Cerradas
-          <span className="ops-auth-tab-count">{closed.length}</span>
-        </button>
-      </div>
-
-      <p className="mb-1.5 flex-shrink-0 text-[10px] leading-snug text-slate-500 dark:text-[#6b8498]">
-        {tab === "pending"
-          ? "De todos los propietarios · vigentes / en predio"
-          : "Vencidas, revocadas o con egreso"}
-      </p>
-
-      <div className="min-h-0 flex-1 space-y-1.5 overflow-y-auto overscroll-contain ops-scroll-hidden">
+      <div
+        className={
+          strip
+            ? "ops-auth-strip-list flex min-h-0 gap-1.5 overflow-x-auto overflow-y-hidden"
+            : "min-h-0 flex-1 space-y-1.5 overflow-y-auto overscroll-contain ops-scroll-hidden"
+        }
+      >
         {error ? <p className="text-[11px] text-rose-600">{error}</p> : null}
         {!error && list.length === 0 ? (
-          <div className="py-6 text-center text-slate-400">
-            <Ticket className="mx-auto mb-1 h-6 w-6 opacity-40" />
+          <div className={`text-slate-400 ${strip ? "flex items-center py-0.5" : "py-4 text-center"}`}>
+            {!strip ? <Ticket className="mx-auto mb-1 h-6 w-6 opacity-40" /> : null}
             <p className="text-[11px] font-semibold text-slate-600 dark:text-slate-300">
               {tab === "pending" ? "Sin pendientes" : "Sin cerradas recientes"}
             </p>
-            <p className="mt-0.5 text-[9.5px] opacity-75">
-              {tab === "pending"
-                ? "Cuando un vecino autorice, aparece acá"
-                : "Acá van vencidas, revocadas y egresos"}
-            </p>
+            {!strip ? (
+              <p className="mt-0.5 text-[9.5px] opacity-75">
+                {tab === "pending"
+                  ? "Cuando un vecino autorice, aparece acá"
+                  : "Acá van vencidas, revocadas y egresos"}
+              </p>
+            ) : null}
           </div>
         ) : null}
         {list.map((p) => (
-          <NoticeCard key={p.id} p={p} />
+          <NoticeCard key={p.id} p={p} compact={strip} />
         ))}
       </div>
     </aside>

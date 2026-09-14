@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { useEffect, useMemo, useState } from "react";
 import { api, withTenant } from "@/lib/api";
 import { useDash } from "@/components/DashboardProvider";
@@ -10,7 +11,7 @@ import { OpsTopbar } from "@/components/ops/OpsTopbar";
 import { MenuGrid, useOpsMenuTiles } from "@/components/ops/MenuGrid";
 import { OpsStatusPanels } from "@/components/ops/SoftphonePanel";
 import { ConfirmRelayModal } from "@/components/ops/ConfirmRelayModal";
-import { OpsLaneConsole, OpsOutColumns } from "@/components/ops/OpsLaneConsole";
+import { OpsLaneConsole } from "@/components/ops/OpsLaneConsole";
 import { OwnerAuthNotices } from "@/components/ops/OwnerAuthNotices";
 import {
   buildLaneRelaySlots,
@@ -21,6 +22,21 @@ import {
 import { type Actuator, type RelaySlot } from "@/components/ops/relayPresets";
 import { ACTUATOR_POLL_MS, useOpsEvents } from "@/components/ops/useOpsEvents";
 import { mergeLaneActuatorIds, resolveOpenActuatorId } from "@/components/ops/resolveOpenRelay";
+
+const OpsPlanMap = dynamic(
+  () => import("@/components/ops/OpsPlanMap").then((m) => m.OpsPlanMap),
+  {
+    ssr: false,
+    loading: () => (
+      <section className="ops-predio-panel" aria-label="Plano del barrio">
+        <header className="ops-lane-head">
+          <span className="ops-lane-badge ops-lane-badge--map">Predio</span>
+        </header>
+        <p className="ops-predio-placeholder">Cargando plano…</p>
+      </section>
+    ),
+  },
+);
 
 type Device = LiveDevice;
 
@@ -75,7 +91,7 @@ export function HomeDashboard() {
   const [acts, setActs] = useState<Actuator[]>([]);
   const [devices, setDevices] = useState<Device[]>([]);
   const [accessPoints, setAccessPoints] = useState<AccessPointWireRow[]>([]);
-  /** Override de sesión: elegir lector en AccesoCam = sentido activo (live + historial). */
+  /** Override de sesión si se elige lector por carril (sin AccesoCam en portería). */
   const [lanePick, setLanePick] = useState<{ in: string | null; out: string | null }>({
     in: null,
     out: null,
@@ -89,12 +105,13 @@ export function HomeDashboard() {
     action: "open" | "close";
   } | null>(null);
 
-  const showLive = featureOn("dahua.live") && can("dahua.live");
+  const showLivePage = featureOn("dahua.live") && can("dahua.live");
   const showEvents = featureOn("dahua.events") && can("dahua.events");
   const showActuators = enabled("actuators") && can("ops.relay");
   const showDevices = featureOn("dahua.devices") && can("access.dahua");
   const showOwnerAuth = enabled("visitors") && can("access.visitors.manage");
-  const eventsEnabled = showEvents || showLive || enabled("dahua_access");
+  const showPlan = can("ops.plano");
+  const eventsEnabled = showEvents || showLivePage || enabled("dahua_access");
 
   const { events, streamLive } = useOpsEvents({
     tenantId,
@@ -164,11 +181,7 @@ export function HomeDashboard() {
     [events, devices, topology.out.deviceIds],
   );
 
-  const opsStatus: "ok" | "degraded" | "offline" = status.agentOnline
-    ? "ok"
-    : status.engineOnline
-      ? "degraded"
-      : "offline";
+  const opsStatus: "ok" | "degraded" | "offline" = status.agentOnline ? "ok" : "offline";
 
   function t(path: string) {
     return withTenant(path, tenantId);
@@ -188,7 +201,7 @@ export function HomeDashboard() {
       setActs([]);
     }
 
-    if (showDevices || showLive) {
+    if (showDevices || showLivePage || eventsEnabled) {
       jobs.push(
         api<{ devices: Device[] }>(t("/api/dahua"))
           .then((d) => setDevices(d.devices))
@@ -198,7 +211,7 @@ export function HomeDashboard() {
       setDevices([]);
     }
 
-    if (showActuators || showLive || showDevices) {
+    if (showActuators || showLivePage || showDevices || eventsEnabled) {
       jobs.push(
         api<{ accessPoints: AccessPointWireRow[] }>(t("/api/access-points"))
           .then((d) => setAccessPoints(d.accessPoints))
@@ -218,7 +231,7 @@ export function HomeDashboard() {
     }, ACTUATOR_POLL_MS);
     return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tenantId, showActuators, showDevices, showLive]);
+  }, [tenantId, showActuators, showDevices, showLivePage, eventsEnabled]);
 
   async function fire(id: string, action: "open" | "close") {
     if (!tenantId) return;
@@ -308,7 +321,7 @@ export function HomeDashboard() {
         tenants={tenants}
         setTenant={setTenant}
         userName={user?.name ?? null}
-        engineOnline={!!status.engineOnline}
+        platesToday={status.platesToday}
         logout={logout}
       />
 
@@ -317,7 +330,7 @@ export function HomeDashboard() {
       <div className="ops-lanes-grid">
         <OpsLaneConsole
           lane="in"
-          showLive={showLive}
+          showLive={false}
           showActuators={showActuators}
           devices={inLaneDevices}
           preferredDeviceId={inDeviceId}
@@ -328,30 +341,39 @@ export function HomeDashboard() {
           events={inEvents}
           streamLive={streamLive}
         />
-        <div className="ops-center-right">
-          <OwnerAuthNotices tenantId={tenantId} enabled={showOwnerAuth} />
-          <OpsOutColumns
-            showLive={showLive}
-            showActuators={showActuators}
-            devices={outLaneDevices.length ? outLaneDevices : liveableDevices}
-            preferredDeviceId={outDeviceId}
-            onDeviceChange={(id) => setLanePick((p) => ({ ...p, out: id }))}
-            relaySlots={outSlots}
-            busy={busy}
-            onToggle={onToggleRelay}
-            events={outEvents}
-            streamLive={streamLive}
-            streamEnabled={Boolean(outDeviceId)}
-          />
-        </div>
+        {showPlan ? (
+          <OpsPlanMap />
+        ) : (
+          <section className="ops-predio-panel" aria-label="Plano del barrio">
+            <header className="ops-lane-head">
+              <span className="ops-lane-badge ops-lane-badge--map">Predio</span>
+            </header>
+            <p className="ops-predio-placeholder">Sin permiso para ver el plano</p>
+          </section>
+        )}
+        <OpsLaneConsole
+          lane="out"
+          showLive={false}
+          showActuators={showActuators}
+          devices={outLaneDevices.length ? outLaneDevices : liveableDevices}
+          preferredDeviceId={outDeviceId}
+          onDeviceChange={(id) => setLanePick((p) => ({ ...p, out: id }))}
+          relaySlots={outSlots}
+          busy={busy}
+          onToggle={onToggleRelay}
+          events={outEvents}
+          streamLive={streamLive}
+        />
       </div>
+
+      <OwnerAuthNotices tenantId={tenantId} enabled={showOwnerAuth} layout="strip" />
 
       <div className="ops-lanes-footer">
         <MenuGrid tiles={menuTiles} compact />
         <OpsStatusPanels
           planName={plan?.name ?? null}
           agentOnline={!!status.agentOnline}
-          engineOnline={!!status.engineOnline}
+          platesToday={status.platesToday}
           deviceCount={devices.length}
           actuatorCount={manualActs.length}
           userName={user?.name ?? null}

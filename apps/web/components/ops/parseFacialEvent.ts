@@ -32,7 +32,13 @@ export function markSnapshotFailed(deviceId: string, snapshotUrl?: string) {
 }
 
 export function parseFacialEvent(
-  ev: { id: string; createdAt?: number | string; payload?: Record<string, unknown> },
+  ev: {
+    id: string;
+    createdAt?: number | string;
+    payload?: Record<string, unknown>;
+    laneCode?: number | null;
+    sentido?: string | null;
+  },
 ): FacialEventAlert | null {
   if (!ev?.id) return null;
   const p = (ev.payload || {}) as Record<string, unknown>;
@@ -49,6 +55,9 @@ export function parseFacialEvent(
   const deviceId = String(p.deviceId || "");
   const snapshotUrl = normalizeSnapshotUrl(p.snapshotUrl || p.URL);
   const reason = isApproved ? undefined : String(p.reason || "Rostro no registrado en el sistema");
+  const code = Number(p.laneCode ?? ev.laneCode ?? 0);
+  const stamped = String(p.sentido ?? ev.sentido ?? "").trim();
+  const lane: "in" | "out" = code === 2 || stamped === "out" ? "out" : "in";
 
   return {
     id: ev.id,
@@ -60,6 +69,7 @@ export function parseFacialEvent(
     deviceId,
     snapshotUrl,
     reason,
+    lane,
   };
 }
 

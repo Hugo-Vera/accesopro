@@ -7,10 +7,10 @@ $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
 Set-Location $Root
 
-$composeArgs = @("compose", "--profile", "alpr", "--profile", "dahua", "down")
+$composeArgs = @("compose", "--profile", "dahua", "down")
 if ($WipeVolumes) {
   $composeArgs += "-v"
-  Write-Host "ATENCION: se borran volúmenes (SQLite API, Postgres, evidencias)" -ForegroundColor Red
+  Write-Host "ATENCION: se borran volúmenes (SQLite API)" -ForegroundColor Red
 }
 
 & docker @composeArgs

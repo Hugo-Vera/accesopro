@@ -1,16 +1,12 @@
 # Base de datos AccesoPro
 
-Dos bases en un predio típico: **AccesoPro** (producto) y **motor LAN** (AccesoSeguro / ALPR).
+Una base por predio: **SQLite AccesoPro** (`apps/api/data/accesopro.db`).
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  AccesoPro API — SQLite (apps/api/data/accesopro.db)        │
-│  Usuarios, módulos, actuadores, propiedades, visitas QR     │
-└───────────────────────────┬─────────────────────────────────┘
-                            │ HTTP local (SITE_ENGINE_URL)
-┌───────────────────────────▼─────────────────────────────────┐
-│  Motor LAN — PostgreSQL (fastalpr) en apps/site             │
-│  Patentes, personas, accesos, pre-autorizaciones, detecciones │
+│  Usuarios, módulos, actuadores, propiedades, visitas,       │
+│  eventos faciales y de chapa, lista de patentes             │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -61,11 +57,11 @@ Fuente viva de columnas: `apps/api/src/db/schema.ts` + `migrate.ts`.
 | `access_point_cameras` | Cableado punto ↔ cámara (`alpr` / `evidence` / `live`) |
 | `actuators` | Relés reutilizables (driver, pulso, triggers) |
 | `dahua_devices` | Terminales faciales / IP (credenciales) |
-| `cameras` | RTSP (referencia nube; vínculo ALPR legacy vía `actuator_id`) |
+| `cameras` | RTSP (referencia; vínculo ALPR vía `access_point_cameras` o `actuator_id`) |
 | `departments` | Departamentos Dahua (periodos / personas) |
-| `plates` | Lista blanca/negra en API (complementa motor) |
+| `plates` | Lista blanca/negra de patentes |
 | `events` | Auditoría incremental: `dahua_access`, plate, qr_access, visit_scan, fichadas |
-| `commands` | Cola agent + log engine.open |
+| `commands` | Cola del agent Dahua |
 
 **Regla modular:** cada entidad vive sola; el **cableado** une. Un facial peatonal no abre barreras vehiculares si no está cableado al mismo punto.
 
@@ -73,7 +69,7 @@ Fuente viva de columnas: `apps/api/src/db/schema.ts` + `migrate.ts`.
 |-------|----------------|
 | `sites` | `id`, `tenant_id`, `name`, `agent_token`, `last_seen_at`, `map_lat`/`map_lng`/`map_zoom` (vista del plano), `map_overlays` (capas KML) |
 | `dahua_devices` | `host`, `port` (HTTP/CGI), `rtsp_port`, `pss_port` (SmartPSS 37777), `username`, `password`, `device_type` (`asi_facial` / `camera_ip` / …), `sentido` (`in`/`out`), `lane_sector` (`vehicular`/`peatonal`), `use_live`, `use_local_relay` |
-| `actuators` | `name`, `kind`, `driver` (`dahua` / `http` / `engine`), `dahua_device_id`, `dahua_channel`, `pulse_ms`, `trigger_alpr`/`dahua`/`qr`/`manual` |
+| `actuators` | `name`, `kind`, `driver` (`dahua` / `ip`), `dahua_device_id`, `dahua_channel`, `pulse_ms`, `trigger_alpr`/`dahua`/`qr`/`manual` |
 | `cameras` | `rtsp_url`, `actuator_id` (legacy), `enabled` |
 | `access_points` | `sector` (`vehicular`\|`peatonal`\|`servicio`), `sentido` (`in`\|`out`\|`both`), `map_x`/`map_y` |
 | `events` | `type`, `payload` (JSON texto), `sentido`, `lane_code` (**1** entrada, **2** salida), `access_point_id` |
@@ -158,25 +154,11 @@ La API **no** lee todavía Postgres/MySQL: `client.ts` abre libsql. El SQL deja 
 
 ---
 
-## Motor LAN (`apps/site`) — PostgreSQL
-
-| Tabla | Uso |
-|-------|-----|
-| `vehiculos` | Patentes, propietario texto, horarios |
-| `personas` | DNI enrolados |
-| `accesos` | Cada paso IN/OUT con foto y resultado |
-| `estadias` | Permanencia (visitas / vehículos dentro) |
-| `pre_autorizaciones` | Lista temporal por lote (sincronizada desde AccesoPro) |
-| `detecciones` | ALPR con evidencia |
-| `operadores` | Login motor (admin, vigilador, propietario legacy) |
-
-AccesoPro **no duplica** todo el ALPR: lee detecciones vía HTTP y empuja autorizaciones al motor cuando el vecino las crea.
-
 ## QR de visita
 
 1. Vecino genera pase → `visit_passes.token`
 2. Payload QR: `ACCESOPRO:V1:{token}`
-3. Lector COM/cámara → motor llama `POST /api/visit-passes/scan` en API local
+3. Check-in portería o lector → `POST /api/visit-passes/scan`
 4. API valida, marca IN/OUT, dispara actuador con trigger **QR**
 
 ## Demo (seed)

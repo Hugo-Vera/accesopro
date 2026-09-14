@@ -20,7 +20,6 @@ import {
   enrollOk,
   enrollPersonOnSiteDevicesWait,
 } from "./dahuaSite.js";
-import { revokeAuthorizationOnEngine, syncAuthorizationToEngine, syncOwnerDniToEngine } from "./engineSync.js";
 import { nid, normalizePlate, scopedSiteWithModule } from "./scope.js";
 import { makeVisitToken } from "./visitPass.js";
 import { applyRoleTemplate, userHasCapability } from "./grants.js";
@@ -237,9 +236,6 @@ residents.post("/properties/:id/owners", async (c) => {
     phone: body.phone?.trim() || null,
     createdAt: new Date(),
   });
-  if (body.dni?.trim()) {
-    await syncOwnerDniToEngine(property.lotNumber, body.dni.trim(), name);
-  }
   return c.json({ ok: true, userId, profileId });
 });
 
@@ -297,7 +293,6 @@ residents.post("/properties/:id/invite", async (c) => {
     phone: whatsapp,
     createdAt: new Date(),
   });
-  if (dni) await syncOwnerDniToEngine(property.lotNumber, dni, displayName);
   const url = activationUrl(publicWebBase(c), token);
   const shareText = inviteShareText({
     name: displayName,
@@ -782,15 +777,6 @@ residents.post("/me/authorizations", async (c) => {
     createdByUserId: c.get("user").id,
     createdAt: new Date(),
   });
-  await syncAuthorizationToEngine(ctx.property, {
-    id,
-    guestName,
-    guestDni: body.guestDni?.trim() || null,
-    patente: body.patente ? normalizePlate(body.patente) : null,
-    fechaDesde,
-    fechaHasta,
-    active: true,
-  });
   return c.json({ ok: true, id });
 });
 
@@ -803,7 +789,6 @@ residents.delete("/me/authorizations/:id", async (c) => {
     .update(visitAuthorizations)
     .set({ active: false })
     .where(and(eq(visitAuthorizations.id, c.req.param("id")), eq(visitAuthorizations.propertyId, ctx.property.id)));
-  await revokeAuthorizationOnEngine(c.req.param("id"));
   return c.json({ ok: true });
 });
 

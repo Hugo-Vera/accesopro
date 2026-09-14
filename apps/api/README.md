@@ -16,14 +16,15 @@ npm run dev -w @accesopro/api
 | `/auth/*` | Login, sesión |
 | `/api/tenants/*` | Barrios y módulos (plataforma) |
 | `/api/actuators/*` | CRUD actuadores, open/close |
-| `/api/alpr/*` | Detecciones, ops, proxy motor LAN |
+| `/api/alpr/live` | Lecturas de chapa (eventos AccesoPro) |
+| `/api/plates` | Lista blanca/negra |
 | `/api/debug` | Diagnóstico triggers y comandos |
 | `/agent/*` | Site agent (token por sitio) |
 
 ## Archivos clave
 
-- `actuatorExec.ts` — ejecutar relé (engine / dahua / ip)
-- `engineBridge.ts` — eventos QR/chapa desde AccesoSeguro
-- `siteEngine.ts` — cliente HTTP `:5051`
+- `actuatorExec.ts` — ejecutar relé (dahua / ip)
+- `hardware.ts` — actuadores, cámaras, patentes, live ALPR
+- `agent.ts` — heartbeat y eventos plate/dahua/qr
 
 Variables: ver `.env.example` en la raíz del monorepo.

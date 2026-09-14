@@ -16,7 +16,6 @@ import {
   type AuthUser,
 } from "./auth.js";
 import { agentRoutes } from "./agent.js";
-import { startEngineBridgePoller } from "./engineBridge.js";
 import { startRosterReconcilePoller } from "./rosterReconcile.js";
 import { isUnlockMethodPack, syncAsiUnlockMethods } from "./dahuaUnlock.js";
 import { db } from "./db/client.js";
@@ -476,7 +475,6 @@ const port = Number(process.env.PORT ?? 8787);
 const host = process.env.HOST ?? "0.0.0.0";
 
 await seedIfEmpty();
-startEngineBridgePoller();
 startRosterReconcilePoller();
 
 serve({ fetch: app.fetch, port, hostname: host }, () => {

@@ -8,7 +8,6 @@ Un barrio = **una máquina** (o un servidor en la LAN) con todo lo necesario. No
 |---------|--------|-------------|--------|
 | API AccesoPro | 8787 | Sí | SQLite local `apps/api/data/accesopro.db` |
 | Dashboard web | 3000 | Sí | Next.js |
-| Motor ALPR (`apps/site`) | 5051 | Si módulo `alpr` | Postgres + modelos ONNX |
 | Agent Dahua (`apps/agent`) | 8790 | Si módulo `dahua_access` | Solo si hay terminales Dahua en LAN |
 
 ---
@@ -34,37 +33,19 @@ Ambos funcionan. Para **probar en casa ahora**: Windows está bien. Para **dejar
    - Windows: https://nodejs.org  
    - Ubuntu: `curl -fsSL https://deb.nodesource.com/setup_20.x | sudo -bash && sudo apt install -y nodejs`
 
-2. **Python 3.11 o 3.12** — motor ALPR y agent Dahua  
+2. **Python 3.11 o 3.12** — agent Dahua  
    - Ubuntu: `sudo apt install python3 python3-venv python3-pip`
 
 3. **Git** (opcional si subís por FTP sin git en destino)
 
 4. **Red**  
    - IP fija en la LAN (ej. `192.168.1.50`)  
-   - Firewall: abrir **3000** (dashboard), **8787** (API) solo a la LAN; **5051** solo LAN  
+   - Firewall: abrir **3000** (dashboard), **8787** (API) solo a la LAN  
    - RTSP cámaras y Dahua: misma subred, sin salir a internet
 
 5. **Archivos que NUNCA van por FTP/git**  
-   - `apps/site/config.yaml` (RTSP y claves)  
    - `.env` con claves reales  
-   - `apps/site/evidencia/`  
    - `apps/api/data/accesopro.db` de producción (sí la DB vacía o seed en destino)
-
-### Solo si activás módulo ALPR
-
-6. **PostgreSQL 14+**  
-   - Crear DB: `fastalpr` (usuario/pass como en `config.yaml`)  
-   - Windows: instalador PostgreSQL o Docker  
-   - Ubuntu: `sudo apt install postgresql`  
-   - O con Docker en la raíz del repo: `docker compose up -d postgres` (ajustar `config.yaml` user/pass `accesopro`)
-
-7. **Espacio disco**  
-   - ~2 GB modelos ALPR (FastALPR/ONNX) tras `pip install`  
-   - Evidencias: según retención (GB+)
-
-8. **RAM mínima práctica**  
-   - Sin ALPR: 4 GB  
-   - Con ALPR + 2 cámaras: **8 GB** recomendado, 16 GB cómodo
 
 ### Opcional Dahua
 
@@ -88,7 +69,7 @@ Generá un paquete **sin basura**:
 
 **Incluir:** `apps/`, `packages/`, `package.json`, `package-lock.json`, `scripts/`, `docs/`, `.env.example`, `AGENTS.md`
 
-**Excluir:** `node_modules/`, `.next/`, `apps/api/data/`, `apps/site/.venv/`, `apps/site/evidencia/`, `apps/agent/.venv/`, `.git/`, `.env`, `apps/site/config.yaml`
+**Excluir:** `node_modules/`, `.next/`, `apps/api/data/`, `apps/agent/.venv/`, `.git/`, `.env`
 
 ### Subir por FTP
 
@@ -103,7 +84,7 @@ Generá un paquete **sin basura**:
 ```powershell
 cd C:\AccesoPro
 copy .env.example .env
-# Editar .env: JWT_SECRET, SITE_ENGINE_URL=http://127.0.0.1:5051
+# Editar .env: JWT_SECRET
 
 npm install
 npm run build -w @accesopro/web
@@ -114,35 +95,13 @@ npm run start -w @accesopro/api
 npm run start -w @accesopro/web
 ```
 
-Para ALPR:
-
-```powershell
-cd apps\site
-copy config.example.yaml config.yaml
-# Editar: db postgres, barreras simulated o IP, RTSP si hay cámaras
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-$env:ACCESOPRO_API_URL="http://127.0.0.1:8787"
-$env:ACCESOPRO_BRIDGE_KEY="accesopro-bridge"
-python run.py
-```
-
 **Ubuntu (resumen):**
 
 ```bash
 cd /opt/accesopro
 cp .env.example .env
 npm install && npm run build -w @accesopro/web
-
-cd apps/site
-cp config.example.yaml config.yaml
-python3 -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-export ACCESOPRO_API_URL=http://127.0.0.1:8787
-export ACCESOPRO_BRIDGE_KEY=accesopro-bridge
-python run.py &
-cd /opt/accesopro && npm run start -w @accesopro/api &
+npm run start -w @accesopro/api &
 npm run start -w @accesopro/web &
 ```
 
@@ -151,8 +110,8 @@ npm run start -w @accesopro/web &
 1. Subir archivos cambiados (o zip completo sin `node_modules`)  
 2. En destino: `npm install` si cambió `package-lock.json`  
 3. `npm run build -w @accesopro/web` si cambió el frontend  
-4. Reiniciar API y web (y motor si tocó `apps/site`)  
-5. **No** reemplazar `config.yaml`, `.env`, ni `apps/api/data/accesopro.db`
+4. Reiniciar API y web  
+5. **No** reemplazar `.env` ni `apps/api/data/accesopro.db`
 
 ---
 
@@ -161,8 +120,6 @@ npm run start -w @accesopro/web &
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts\start-accesopro.ps1
 ```
-
-Luego, si querés ALPR: `cd apps\site` → `python run.py`.
 
 Demo: `admin@lasacacias.local` / `AccesoPro!2026` — vecino: `vecino@lasacacias.local` / mismo pass → `/portal`.
 
@@ -175,7 +132,7 @@ Cada predio = un host LAN (o Ubuntu en portería) + este repo.
 1. Clonar `master` o instalar con `scripts/install-ubuntu.sh`.
 2. `.env` propio: `SITE_AGENT_TOKEN`, `JWT_SECRET`, `ACCESOPRO_OWNER`. No copiar tokens demo a producción.
 3. Agent: perfil `dahua` + `deploy/docker-compose.linux.yml` (`network_mode: host`) para alcanzar el ASI.
-4. ALPR: solo si el contrato lo incluye (`--profile alpr`) y un `config.yaml` real (RTSP). El YAML de Docker vacío no lee chapas.
+4. ALPR: módulo `alpr` + cámaras cableadas + lista de patentes en AccesoPro.
 5. Cablear en **Puntos de acceso** (Ingreso/Salida + ASI + relé). No mezclar módulos en la fila del punto.
 6. Actualizar: botón **Configuración → Módulos → Actualizar servidor** o `docs/UPDATE_UBUNTU.md`.
 7. Smoke: `docs/E2E_SMOKE.md`. Intercom: `docs/INTERCOM.md` (FreePBX local, no en la nube).
@@ -186,8 +143,7 @@ Si la máquina tiene Docker Desktop o Docker Engine, es más simple que FTP:
 
 ```powershell
 copy .env.docker.example .env
-docker compose up -d --build
-# Con ALPR: docker compose --profile alpr up -d --build
+docker compose --profile dahua up -d --build
 ```
 
 Detalle: [`DOCKER.md`](DOCKER.md).
@@ -208,9 +164,9 @@ FTP queda para barrios **sin git** o con hosting solo FTP.
 
 ## Servicios 24/7 (cuando dejes la máquina fija)
 
-| OS | API + Web | Motor ALPR |
-|----|-----------|------------|
-| Windows | NSSM o `pm2` | `install_service.ps1` en `apps/site` |
-| Ubuntu | systemd units | systemd + postgres |
+| OS | API + Web | Agent Dahua |
+|----|-----------|-------------|
+| Windows | NSSM o `pm2` | venv + NSSM |
+| Ubuntu | systemd / Docker | profile `dahua` |
 
 (Pendiente: scripts `systemd` y NSSM en el repo.)

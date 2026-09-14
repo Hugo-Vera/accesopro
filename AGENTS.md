@@ -44,22 +44,22 @@ Cada pack tiene dashboard + capability. Regla completa:
 
 API: `GET/PATCH /api/tenants/:id/features`. UI: Configuración → Módulos (bloque «Funciones del equipo»).
 
-## Arquitectura híbrida
+## Arquitectura
 
-- **Nube / AccesoPro:** dashboard Next (`apps/web`), API módulos (`apps/api`), Dahua CGI agent (`apps/agent`).
+- **AccesoPro:** dashboard Next (`apps/web`), API módulos (`apps/api`), Dahua CGI agent (`apps/agent`).
 - Eventos faciales: sync incremental ASI → SQLite (`GET /agent/sync-state` + stream; sin dump del historial del lector al arrancar). Live/toast: `docs/PLAN_PORTERIA.md`.
-- **LAN / AccesoSeguro:** `apps/site` — FastALPR, evidencias, QR DNI, barreras. Corre en :5051. No mezclar ese HTML con el dashboard AccesoPro.
-- RTSP y claves de equipos no van a git (`apps/site/config.yaml` está ignorado). En este predio hay NAT WAN de prueba al ASI (HTTP/SDK/RTSP TCP): **`docs/SITE_RB4011.md`** (sección 0, a mano). CGI vs RTSP del ASI (no mezclar `snapshot.cgi` con live): **`docs/ASI_CGI.md`**.
+- ALPR: módulo `alpr` nativo (eventos `type=plate`, lista `plates`, cámaras en `access_point_cameras.role=alpr`). Agent opcional `AGENT_ALPR=1`.
+- En este predio hay NAT WAN de prueba al ASI (HTTP/SDK/RTSP TCP): **`docs/SITE_RB4011.md`** (sección 0, a mano). CGI vs RTSP del ASI (no mezclar `snapshot.cgi` con live): **`docs/ASI_CGI.md`**.
 
 ## Catálogo de módulos
 
 Definición viva en `packages/catalog`. Claves: `core` (siempre), `actuators`, `dahua_access`, `visitors`, `dni_enroll`, `alpr`, `panic`, `fire`, `attendance`.
 
-Actuador = relé con **nombre libre** (Barrera entrada, Portón cochera, Puerta peatonal). Driver Dahua, IP o motor LAN (`engine`). Pulso o hold.
+Actuador = relé con **nombre libre** (Barrera entrada, Portón cochera, Puerta peatonal). Driver Dahua o IP. Pulso o hold.
 
 **Puntos de acceso** (`access_points`): topología del predio (sector vehicular/peatonal/servicio + sentido in/out/both). No es un módulo comercial: solo agrupa cableados.
 
-**Live portería:** dos consolas **Ingreso** | **Salida** (live + actuadores cableados a ese sentido + historial del lector). Carril en eventos: `lane_code` **1** = entrada, **2** = salida (se sella al ingest). Cableado admin: `/dashboard/puntos-acceso`. El 2º ASI de salida habilita medir permanencia de visitas; propietarios/permanentes no llevan control de tiempo. Softphone SIP: pack `dahua.intercom` + `docs/INTERCOM.md` (FreePBX local).
+**Live portería:** tres columnas **Ingreso** | **plano del predio** | **Salida** (historial + actuadores cableados a ese sentido). El toast facial cae sobre el mismo carril (IN izquierda, OUT derecha). AccesoCam RTSP no va en esta pantalla: queda en `/dashboard/dahua/live`. Autorizaciones pendientes van en barra naranja abajo. Carril en eventos: `lane_code` **1** = entrada, **2** = salida (se sella al ingest). Cableado admin: `/dashboard/puntos-acceso`. El 2º ASI de salida habilita medir permanencia de visitas; propietarios/permanentes no llevan control de tiempo. Softphone SIP: pack `dahua.intercom` + `docs/INTERCOM.md` (FreePBX local).
 
 **Cableado** (tablas de vínculo, reutilizables):
 - `access_point_actuators` — qué relé abre ese punto
@@ -72,7 +72,7 @@ Plano del predio = core (`/dashboard/plano`). Mapa OSM o Google (`NEXT_PUBLIC_MA
 
 ## Stack
 
-Monorepo: `apps/web` (Next.js), `apps/api` (Hono), `apps/agent` (Dahua CGI), `apps/site` (AccesoSeguro / FastALPR). Postgres lo usa el sitio ALPR.
+Monorepo: `apps/web` (Next.js), `apps/api` (Hono), `apps/agent` (Dahua CGI). AccesoPro usa SQLite.
 
 Mapa detallado: `docs/ARCHITECTURE.md`. Estado por módulo: `docs/MODULES.md`. Base de datos: `docs/DATABASE.md`. Pendientes: `docs/PENDING.md`. Inventario + plan punta a punta: `docs/ROADMAP.md`. Ops IN/OUT: `docs/OPS_LANES.md`. Sitio físico RB4011 + NAT ASI: `docs/SITE_RB4011.md`. CGI/RTSP ASI: `docs/ASI_CGI.md`. Intercom: `docs/INTERCOM.md`. Smoke: `docs/E2E_SMOKE.md`.
 
@@ -128,4 +128,4 @@ uvicorn app.main:app --port 8790
 
 Demo: `admin@accesopro.local` / `AccesoPro!2026` (plataforma), `admin@lasacacias.local` / `AccesoPro!2026` (barrio), `guardia@lasacacias.local` / `AccesoPro!2026` (portería), `vecino@lasacacias.local` / `AccesoPro!2026` (propietario demo, portal).
 
-El barrio demo tiene plan **Acceso Pro** (`actuators`, `dahua_access`, `alpr`, `visitors`). ALPR vive en AccesoSeguro (`apps/site`, :5051). El dashboard lee el motor vía `SITE_ENGINE_URL` (por defecto `http://127.0.0.1:5051` en la misma máquina). Dahua facial va por `apps/agent`.
+El barrio demo tiene plan **Acceso Pro** (`actuators`, `dahua_access`, `alpr`, `visitors`). ALPR vive en AccesoPro (eventos de chapa + lista de patentes). Dahua facial va por `apps/agent`.

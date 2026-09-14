@@ -9,13 +9,10 @@
 # Profiles:
 #   core   → web + api (Docker)  |  nativo: next start + api
 #   dahua  → core + agent Dahua (CGI real, openDoor, live, eventos)
-#   alpr   → core + postgres + motor AccesoSeguro
-#   full   → alpr + dahua
-#
-# Barreras: editá deploy\site.config.docker.yaml (type_in/out: ip|com, no simulated)
+#   full   → mismo que dahua
 
 param(
-  [ValidateSet("core", "dahua", "alpr", "full")]
+  [ValidateSet("core", "dahua", "full")]
   [string]$Profile = "dahua",
 
   [switch]$Native,
@@ -55,15 +52,12 @@ $env:HOST = "0.0.0.0"
 $env:NEXT_PUBLIC_API_URL = ""
 $env:ACCESOPRO_API_URL = if ($env:ACCESOPRO_API_URL) { $env:ACCESOPRO_API_URL } else { "http://127.0.0.1:8787" }
 $env:SITE_AGENT_URL = if ($env:SITE_AGENT_URL -and $Native) { $env:SITE_AGENT_URL } elseif ($Native) { "http://127.0.0.1:8790" } else { $env:SITE_AGENT_URL }
-$env:SITE_ENGINE_URL = if ($Native) { "http://127.0.0.1:5051" } else { $env:SITE_ENGINE_URL }
 
 if (-not $Native) {
   Write-Step "Docker Compose · profile=$Profile (producción)"
 
   $composeArgs = @("compose")
-  if ($Profile -eq "dahua") { $composeArgs += @("--profile", "dahua") }
-  elseif ($Profile -eq "alpr") { $composeArgs += @("--profile", "alpr") }
-  elseif ($Profile -eq "full") { $composeArgs += @("--profile", "alpr", "--profile", "dahua") }
+  if ($Profile -eq "dahua" -or $Profile -eq "full") { $composeArgs += @("--profile", "dahua") }
 
   if ($NoBuild) {
     $composeArgs += @("up", "-d")
@@ -93,7 +87,7 @@ if (-not $Native) {
     npm run db:seed
   }
 
-  $apiCmd = "cd '$Root'; `$env:NODE_ENV='production'; `$env:HOST='0.0.0.0'; `$env:SITE_AGENT_URL='http://127.0.0.1:8790'; `$env:SITE_ENGINE_URL='http://127.0.0.1:5051'; npm run start -w @accesopro/api"
+  $apiCmd = "cd '$Root'; `$env:NODE_ENV='production'; `$env:HOST='0.0.0.0'; `$env:SITE_AGENT_URL='http://127.0.0.1:8790'; npm run start -w @accesopro/api"
   $webCmd = "cd '$Root'; `$env:NODE_ENV='production'; `$env:NEXT_PUBLIC_API_URL=''; `$env:API_INTERNAL_URL='http://127.0.0.1:8787'; npm run start -w @accesopro/web"
 
   Start-Process powershell -ArgumentList "-NoExit", "-Command", $apiCmd
@@ -115,12 +109,6 @@ if (-not $Native) {
     Start-Process powershell -ArgumentList "-NoExit", "-Command", $agentCmd
     Write-Ok "Agent Dahua :8790 (sin --reload)"
   }
-
-  if ($Profile -eq "alpr" -or $Profile -eq "full") {
-    Write-Host "Motor ALPR: levantá Postgres y luego:" -ForegroundColor Yellow
-    Write-Host "  cd apps\site; .\.venv\Scripts\Activate.ps1; python run.py" -ForegroundColor Yellow
-    Write-Host "Config real (no simulated): apps\site\config.yaml o deploy\site.config.real.example.yaml" -ForegroundColor Yellow
-  }
 }
 
 Write-Host ""
@@ -128,9 +116,6 @@ Write-Host "Dashboard:  http://localhost:3000" -ForegroundColor Green
 Write-Host "API health: http://localhost:8787/health" -ForegroundColor Green
 if ($Profile -eq "dahua" -or $Profile -eq "full") {
   Write-Host "Agent:      http://localhost:8790/health" -ForegroundColor Green
-}
-if ($Profile -eq "alpr" -or $Profile -eq "full") {
-  Write-Host "ALPR:       http://localhost:5051" -ForegroundColor Green
 }
 Write-Host ""
 Write-Host "Demo: admin@lasacacias.local / AccesoPro!2026" -ForegroundColor DarkGray

@@ -154,9 +154,8 @@ agentRoutes.post("/events", async (c) => {
       const cameraId = String(payload.cameraId ?? "");
       const cam = await db.select().from(cameras).where(eq(cameras.id, cameraId)).get();
       if (cam?.actuatorId) openActuatorId = cam.actuatorId;
-      for (const a of acts.filter((x) => x.triggerAlpr)) {
-        if (a.driver === "engine" && site) await fireActuator(site, a.id, "open");
-        else if (!openActuatorId) openActuatorId = a.id;
+      for (const a of acts.filter((x) => x.triggerAlpr && x.driver !== "engine")) {
+        if (!openActuatorId) openActuatorId = a.id;
       }
     }
     if (row?.list === "black") {
@@ -214,7 +213,7 @@ agentRoutes.post("/events", async (c) => {
 
     // Evitamos bucle infinito: si ya es una apertura remota (Method 4), no disparamos actuadores.
     // Además, el terminal Dahua ya acciona su propio relé localmente al reconocer la cara;
-    // solo se disparan actuadores vinculados distintos (ej. barreras auxiliares de motor LAN u otros relés).
+    // solo se disparan actuadores vinculados distintos (barreras auxiliares u otros relés).
     if (!failed && !isRemoteUnlock && site) {
       try {
         const targets = await actuatorsForDahuaDevice(siteId, deviceId);

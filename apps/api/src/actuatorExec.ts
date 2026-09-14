@@ -2,8 +2,6 @@ import { and, eq } from "drizzle-orm";
 import { db } from "./db/client.js";
 import { actuators, commands } from "./db/schema.js";
 import { agentOnline, nid } from "./scope.js";
-import { engineRelay } from "./siteEngine.js";
-
 export async function enqueue(siteId: string, action: string, payload: unknown) {
   const id = nid();
   await db.insert(commands).values({
@@ -72,10 +70,10 @@ export async function fireActuator(
   if (!actuator) return { ok: false, error: "Actuador no encontrado" };
   try {
     if (actuator.driver === "engine") {
-      const sentido = actuator.engineSentido === "out" ? "out" : "in";
-      const result = await engineRelay(action, sentido);
-      await logDone(site.id, `engine.${action}`, { actuatorId: actuator.id, name: actuator.name, sentido }, result);
-      return { ok: true, result };
+      return {
+        ok: false,
+        error: "Este relé quedó de un motor externo. Reasignalo a Dahua o IP en Actuadores.",
+      };
     }
     if (action === "close") {
       return { ok: false, error: "Este driver solo pulsa abrir" };

@@ -323,7 +323,6 @@ El panel muestra las 4 tarjetas con los nombres de arriba.
 
 - No `docker compose down -v`.
 - No `fasttrack` con mark-routing.
-- No mezclar ALPR (`profile alpr`) en este hilo.
 - No cambiar puertos del ASI para “igualar” 18080/27777/18554.
 - No volver a crear NAT `1554` → `554` (duplicado de `18554`).
 - No reponer `src-address=200.26.179.94` en estas NAT: el pedido fue origen **cualquiera**.

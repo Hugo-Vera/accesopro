@@ -29,7 +29,6 @@ Playbook completo (anti-errores `.git` / permisos): `docs/UPDATE_UBUNTU.md`.
 
 - No asumir que el Ubuntu se actualiza solo con el commit local.
 - No pedir `docker compose down -v` (borra datos) salvo pedido explícito.
-- No mezclar ALPR (`profile alpr`) si el usuario dijo que no es urgente.
 - No inventar otro canal de deploy (FTP ad-hoc) si GitHub + update script/UI está disponible.
 - No indicar `git pull` como `usuario` si antes hubo update como root **sin** `chown` previo.
 

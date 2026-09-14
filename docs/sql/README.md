@@ -24,7 +24,7 @@ No se usa `TIMESTAMP` nativo: la API guarda milisegundos Unix.
 
 ## Qué no cubre este SQL
 
-- **Motor ALPR** (`apps/site`, base `fastalpr`): es otro producto, otro esquema Postgres.
+- **Motor ALPR externo**: no aplica. Las chapas viven en AccesoPro (`events` tipo `plate` + tabla `plates`).
 - **Datos demo**: los crea `seedIfEmpty()` al arrancar la API contra SQLite. En una base externa hay que sembrar aparte o migrar el `.db`.
 - **Conectar la API a Postgres/MySQL**: hoy `apps/api/src/db/client.ts` solo abre libsql. Cambiar el driver es un trabajo aparte; el SQL ya deja el esquema listo.
 

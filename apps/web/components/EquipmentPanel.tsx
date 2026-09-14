@@ -1426,7 +1426,7 @@ export function EquipmentPanel() {
                       <div>
                         <div className="flex items-center justify-between mb-1">
                           <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
-                            URL RTSP para Live y Software ALPR (AccesoSeguro)
+                            URL RTSP para Live AccesoPro
                           </label>
                           <button
                             type="button"

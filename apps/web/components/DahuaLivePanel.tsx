@@ -287,7 +287,7 @@ export function DahuaLivePanel({
               }`}
               title={
                 tech.isFacial
-                  ? "RTSP extra 1 recuadro 384×640, igual que la foto de evidencia. No usa snapshot.cgi."
+                  ? "RTSP extra 1 completo en el recuadro, sin recorte. No usa snapshot.cgi."
                   : "Resolución de cámara IP estándar: 16:9 HD"
               }
             >
@@ -402,7 +402,7 @@ export function DahuaLivePanel({
           {selected ? (
             <>
               <span className="font-mono text-[8.5px] font-semibold text-[#55819e]">
-                {tech.isFacial ? "384×640 extra" : "16:9 HD"}
+                {tech.isFacial ? "Extra 1 completo" : "16:9 HD"}
               </span>
               <span className="max-w-[120px] truncate text-[10.5px] font-semibold text-slate-200">
                 {selected.name}

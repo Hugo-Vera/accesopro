@@ -56,7 +56,7 @@ export const MODULE_CATALOG: ModuleDef[] = [
   {
     key: "alpr",
     name: "Chapas (ALPR)",
-    summary: "Lecturas de AccesoSeguro (FastALPR en la LAN). Patente en lista dispara el actuador.",
+    summary: "Lecturas de chapa en AccesoPro. Patente en lista blanca dispara el actuador.",
     alwaysOn: false,
     dependsOn: ["actuators"],
   },

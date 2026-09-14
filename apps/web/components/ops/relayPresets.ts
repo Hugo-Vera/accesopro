@@ -30,9 +30,9 @@ export const RELAY_PRESETS: {
   { label: "Emergencia", match: /emerg|pánico|panico/i, kind: "emerg", danger: true },
   { label: "Iluminación", match: /\biluminac|panel|central|luz/i, kind: "light" },
   { label: "Reflector", match: /reflec|per[ií]metro|farol/i, kind: "floodlight", cam: true },
-  { label: "Portón / Barrera", match: /portón|porton|eclusa|cancela|barrera|\bin\b/i, kind: "gate", cam: true },
+  { label: "Portón / Barrera", match: /portón|porton|eclusa|cancela|barrera|ingres|entrada|puerta|\bin\b/i, kind: "gate", cam: true },
   { label: "Cocheras / Garaje", match: /garage|garaje|cochera/i, kind: "garage", cam: true },
-  { label: "Puerta Peatonal", match: /peaton|puerta|\bout\b|sótano|sotano/i, kind: "underground", cam: true },
+  { label: "Puerta Peatonal", match: /peaton|sótano|sotano/i, kind: "underground", cam: true },
   { label: "Riego Jardín", match: /riego|irrig|jard/i, kind: "water" },
 ];
 

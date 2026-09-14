@@ -10,7 +10,7 @@ export default function AlprPage() {
     <ModuleGate module="alpr">
       <PageHeader
         title="Detecciones"
-        subtitle="Lecturas y fotos de AccesoSeguro. Cámaras, ROI y listas se configuran en el motor de LAN."
+        subtitle="Lecturas de chapa y lista blanca/negra en AccesoPro. Cableá cámaras ALPR en Puntos de acceso."
       />
       {tenantId ? <AlprPanel tenantId={tenantId} /> : null}
     </ModuleGate>

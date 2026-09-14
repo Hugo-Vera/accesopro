@@ -16,7 +16,6 @@ type Actuator = {
   httpUrl: string | null;
   pulseMs: number;
   engineSentido: "in" | "out" | null;
-  open: boolean | null;
   triggerAlpr: boolean;
   triggerDahua: boolean;
   triggerQr: boolean;
@@ -26,13 +25,13 @@ type Actuator = {
 type Device = { id: string; name: string; host: string };
 
 const KIND: Record<string, string> = { door: "Puerta", gate: "Porton", barrier: "Barrera" };
-const DRIVER: Record<string, string> = { engine: "Motor LAN (AccesoSeguro)", dahua: "Dahua (CGI)", ip: "Rele IP / HTTP" };
+const DRIVER: Record<string, string> = { dahua: "Dahua (CGI)", ip: "Rele IP / HTTP", engine: "Reasignar a Dahua o IP" };
 
 const emptyForm = {
   name: "",
   kind: "barrier",
-  driver: "ip",
-  engineSentido: "in",
+  driver: "dahua",
+  engineSentido: "",
   dahuaDeviceId: "",
   dahuaChannel: "1",
   httpUrl: "",
@@ -80,8 +79,8 @@ export function ActuatorsPanel() {
     setForm({
       name: row.name,
       kind: row.kind,
-      driver: row.driver,
-      engineSentido: row.engineSentido ?? "in",
+      driver: row.driver === "engine" ? "dahua" : row.driver,
+      engineSentido: row.engineSentido ?? "",
       dahuaDeviceId: row.dahuaDeviceId ?? "",
       dahuaChannel: String(row.dahuaChannel || 1),
       httpUrl: row.httpUrl ?? "",
@@ -95,7 +94,7 @@ export function ActuatorsPanel() {
       name: form.name.trim(),
       kind: form.kind,
       driver: form.driver,
-      engineSentido: form.driver === "engine" ? form.engineSentido : null,
+      engineSentido: form.engineSentido === "out" || form.engineSentido === "in" ? form.engineSentido : null,
       dahuaDeviceId: form.driver === "dahua" ? form.dahuaDeviceId : null,
       dahuaChannel: Number(form.dahuaChannel) || 1,
       httpUrl: form.driver === "ip" ? form.httpUrl.trim() : null,
@@ -225,7 +224,6 @@ export function ActuatorsPanel() {
       ) : (
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
           {rows.map((a) => {
-            const isEng = a.driver === "engine";
             const isDah = a.driver === "dahua";
             const isIp = a.driver === "ip";
 
@@ -237,14 +235,8 @@ export function ActuatorsPanel() {
                 <div>
                   <div className="flex items-start justify-between gap-2">
                     <div className="flex items-center gap-3">
-                      <div
-                        className={`flex h-10 w-10 items-center justify-center rounded-xl font-bold text-xs ${
-                          a.open
-                            ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-400"
-                            : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400"
-                        }`}
-                      >
-                        <Power className={`h-5 w-5 ${a.open ? "text-emerald-600 dark:text-emerald-400 animate-pulse" : ""}`} />
+                      <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400">
+                        <Power className="h-5 w-5" />
                       </div>
                       <div>
                         <h3 className="font-semibold text-slate-900 dark:text-white leading-tight">{a.name}</h3>
@@ -253,22 +245,13 @@ export function ActuatorsPanel() {
                         </p>
                       </div>
                     </div>
-                    <span
-                      className={`inline-flex items-center rounded-md px-2 py-0.5 text-[10px] font-semibold ${
-                        a.open
-                          ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-400"
-                          : "bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400"
-                      }`}
-                    >
-                      {a.open ? "ABIERTO" : "CERRADO"}
-                    </span>
                   </div>
 
                   {/* Details box */}
                   <div className="mt-4 rounded-xl border border-slate-100 bg-slate-50/70 p-3 text-[11px] space-y-1 dark:border-slate-800/80 dark:bg-slate-950/40">
-                    {isEng ? (
+                    {a.engineSentido === "in" || a.engineSentido === "out" ? (
                       <div className="flex justify-between text-slate-600 dark:text-slate-400">
-                        <span>Lado de accionamiento:</span>
+                        <span>Carril:</span>
                         <span className="font-medium text-slate-900 dark:text-white">
                           {a.engineSentido === "out" ? "Salida (OUT)" : "Ingreso (IN)"}
                         </span>
@@ -359,16 +342,6 @@ export function ActuatorsPanel() {
                     >
                       {busy === `open-${a.id}` ? "Abriendo..." : "Abrir"}
                     </button>
-                    {isEng ? (
-                      <button
-                        type="button"
-                        disabled={Boolean(busy)}
-                        onClick={() => fire(a.id, "close")}
-                        className="rounded-lg bg-slate-700 px-3 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-slate-800 active:scale-95 disabled:opacity-50"
-                      >
-                        {busy === `close-${a.id}` ? "Cerrando..." : "Cerrar"}
-                      </button>
-                    ) : null}
                   </div>
                   <div className="flex gap-1">
                     <button
@@ -410,7 +383,7 @@ export function ActuatorsPanel() {
                     {editingId ? "Configurar Actuador" : "Nuevo Actuador"}
                   </h3>
                   <p className="text-xs text-slate-500 dark:text-slate-400">
-                    Parametros de relay y vinculo fisico con la controladora o motor.
+                    Parametros de relay y vinculo fisico con la controladora.
                   </p>
                 </div>
               </div>
@@ -465,7 +438,6 @@ export function ActuatorsPanel() {
                     className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-900 focus:border-blue-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800/80 dark:text-white"
                   >
                     <option value="dahua">Dahua (Controladora/Facial)</option>
-                    <option value="engine">Motor LAN (AccesoSeguro)</option>
                     <option value="ip">Rele IP / HTTP</option>
                   </select>
                 </div>
@@ -508,21 +480,20 @@ export function ActuatorsPanel() {
                 </div>
               ) : null}
 
-              {form.driver === "engine" ? (
-                <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-4 dark:border-slate-800 dark:bg-slate-950/40">
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Sentido del Motor LAN
-                  </label>
-                  <select
-                    value={form.engineSentido}
-                    onChange={(e) => setForm({ ...form, engineSentido: e.target.value })}
-                    className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm text-slate-900 focus:border-blue-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"
-                  >
-                    <option value="in">Ingreso Principal (IN)</option>
-                    <option value="out">Salida Principal (OUT)</option>
-                  </select>
-                </div>
-              ) : null}
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  Carril (opcional)
+                </label>
+                <select
+                  value={form.engineSentido}
+                  onChange={(e) => setForm({ ...form, engineSentido: e.target.value })}
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-900 focus:border-blue-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800/80 dark:text-white"
+                >
+                  <option value="">Sin asignar</option>
+                  <option value="in">Ingreso (IN)</option>
+                  <option value="out">Salida (OUT)</option>
+                </select>
+              </div>
 
               {form.driver === "ip" ? (
                 <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-4 dark:border-slate-800 dark:bg-slate-950/40">

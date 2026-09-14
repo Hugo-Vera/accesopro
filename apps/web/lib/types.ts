@@ -58,12 +58,6 @@ export type Tenant = {
   planSlug?: string | null;
 };
 
-export type CamLaneStatus = {
-  running: boolean;
-  host: string;
-  configured: boolean;
-};
-
 export type ReaderStatus = {
   deviceId?: string;
   host?: string;
@@ -79,13 +73,7 @@ export type ReaderStatus = {
 
 export type Status = {
   agentOnline: boolean | null;
-  engineOnline: boolean | null;
-  engineUrl: string | null;
   eventsToday: number;
   platesToday: number;
-  cameraIn?: CamLaneStatus | null;
-  cameraOut?: CamLaneStatus | null;
-  evidenceIn?: boolean;
-  evidenceOut?: boolean;
   readers?: Record<string, ReaderStatus>;
 };

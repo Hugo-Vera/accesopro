@@ -1,7 +1,7 @@
 # Plan portería — orden a seguir
 
 Fecha: 2026-09-07. Complementa `ROADMAP.md`, `OPS_LANES.md`, `PENDING.md`.
-Objetivo: un guardia en `/dashboard` ve **live + toast + historial** en el momento del pase, sin dump del ASI ni toast fantasma al F5.
+Objetivo: un guardia en `/dashboard` ve **toast + historial del carril + plano + autorizaciones**, sin dump del ASI ni toast fantasma al F5. AccesoCam (RTSP) queda en `/dashboard/dahua/live`, no en portería.
 
 ## Cadena en tiempo real (como tiene que ser)
 
@@ -9,8 +9,7 @@ Objetivo: un guardia en `/dashboard` ve **live + toast + historial** en el momen
 Cara en el ASI
   → attach HTTP AccessControl (agent, un hilo por lector)
   → POST /agent/events (dedupe recNo, abre relés cableados)
-  → SSE access_event → toast + fila de historial del carril
-  → AccesoCam IN: MJPEG substream (proxy Next sin buffer)
+  → SSE access_event → toast del mismo sentido + fila de historial del carril
 ```
 
 Respaldo: si el attach se cae, RecordFinder pide 5–12 registros **nuevos** vs cursor de SQLite. El dashboard, si el SSE se cae, hace poll 1 s. **No** se vuelca el historial del lector al arrancar.
@@ -23,7 +22,7 @@ Respaldo: si el attach se cae, RecordFinder pide 5–12 registros **nuevos** vs 
 | Sync incremental ASI↔DB (`/agent/sync-state`) | `agent.ts` + `main.py` |
 | Updater suelto + `compose build` con sitio arriba | `systemUpdate.ts`, `update-ubuntu.sh` |
 | 1 ASI = Entrada; Salida espera el 2º ASI | ficha `sentido` + `HomeDashboard` |
-| Live OUT apagado si no hay lector de salida | `streamEnabled={Boolean(outDeviceId)}` |
+| Portería sin AccesoCam | historial IN/OUT + plano centro + autorizaciones naranja |
 
 ## Orden de trabajo (práctica)
 
@@ -34,7 +33,7 @@ Hacer **una fase por vez**. No mezclar SIP, plano ni ALPR con el live de porter�
 Live fluido + toast al instante. Verificar en el barrio:
 
 1. F5 en `/dashboard`: **sin** toast.
-2. Pasar la cara: toast + fila IN en **menos de ~1 s**; live no se congela.
+2. Pasar la cara: toast del mismo sentido + fila IN/OUT en **menos de ~1 s**.
 3. F5 otra vez: el toast no vuelve; el historial sí.
 4. Módulos: versión **0.2.10**.
 
@@ -87,7 +86,7 @@ Personas (editar/huella/PIN), evidencia galería, intercom FreePBX, DNI, pánico
 | Pieza | Cambio | Por qué |
 |-------|--------|---------|
 | Live | Route Next `/api/dahua/:id/live` sin buffer | El rewrite de Next atrasaba el MJPEG |
-| Live | RTSP extra 1 via ffmpeg (~6 fps ASI); AccesoCam 384×640 `cover` | Chrome no abre `rtsp://`. Recuadro como la foto de evidencia. Sin snapshot CGI |
+| Live | RTSP extra 1 via ffmpeg (~6 fps ASI); AccesoCam `contain` sin recorte | Chrome no abre `rtsp://`. Sin snapshot CGI |
 | Toast | SSE `ping` + reconnect 1,2 s; poll 1 s si SSE cae | No esperar 8 s a un evento |
 | Toast | Auto-cierre 12 s | La fila de historial es la actividad; el toast avisa |
 | Agent | Cliente HTTP reutilizado; debounce 1,2 s | Menos latencia al POST |

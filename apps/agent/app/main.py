@@ -125,7 +125,7 @@ def _open(actuator_id: str) -> dict[str, Any]:
             res = client.get(act["httpUrl"])
             return {"ok": res.is_success, "status": res.status_code}
     if act["driver"] == "engine":
-        return {"ok": False, "error": "Este actuador lo abre AccesoPro contra el motor LAN"}
+        return {"ok": False, "error": "Reasigná este relé a Dahua o IP en Actuadores"}
     return {"ok": False, "error": f"Driver no soportado: {act['driver']}"}
 
 
@@ -770,7 +770,7 @@ async def lifespan(_app: FastAPI):
     alpr.stop()
 
 
-app = FastAPI(title="AccesoPro Site Agent", version="0.3.7", lifespan=lifespan)
+app = FastAPI(title="AccesoPro Site Agent", version="0.3.8", lifespan=lifespan)
 
 
 ATTACH_OK_S = 15.0
@@ -825,7 +825,7 @@ def health():
         "product": "AccesoPro",
         "cameras": len(_config.get("cameras") or []),
         "dahua": len(_config.get("dahua") or []),
-        "version": "0.3.7",
+        "version": "0.3.8",
         "streamLive": {k: bool(v) for k, v in _stream_live.items()},
         "streamError": dict(_stream_error),
         "cursors": {k: {"recNo": a, "rawTime": b} for k, (a, b) in _cursors.items()},

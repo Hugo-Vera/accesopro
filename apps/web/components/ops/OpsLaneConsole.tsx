@@ -51,25 +51,6 @@ export function OpsLaneConsole({
 }: Props) {
   const t = TITLES[lane];
 
-  const cam = (
-    <div className="ops-cam-live-wrap ops-lane-cam" key="cam">
-      {showLive ? (
-        <DahuaLivePanel
-          compact
-          minimalChrome
-          devices={devices}
-          lane={lane}
-          preferredDeviceId={preferredDeviceId}
-          onDeviceChange={onDeviceChange}
-        />
-      ) : (
-        <div className="grid h-full min-h-[140px] place-items-center bg-slate-900 text-[12px] text-slate-400">
-          Live no habilitado
-        </div>
-      )}
-    </div>
-  );
-
   const feed = (
     <div className="ops-lane-feed" key="feed">
       <LiveFacialFeed
@@ -88,24 +69,29 @@ export function OpsLaneConsole({
     </div>
   );
 
+  const cam = showLive ? (
+    <div className="ops-cam-live-wrap ops-lane-cam" key="cam">
+      <DahuaLivePanel
+        compact
+        minimalChrome
+        devices={devices}
+        lane={lane}
+        preferredDeviceId={preferredDeviceId}
+        onDeviceChange={onDeviceChange}
+      />
+    </div>
+  ) : null;
+
   return (
     <section className={`ops-lane ops-lane--${lane}`} aria-label={`Consola ${t.lane}`}>
       <header className="ops-lane-head">
         <span className={`ops-lane-badge ops-lane-badge--${lane}`}>{t.lane}</span>
       </header>
 
-      <div className={`ops-lane-main ${order === "feed-cam" ? "ops-lane-main--feed-cam" : ""}`}>
-        {order === "feed-cam" ? (
-          <>
-            {feed}
-            {cam}
-          </>
-        ) : (
-          <>
-            {cam}
-            {feed}
-          </>
-        )}
+      <div className={`ops-lane-main ${showLive ? "" : "ops-lane-main--feed-only"} ${order === "feed-cam" ? "ops-lane-main--feed-cam" : ""}`}>
+        {showLive && order !== "feed-cam" ? cam : null}
+        {feed}
+        {showLive && order === "feed-cam" ? cam : null}
       </div>
 
       {showActuators ? (
@@ -144,15 +130,13 @@ export function OpsOutColumns({
       <header className="ops-lane-head ops-out-cols-head">
         <span className="ops-lane-badge ops-lane-badge--out">Salida</span>
         {devices.length ? (
-          <span className="ops-lane-hint">
-            {streamEnabled ? "Lector activo para historial" : "Sin live en este carril"}
-          </span>
+          <span className="ops-lane-hint">Historial del lector de salida</span>
         ) : (
           <span className="ops-lane-hint">Sin lector de salida configurado</span>
         )}
       </header>
 
-      <div className="ops-out-cols-main">
+      <div className={`ops-out-cols-main ${showLive ? "" : "ops-out-cols-main--feed-only"}`}>
         <div className="ops-lane-feed">
           <LiveFacialFeed
             title="HISTORIAL · SALIDA"
@@ -167,8 +151,8 @@ export function OpsOutColumns({
           />
         </div>
 
-        <div className="ops-cam-live-wrap ops-lane-cam">
-          {showLive ? (
+        {showLive ? (
+          <div className="ops-cam-live-wrap ops-lane-cam">
             <DahuaLivePanel
               compact
               minimalChrome
@@ -178,12 +162,8 @@ export function OpsOutColumns({
               onDeviceChange={onDeviceChange}
               streamEnabled={streamEnabled}
             />
-          ) : (
-            <div className="grid h-full min-h-[140px] place-items-center bg-slate-900 text-[12px] text-slate-400">
-              Live no habilitado
-            </div>
-          )}
-        </div>
+          </div>
+        ) : null}
       </div>
 
       {showActuators ? (

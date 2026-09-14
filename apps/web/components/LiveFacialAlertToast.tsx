@@ -18,6 +18,8 @@ export type FacialEventAlert = {
   snapshotUrl?: string;
   reason?: string;
   doorName?: string;
+  /** Carril del evento: toast e historial del mismo sentido. */
+  lane?: "in" | "out";
 };
 
 interface Props {
@@ -107,11 +109,12 @@ export function LiveFacialAlertToast({ alert, onDismiss, onOpenRelay }: Props) {
       data-testid="facial-alert-toast"
       style={{
         position: "fixed",
-        top: 20,
-        right: 20,
-        left: "auto",
+        top: 72,
+        ...(shown.lane === "out"
+          ? { right: 16, left: "auto" }
+          : { left: 16, right: "auto" }),
         zIndex: 2147483646,
-        width: "min(420px, calc(100vw - 24px))",
+        width: "min(380px, calc(100vw - 24px))",
         pointerEvents: "auto",
       }}
     >
@@ -207,6 +210,7 @@ export function LiveFacialAlertToast({ alert, onDismiss, onOpenRelay }: Props) {
           >
             <div>
               <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "flex-start" }}>
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 6, alignItems: "center", minWidth: 0 }}>
                 <div
                   style={{
                     display: "inline-flex",
@@ -224,6 +228,23 @@ export function LiveFacialAlertToast({ alert, onDismiss, onOpenRelay }: Props) {
                 >
                   {isApproved ? <CheckCircle2 size={12} /> : <AlertTriangle size={12} />}
                   {isApproved ? "Acceso Aprobado" : "Acceso Denegado"}
+                </div>
+                <span
+                  style={{
+                    display: "inline-flex",
+                    alignItems: "center",
+                    padding: "4px 8px",
+                    borderRadius: 999,
+                    fontSize: 10,
+                    fontWeight: 800,
+                    letterSpacing: "0.04em",
+                    textTransform: "uppercase",
+                    background: shown.lane === "out" ? "#fde68a" : "#bae6fd",
+                    color: shown.lane === "out" ? "#92400e" : "#075985",
+                  }}
+                >
+                  {shown.lane === "out" ? "Salida" : "Ingreso"}
+                </span>
                 </div>
                 <button
                   type="button"
@@ -272,7 +293,7 @@ export function LiveFacialAlertToast({ alert, onDismiss, onOpenRelay }: Props) {
               )}
             </div>
 
-            {onOpenRelay ? (
+            {!isApproved && onOpenRelay ? (
               <button
                 type="button"
                 onClick={() => onOpenRelay(shown.deviceId)}
@@ -293,7 +314,7 @@ export function LiveFacialAlertToast({ alert, onDismiss, onOpenRelay }: Props) {
                 }}
               >
                 <DoorOpen size={14} />
-                Apertura Manual Guardia
+                Apertura manual
               </button>
             ) : null}
           </div>

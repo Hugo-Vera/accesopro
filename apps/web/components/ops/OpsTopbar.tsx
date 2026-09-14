@@ -30,7 +30,7 @@ type Props = {
   tenants: TenantOpt[];
   setTenant: (id: string) => void;
   userName: string | null;
-  engineOnline: boolean;
+  platesToday: number;
   logout: () => void;
 };
 
@@ -42,7 +42,7 @@ export function OpsTopbar({
   tenants,
   setTenant,
   userName,
-  engineOnline,
+  platesToday,
   logout,
 }: Props) {
   const { theme, toggleTheme } = useTheme();
@@ -96,11 +96,9 @@ export function OpsTopbar({
           </div>
         ) : (
           <div className="ops-tab hidden opacity-75 md:inline-flex">
-            <span className={`ops-pill ${engineOnline ? "ops-pill-ok" : "ops-pill-muted"}`}>
-              {engineOnline ? "ALPR OK" : "ALPR STBY"}
-            </span>
+            <span className="ops-pill ops-pill-muted">CHAPAS HOY</span>
             <span className="text-[11px] font-semibold text-slate-600 dark:text-[#8da4b6]">
-              MOTOR LAN :5051
+              {platesToday}
             </span>
           </div>
         )}

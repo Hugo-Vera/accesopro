@@ -7,7 +7,7 @@ Fuente de verdad: `packages/catalog/src/index.ts` (`MODULE_CATALOG` + `PLAN_CATA
 | Núcleo | `core` | — | Plano (pines), auth, tenants | `index.ts`, `auth.ts` | Siempre on |
 | Actuadores | `actuators` | — | `/dashboard/actuadores`, `/dashboard/puntos-acceso` | `hardware.ts`, `actuatorExec.ts`, `accessPoints.ts` | CRUD + cableado |
 | Acceso Dahua | `dahua_access` | actuators | `/dashboard/dahua/*` | `agent.ts`, `apps/agent` | Packs: equipos, eventos, abrir, personas, facial, huella, tarjeta, PIN, QR, periodos, evidencia, live, intercom, puerta, alarma |
-| Chapas ALPR | `alpr` | actuators | `/dashboard`, `/dashboard/alpr` | `siteEngine.ts`, `engineBridge` | Motor :5051 |
+| Chapas ALPR | `alpr` | actuators | `/dashboard/alpr` | `hardware.ts` (`/alpr/live`, `/plates`), `agent.ts` | Eventos `plate` + lista blanca/negra |
 | Visitas | `visitors` | actuators | `/dashboard/visitas`, `/portal` | `visitors.ts`, `visitPass.ts`, `residents.ts` | QR portal + check-in portería |
 | Alta DNI | `dni_enroll` | visitors | `/dashboard/alta-dni` | `dniEnroll.ts` | PDF417/QR DNI en portería |
 | Pánico | `panic` | — | `/dashboard/panico`, SOS portal | `alarms.ts` | Cola SOS |
@@ -55,12 +55,6 @@ Tildar un módulo fuera del plan → 400. Sin plan no se pueden tildar módulos.
 Capas: plan ∩ módulo ∩ `user_grants`.
 Plantilla guardia en `ROLE_TEMPLATES.guard`. UI: `/dashboard/usuarios`.
 Demo: `guardia@lasacacias.local` / `AccesoPro!2026`.
-
-## Configuración del motor LAN
-
-La pestaña **Configuración** (`/dashboard/modulos`) replica las tabs de AccesoSeguro (barreras, ALPR, evidencia, DNI, motor, almacenamiento, operadores) vía proxy `GET/POST /api/alpr/engine?p=...`.
-
-No mezclar el HTML de AccesoSeguro con el dashboard AccesoPro.
 
 ## Demo Las Acacias
 

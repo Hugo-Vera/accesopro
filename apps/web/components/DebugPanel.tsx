@@ -31,7 +31,6 @@ type CmdInfo = { action: string; via: string; uso: string };
 type Debug = {
   agentOnline: boolean;
   agentLastSeenAt: string | number | null;
-  engineOnline: boolean;
   actuators: Act[];
   dahuaCgi: Cgi[];
   comandosAccesoPro: CmdInfo[];
@@ -59,9 +58,6 @@ export function DebugPanel() {
     <div className="space-y-4">
       {error ? <p className="text-sm text-danger">{error}</p> : null}
       <div className="flex flex-wrap gap-2">
-        <span className={`badge ${data?.engineOnline ? "badge-green" : "badge-gray"}`}>
-          Motor LAN {data?.engineOnline ? "en línea" : "offline"}
-        </span>
         <span className={`badge ${data?.agentOnline ? "badge-green" : "badge-gray"}`}>
           Agent Dahua {data?.agentOnline ? "en línea" : "offline"}
         </span>

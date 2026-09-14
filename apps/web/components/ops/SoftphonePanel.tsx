@@ -109,7 +109,7 @@ export function SoftphonePanel({ tenantName }: { tenantName: string | null }) {
 type StatusProps = {
   planName: string | null;
   agentOnline: boolean;
-  engineOnline: boolean;
+  platesToday: number;
   deviceCount: number;
   actuatorCount: number;
   userName: string | null;
@@ -121,7 +121,7 @@ type StatusProps = {
 export function OpsStatusPanels({
   planName,
   agentOnline,
-  engineOnline,
+  platesToday,
   deviceCount,
   actuatorCount,
   userName,
@@ -135,9 +135,7 @@ export function OpsStatusPanels({
         <span className={`ops-sensor-chip ${agentOnline ? "ok" : "danger"}`}>
           Dahua · {agentOnline ? "OK" : "OFF"}
         </span>
-        <span className={`ops-sensor-chip ${engineOnline ? "ok" : "warn"}`}>
-          ALPR · {engineOnline ? "OK" : "STBY"}
-        </span>
+        <span className="ops-sensor-chip">Chapas hoy · {platesToday}</span>
         <span className="ops-sensor-chip">ASI · {deviceCount}</span>
         {readerStuck ? (
           <span className="ops-sensor-chip danger">Lector trabado</span>
@@ -156,9 +154,7 @@ export function OpsStatusPanels({
         <span className={`ops-sensor-chip ${agentOnline ? "ok" : "danger"}`}>
           Dahua · {agentOnline ? "ONLINE" : "OFFLINE"}
         </span>
-        <span className={`ops-sensor-chip ${engineOnline ? "ok" : "warn"}`}>
-          ALPR · {engineOnline ? "ONLINE" : "STANDBY"}
-        </span>
+        <span className="ops-sensor-chip">Chapas hoy · {platesToday}</span>
         <span className="ops-sensor-chip">Lectores · {deviceCount}</span>
         {readerStuck ? <span className="ops-sensor-chip danger">Lector trabado</span> : null}
         <span className="ops-sensor-chip">Relés · {actuatorCount}</span>

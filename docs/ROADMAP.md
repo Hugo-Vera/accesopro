@@ -10,12 +10,12 @@ Orden práctico portería (live/toast/cableado): **`docs/PLAN_PORTERIA.md`**.
 | Flujo | Estado |
 |-------|--------|
 | Auth multi-tenant + planes + grants | OK |
-| Actuadores CRUD + open (engine / Dahua / IP) | OK |
+| Actuadores CRUD + open (Dahua / IP) | OK |
 | Agent Dahua: eventos + openDoor + personas MVP | OK |
-| Home ops: dual live IN/OUT + historial + autorizaciones | OK (con gaps abajo) |
+| Home ops: historial IN/OUT + plano + autorizaciones | OK (con gaps abajo) |
 | Toast anti-F5 (watermark) | F5 / update no re-tosta; agent prime sin reenviar historial |
 | Portal vecino: ficha, familia, servicios, QR generar/revocar | OK parcial |
-| ALPR vía motor LAN `:5051` + proxy config | OK si motor arriba |
+| ALPR nativo (eventos plate + lista) | OK |
 | Access points API + backfill legacy | OK backend |
 | Feature packs: devices, events, open, persons, schedules, qr CGI, live | OK / parcial |
 

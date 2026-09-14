@@ -46,8 +46,11 @@ export function ActIcon({ kind }: { kind: string }) {
     case "gate":
       return (
         <svg viewBox="0 0 24 24" aria-hidden>
-          <rect x="3" y="6" width="18" height="12" rx="1" />
-          <path d="M3 12h18M8 6v12M16 6v12" />
+          <path d="M3 21h6" />
+          <rect x="4" y="8" width="4" height="13" rx="0.5" />
+          <rect x="3.5" y="5" width="5" height="4" rx="0.5" />
+          <path d="M8.5 7.5h12.5" />
+          <path d="M11 5.8l1.4 3.4M14.2 5.8l1.4 3.4M17.4 5.8l1.4 3.4" />
         </svg>
       );
     case "garage":
@@ -61,8 +64,9 @@ export function ActIcon({ kind }: { kind: string }) {
     case "underground":
       return (
         <svg viewBox="0 0 24 24" aria-hidden>
-          <path d="M4 6h4v4h4v4h4v4h4" />
-          <path d="M4 20h16" />
+          <path d="M6 21V8l6-4 6 4v13" />
+          <path d="M10 21v-6h4v6" />
+          <circle cx="14.5" cy="14" r="0.8" />
         </svg>
       );
     default:

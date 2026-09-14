@@ -7,7 +7,6 @@ import { DEMO_AGENT_TOKEN } from "./scope.js";
 import { assignPlanToTenant, getTenantPlan, syncPlansFromCatalog } from "./plans.js";
 import { applyRoleTemplate, listUserGrants } from "./grants.js";
 import { ensureDemoFeatures } from "./features.js";
-import { syncAuthorizationToEngine, syncOwnerDniToEngine } from "./engineSync.js";
 
 const DEMO_PASSWORD = "AccesoPro!2026";
 const DEMO_TENANT = "tenant_las_acacias";
@@ -66,7 +65,7 @@ export async function seedIfEmpty() {
   await ensureDemoGuard();
   await ensureDemoFeatures(DEMO_TENANT);
   await ensureSiteToken();
-  await purgeAccesoSeguroBleed();
+  await purgeLegacyEngineBleed();
   await ensureDemoOwner();
 }
 
@@ -117,8 +116,8 @@ async function ensureSiteToken() {
   }
 }
 
-/** No re-sembrar barreras/cámaras de AccesoSeguro. No borra equipos Dahua/Hikvision que el barrio cargó. */
-async function purgeAccesoSeguroBleed() {
+/** Quita relés del motor externo y cámaras que no son AccesoPro. No borra equipos Dahua/Hikvision. */
+async function purgeLegacyEngineBleed() {
   const rows = await db.select({ id: cameras.id }).from(cameras);
   const bleedIds = rows.map((r) => r.id).filter((id) => !id.startsWith("cam_"));
   for (const id of bleedIds) {
@@ -203,9 +202,5 @@ async function ensureDemoOwner() {
       createdAt: now,
     });
     console.log("Demo vecino — vecino@lasacacias.local / AccesoPro!2026");
-    await syncOwnerDniToEngine("15", "27123456", "María García");
-    const auth = await db.select().from(visitAuthorizations).where(eq(visitAuthorizations.id, "auth_empleada_15")).get();
-    const prop = await db.select().from(properties).where(eq(properties.id, "prop_las_acacias_15")).get();
-    if (auth && prop) await syncAuthorizationToEngine(prop, auth);
   }
 }

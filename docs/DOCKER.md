@@ -50,14 +50,11 @@ cd C:\Users\Master\AccesoPro
 copy .env.docker.example .env
 # editá JWT_SECRET
 
-# Core + Agent Dahua (lo típico AccesoPro)
-powershell -ExecutionPolicy Bypass -File scripts\start-server.ps1 -Profile dahua
-
 # Solo dashboard + API
 powershell -ExecutionPolicy Bypass -File scripts\start-server.ps1 -Profile core
 
-# + motor ALPR (Postgres + site :5051)
-powershell -ExecutionPolicy Bypass -File scripts\start-server.ps1 -Profile full
+# Core + Agent Dahua (lo típico AccesoPro)
+powershell -ExecutionPolicy Bypass -File scripts\start-server.ps1 -Profile dahua
 ```
 
 Parar:

@@ -38,8 +38,7 @@ class AlprWorker:
         return self._alpr
 
     def sync(self, cameras: list[dict[str, Any]]) -> None:
-        # ALPR principal = apps/site (AccesoSeguro). El worker del agent
-        # solo si AGENT_ALPR=1 (YOLO + OpenCV satura CPU en Windows).
+        # ALPR nativo: AGENT_ALPR=1 (YOLO + OpenCV satura CPU en Windows).
         if os.environ.get("AGENT_ALPR", "0").strip() != "1":
             return
         wanted = {cam["id"]: cam for cam in cameras if cam.get("rtspUrl")}

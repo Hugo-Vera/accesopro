@@ -37,8 +37,7 @@ AccesoPro/
 ├── apps/
 │   ├── web/          # Dashboard Next.js (:3000)
 │   ├── api/          # API Hono (:8787)
-│   ├── agent/        # Site agent Dahua (:8790)
-│   └── site/         # Motor LAN AccesoSeguro (:5051)
+│   └── agent/        # Site agent Dahua (:8790)
 ├── packages/
 │   └── catalog/      # Catálogo de módulos
 ├── docs/               # Arquitectura y estado de módulos
@@ -111,17 +110,12 @@ npm run dev:web
 | `admin@accesopro.local` | `AccesoPro!2026` | Plataforma (tilda módulos) |
 | `admin@lasacacias.local` | `AccesoPro!2026` | Admin del barrio demo |
 
-Motor LAN y agent Dahua: ver `apps/site/README.md` y `apps/agent/README.md`.
-
-Barreras ALPR reales (no `simulated`): `deploy/site.config.real.example.yaml`.
+Agent Dahua: ver `apps/agent/README.md`.
 
 Copiá `.env.example` a `.env` para dev. Despliegue: [`docs/DEPLOY_SITE.md`](docs/DEPLOY_SITE.md) · [`docs/DOCKER.md`](docs/DOCKER.md).
 ## Sectores
 
 | Sector | Dónde | Qué hace |
 |--------|-------|----------|
-| Nube | `web` + `api` | Auth, módulos, actuadores, proxy al motor |
-| LAN Dahua | `agent` | CGI, openDoor, eventos faciales |
-| LAN ALPR | `site` | FastALPR, DNI, barreras, evidencias |
-
-**No mezclar** el HTML de AccesoSeguro con el dashboard AccesoPro. RTSP y claves solo en `apps/site/config.yaml` (ignorado por git).
+| Dashboard + API | `web` + `api` | Auth, módulos, actuadores, eventos, ALPR nativo |
+| LAN Dahua | `agent` | CGI, openDoor, eventos faciales, ALPR opcional |

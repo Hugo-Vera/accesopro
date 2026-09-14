@@ -150,7 +150,6 @@ write_env() {
 
   secret="$(openssl rand -hex 24 2>/dev/null || head -c 48 /dev/urandom | xxd -p | tr -d '\n' | head -c 48)"
   token="accesopro-demo-agent"
-  bridge="accesopro-bridge"
 
   local real_user="${SUDO_USER:-$USER}"
   [[ "$real_user" == "root" ]] && real_user="${USER:-root}"
@@ -160,12 +159,6 @@ JWT_SECRET=${secret}
 WEB_ORIGIN=http://${ip}:3000
 
 NEXT_PUBLIC_API_URL=
-
-SITE_ENGINE_URL=http://site:5051
-SITE_ENGINE_USER=admin
-SITE_ENGINE_PASSWORD=admin
-ACCESOPRO_BRIDGE_KEY=${bridge}
-ENGINE_BRIDGE_POLL_MS=5000
 
 SITE_AGENT_URL=http://agent:8790
 SITE_AGENT_TOKEN=${token}
@@ -195,7 +188,7 @@ compose_up() {
     core)
       compose_cmd up -d --build
       ;;
-    dahua)
+    dahua|full|alpr)
       if [[ -f deploy/docker-compose.linux.yml ]]; then
         if docker info >/dev/null 2>&1; then
           docker compose -f docker-compose.yml -f deploy/docker-compose.linux.yml --profile dahua up -d --build
@@ -205,15 +198,6 @@ compose_up() {
       else
         compose_cmd --profile dahua up -d --build
       fi
-      ;;
-    full|alpr)
-      if [[ ! -f deploy/site.config.docker.yaml ]]; then
-        if [[ -f deploy/site.config.real.example.yaml ]]; then
-          cp deploy/site.config.real.example.yaml deploy/site.config.docker.yaml
-          warn "Creado deploy/site.config.docker.yaml desde example — editá RTSP/relés"
-        fi
-      fi
-      compose_cmd --profile dahua --profile alpr up -d --build
       ;;
     *)
       die "ACCESOPRO_PROFILE inválido: $PROFILE (core|dahua|full)"
