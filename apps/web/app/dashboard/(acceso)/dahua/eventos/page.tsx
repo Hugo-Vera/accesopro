@@ -482,7 +482,7 @@ export default function DahuaEventosPage() {
 
                         {/* Acción */}
                         <td className="px-4 py-3 text-right whitespace-nowrap">
-                          {photoProxyUrl ? (
+                          {hasSnap ? (
                             <button
                               type="button"
                               onClick={() => setSelectedPhotoEvent(e)}
