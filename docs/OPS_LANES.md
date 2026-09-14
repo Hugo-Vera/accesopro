@@ -10,7 +10,7 @@ Modelo mental del home `/dashboard`. Si algo falla (toast, historial, relés), c
 | Historial IN/OUT | Eventos con `lane_code` 1 (entrada) o 2 (salida), sellados al momento del pase |
 | Relés IN/OUT | Actuadores cableados al punto de ese sentido |
 | Toast | Solo eventos **nuevos** posteriores al hydrate de la página |
-| Autorizaciones | Pases/auths de todos los propietarios (pendientes / cerradas) |
+| Autorizaciones | Barra compacta: visitas de **hoy** esperando / en predio (no el padrón permanente). Lista completa en modal o `/dashboard/visitas` |
 
 ## Asignación de lector por carril
 

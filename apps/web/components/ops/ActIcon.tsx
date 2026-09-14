@@ -43,14 +43,24 @@ export function ActIcon({ kind }: { kind: string }) {
           <path d="M12 3v3M12 18v3M3 12h3M18 12h3M6 6l2 2M16 16l2 2M6 18l2-2M16 6l2 2" />
         </svg>
       );
+    case "barrier":
     case "gate":
       return (
         <svg viewBox="0 0 24 24" aria-hidden>
-          <path d="M3 21h6" />
-          <rect x="4" y="8" width="4" height="13" rx="0.5" />
-          <rect x="3.5" y="5" width="5" height="4" rx="0.5" />
-          <path d="M8.5 7.5h12.5" />
-          <path d="M11 5.8l1.4 3.4M14.2 5.8l1.4 3.4M17.4 5.8l1.4 3.4" />
+          <path d="M3.5 21h5" />
+          <path d="M6 21V9.5" />
+          <path d="M4 5h4v5H4z" />
+          <path d="M8 7.4h14" />
+          <path d="M10.4 5.4l1.5 4M13.8 5.4l1.5 4M17.2 5.4l1.5 4M20.6 5.4l1.5 4" />
+        </svg>
+      );
+    case "door":
+    case "underground":
+      return (
+        <svg viewBox="0 0 24 24" aria-hidden>
+          <path d="M6 21V4h12v17" />
+          <path d="M6 21h12" />
+          <path d="M15 12.5h.01" />
         </svg>
       );
     case "garage":
@@ -59,14 +69,6 @@ export function ActIcon({ kind }: { kind: string }) {
           <path d="M3 10l9-6 9 6" />
           <path d="M5 10v10h14V10" />
           <path d="M5 14h14M5 17h14" />
-        </svg>
-      );
-    case "underground":
-      return (
-        <svg viewBox="0 0 24 24" aria-hidden>
-          <path d="M6 21V8l6-4 6 4v13" />
-          <path d="M10 21v-6h4v6" />
-          <circle cx="14.5" cy="14" r="0.8" />
         </svg>
       );
     default:

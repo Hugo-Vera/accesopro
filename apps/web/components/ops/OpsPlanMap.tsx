@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import "leaflet/dist/leaflet.css";
 import { api, withTenant } from "@/lib/api";
+import { attachMapBearing } from "@/lib/leafletBearing";
 import { defaultPlanMapBase, makePlanTiles } from "@/lib/planMap";
 import { useDash } from "@/components/DashboardProvider";
 import type { OverlayLayer } from "@/lib/kml";
@@ -66,7 +67,7 @@ export function OpsPlanMap() {
       const L = await import("leaflet");
       if (dead || !hostRef.current) return;
       const d = await api<{
-        view: { mapLat: string; mapLng: string; mapZoom: number };
+        view: { mapLat: string; mapLng: string; mapZoom: number; mapBearing?: number; saved?: boolean };
         lots: Lot[];
         overlays?: OverlayLayer[];
       }>(withTenant("/api/plan", tenantId));
@@ -85,6 +86,7 @@ export function OpsPlanMap() {
         zoomControl: false,
         attributionControl: false,
       });
+      attachMapBearing(L, map, Number(d.view?.mapBearing) || 0);
       L.control.zoom({ position: "bottomright" }).addTo(map);
       if (dead) {
         map.remove();
@@ -156,6 +158,11 @@ export function OpsPlanMap() {
           const size = map.getSize();
           if (!size.x || !size.y) return;
           if (placed) return;
+          if (d.view?.saved) {
+            map.setView(center, zoom);
+            placed = true;
+            return;
+          }
           if (lotPts.length > 1) {
             const bounds = L.latLngBounds(lotPts.map((p) => [p.lat, p.lng] as [number, number]));
             const span = bounds.getNorthEast().distanceTo(bounds.getSouthWest());

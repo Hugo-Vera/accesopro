@@ -21,7 +21,12 @@ type Env = { Variables: { user: AuthUser } };
 export const planApi = new Hono<Env>();
 planApi.use("*", requireAuth);
 
-const DEFAULT_VIEW = { mapLat: "-34.6037", mapLng: "-58.3816", mapZoom: 16 };
+const DEFAULT_VIEW = { mapLat: "-34.6037", mapLng: "-58.3816", mapZoom: 16, mapBearing: 0 };
+
+function clampBearing(n: number) {
+  if (!Number.isFinite(n)) return 0;
+  return ((Math.round(n) % 360) + 360) % 360;
+}
 
 function canEditRole(user: AuthUser) {
   return user.role === "platform_admin" || user.role === "tenant_admin";
@@ -74,11 +79,11 @@ type OverlayIn = {
 function sanitizeOverlays(raw: unknown): string | null {
   if (!Array.isArray(raw)) return null;
   const layers = raw
-    .slice(0, 40)
+    .slice(0, 80)
     .map((layer) => {
       const l = layer as OverlayIn;
       const features = (Array.isArray(l.features) ? l.features : [])
-        .slice(0, 400)
+        .slice(0, 2500)
         .map((f) => {
           const kind = f.kind === "line" || f.kind === "point" || f.kind === "polygon" ? f.kind : null;
           const type = f.geometry?.type;
@@ -133,7 +138,8 @@ planApi.get("/plan", async (c) => {
       mapLat: scoped.site.mapLat || DEFAULT_VIEW.mapLat,
       mapLng: scoped.site.mapLng || DEFAULT_VIEW.mapLng,
       mapZoom: scoped.site.mapZoom || DEFAULT_VIEW.mapZoom,
-      saved: Boolean(scoped.site.mapLat && scoped.site.mapLng),
+      mapBearing: clampBearing(Number(scoped.site.mapBearing ?? 0)),
+      saved: Boolean(scoped.site.mapViewSaved),
     },
     overlays: readOverlays(scoped.site.mapOverlays),
     lots: rows.map((r) => ({
@@ -157,7 +163,7 @@ planApi.patch("/plan/view", async (c) => {
   if (!canEditRole(user) && !(await userHasCapability(user, "core.config"))) {
     return c.json({ error: "Solo administración puede guardar la vista del plano" }, 403);
   }
-  const body = await c.req.json<{ mapLat?: string; mapLng?: string; mapZoom?: number }>();
+  const body = await c.req.json<{ mapLat?: string; mapLng?: string; mapZoom?: number; mapBearing?: number }>();
   const mapLat = String(body.mapLat ?? "").trim();
   const mapLng = String(body.mapLng ?? "").trim();
   const mapZoom = Number(body.mapZoom);
@@ -170,6 +176,8 @@ planApi.patch("/plan/view", async (c) => {
       mapLat,
       mapLng,
       mapZoom: Number.isFinite(mapZoom) ? Math.max(3, Math.min(20, Math.round(mapZoom))) : scoped.site.mapZoom,
+      mapBearing: clampBearing(Number(body.mapBearing ?? 0)),
+      mapViewSaved: true,
     })
     .where(eq(sites.id, scoped.site.id));
   return c.json({ ok: true });

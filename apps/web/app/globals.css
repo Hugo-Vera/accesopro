@@ -406,21 +406,144 @@
 }
 
 .ops-auth-strip {
-  background: #fffbeb;
-  border: 1px solid #fde68a;
-  border-left: 3px solid #f59e0b;
+  border: 1px solid #e2e8f0;
+  border-left: 3px solid #94a3b8;
   border-radius: 8px;
-  padding: 0.28rem 0.5rem 0.35rem;
+  padding: 0.15rem 0.2rem;
   min-height: 0;
-  max-height: 92px;
   flex-shrink: 0;
   overflow: hidden;
+  background: #fff;
 }
 
 .dark .ops-auth-strip {
-  background: rgba(245, 158, 11, 0.08);
-  border-color: rgba(245, 158, 11, 0.28);
+  background: #0b1722;
+  border-color: #1e3346;
+  border-left-color: #64748b;
+}
+
+.ops-auth-strip--wait {
+  background: #fffbeb;
+  border-color: #fde68a;
+  border-left-color: #f59e0b;
+}
+
+.dark .ops-auth-strip--wait {
+  background: rgba(245, 158, 11, 0.1);
+  border-color: rgba(245, 158, 11, 0.32);
   border-left-color: #d97706;
+}
+
+.ops-auth-strip--site {
+  background: #f0f9ff;
+  border-color: #bae6fd;
+  border-left-color: #0ea5e9;
+}
+
+.dark .ops-auth-strip--site {
+  background: rgba(14, 165, 233, 0.1);
+  border-color: rgba(56, 189, 248, 0.28);
+  border-left-color: #38bdf8;
+}
+
+.ops-auth-strip--fresh {
+  box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.45);
+}
+
+.ops-auth-bar {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  min-width: 0;
+  min-height: 2.15rem;
+  padding: 0.2rem 0.45rem;
+  text-align: left;
+  color: inherit;
+}
+
+.ops-auth-bar-counts {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 11px;
+  font-weight: 700;
+  color: #57534e;
+}
+
+.dark .ops-auth-bar-counts {
+  color: #e7e5e4;
+}
+
+.ops-auth-chips {
+  display: flex;
+  min-width: 0;
+  flex: 1;
+  align-items: center;
+  gap: 0.35rem;
+  overflow: hidden;
+}
+
+.ops-auth-chip {
+  display: inline-flex;
+  max-width: 150px;
+  min-width: 0;
+  align-items: center;
+  gap: 0.3rem;
+  border-radius: 999px;
+  padding: 0.12rem 0.45rem;
+  font-size: 10px;
+  line-height: 1.2;
+  background: #fff;
+  border: 1px solid #e7e5e4;
+  color: #44403c;
+}
+
+.dark .ops-auth-chip {
+  background: #12202c;
+  border-color: #24384a;
+  color: #e2e8f0;
+}
+
+.ops-auth-chip--wait {
+  border-color: #fcd34d;
+  background: #fffbeb;
+}
+
+.dark .ops-auth-chip--wait {
+  border-color: rgba(251, 191, 36, 0.4);
+  background: rgba(245, 158, 11, 0.16);
+}
+
+.ops-auth-chip--site {
+  border-color: #7dd3fc;
+  background: #f0f9ff;
+}
+
+.dark .ops-auth-chip--site {
+  border-color: rgba(56, 189, 248, 0.4);
+  background: rgba(14, 165, 233, 0.16);
+}
+
+.ops-auth-chip--more {
+  max-width: none;
+  font-weight: 700;
+  color: #57534e;
+}
+
+.ops-auth-bar-action {
+  margin-left: auto;
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #0369a7;
+}
+
+.dark .ops-auth-bar-action {
+  color: #7dd3fc;
 }
 
 .ops-auth-strip-head {
@@ -452,13 +575,6 @@
   border-color: rgba(251, 191, 36, 0.45);
   background: rgba(245, 158, 11, 0.18);
   color: #fcd34d;
-}
-
-.ops-auth-card--strip {
-  min-width: 168px;
-  max-width: 200px;
-  flex-shrink: 0;
-  padding: 0.28rem 0.4rem;
 }
 
 .ops-auth-rail {
@@ -1671,6 +1787,26 @@
 }
 .ops-plan-tool:disabled {
   opacity: 0.4;
+}
+.ops-plan-bearing {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.15rem 0.35rem;
+  color: #334155;
+}
+.dark .ops-plan-bearing {
+  color: #cbd5e1;
+}
+.ops-plan-bearing input[type="range"] {
+  width: 92px;
+  accent-color: #0284c7;
+}
+.ops-plan-bearing-deg {
+  min-width: 2.4rem;
+  font-size: 11px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
 }
 .ops-plan-map {
   z-index: 0;

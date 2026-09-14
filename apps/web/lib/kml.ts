@@ -28,9 +28,20 @@ function localName(el: Element) {
   return (el.localName || el.tagName).toLowerCase();
 }
 
-function deepText(el: Element, name: string): string {
-  const hit = [...el.getElementsByTagName("*")].find((n) => localName(n) === name.toLowerCase());
-  return (hit?.textContent ?? "").trim();
+function childText(el: Element, name: string): string {
+  for (const c of el.children) {
+    if (localName(c) === name.toLowerCase()) return (c.textContent ?? "").trim();
+  }
+  return "";
+}
+
+function ancestorIs(node: Element, tag: string) {
+  let p = node.parentElement;
+  while (p) {
+    if (localName(p) === tag) return true;
+    p = p.parentElement;
+  }
+  return false;
 }
 
 function parseCoords(raw: string): number[][] {
@@ -53,27 +64,39 @@ function closeRing(ring: number[][]): number[][] {
   return ring;
 }
 
+function firstCoordinates(node: Element): string {
+  const hit = [...node.getElementsByTagName("*")].find((n) => localName(n) === "coordinates");
+  return hit?.textContent ?? "";
+}
+
 function geometriesFrom(el: Element, name: string): OverlayFeature[] {
   const out: OverlayFeature[] = [];
   for (const node of [...el.getElementsByTagName("*")]) {
     const tag = localName(node);
     if (tag === "polygon") {
-      const coordEl = [...node.getElementsByTagName("*")].find((n) => localName(n) === "coordinates");
-      const ring = closeRing(parseCoords(coordEl?.textContent ?? ""));
+      const ring = closeRing(parseCoords(firstCoordinates(node)));
       if (ring.length >= 4) {
         out.push({ id: nid(), name, kind: "polygon", geometry: { type: "Polygon", coordinates: [ring] } });
       }
     } else if (tag === "linestring") {
-      const coordEl = [...node.getElementsByTagName("*")].find((n) => localName(n) === "coordinates");
-      const line = parseCoords(coordEl?.textContent ?? "");
+      const line = parseCoords(firstCoordinates(node));
       if (line.length >= 2) {
         out.push({ id: nid(), name, kind: "line", geometry: { type: "LineString", coordinates: line } });
       }
     } else if (tag === "point") {
-      const coordEl = [...node.getElementsByTagName("*")].find((n) => localName(n) === "coordinates");
-      const pt = parseCoords(coordEl?.textContent ?? "")[0];
+      const pt = parseCoords(firstCoordinates(node))[0];
       if (pt) {
         out.push({ id: nid(), name, kind: "point", geometry: { type: "Point", coordinates: pt } });
+      }
+    } else if (tag === "linearring" && !ancestorIs(node, "polygon") && !ancestorIs(node, "linestring")) {
+      const ring = closeRing(parseCoords(firstCoordinates(node) || node.textContent || ""));
+      if (ring.length >= 4) {
+        out.push({ id: nid(), name, kind: "polygon", geometry: { type: "Polygon", coordinates: [ring] } });
+      }
+    } else if (tag === "latlonquad") {
+      const ring = closeRing(parseCoords(firstCoordinates(node) || node.textContent || ""));
+      if (ring.length >= 4) {
+        out.push({ id: nid(), name, kind: "polygon", geometry: { type: "Polygon", coordinates: [ring] } });
       }
     }
   }
@@ -84,9 +107,9 @@ function walk(el: Element, layerName: string, source: string, layers: OverlayLay
   for (const child of [...el.children]) {
     const tag = localName(child);
     if (tag === "document" || tag === "folder") {
-      walk(child, deepText(child, "name") || layerName, source, layers);
+      walk(child, childText(child, "name") || layerName, source, layers);
     } else if (tag === "placemark") {
-      const name = deepText(child, "name") || layerName;
+      const name = childText(child, "name") || layerName;
       const features = geometriesFrom(child, name);
       if (!features.length) continue;
       let layer = layers.find((l) => l.name === layerName);
@@ -105,7 +128,7 @@ export function parseKml(xml: string, source = "archivo.kml"): OverlayLayer[] {
   const root = doc.documentElement;
   if (!root) throw new Error("KML vacío");
   const layers: OverlayLayer[] = [];
-  const rootName = deepText(root, "name") || source.replace(/\.(kml|kmz)$/i, "") || "Capa KML";
+  const rootName = childText(root, "name") || source.replace(/\.(kml|kmz)$/i, "") || "Capa KML";
   walk(root, rootName, source, layers);
   if (!layers.length) {
     const loose = geometriesFrom(root, rootName);
@@ -154,54 +177,126 @@ export function lotNumberFromName(name: string, used: Set<string>, fallback: str
 }
 
 function readU32(buf: Uint8Array, off: number) {
-  return buf[off]! | (buf[off + 1]! << 8) | (buf[off + 2]! << 16) | (buf[off + 3]! << 24);
+  return (buf[off]! | (buf[off + 1]! << 8) | (buf[off + 2]! << 16) | (buf[off + 3]! << 24)) >>> 0;
 }
 
 function readU16(buf: Uint8Array, off: number) {
   return buf[off]! | (buf[off + 1]! << 8);
 }
 
-async function inflateRaw(data: Uint8Array) {
+async function inflateBytes(data: Uint8Array, format: "deflate-raw" | "deflate") {
   if (typeof DecompressionStream === "undefined") {
     throw new Error("Este navegador no puede abrir KMZ. Exportá el archivo como KML.");
   }
-  const stream = new Blob([data as BlobPart]).stream().pipeThrough(new DecompressionStream("deflate-raw"));
-  const out = new Uint8Array(await new Response(stream).arrayBuffer());
-  return out;
+  const stream = new Blob([data as BlobPart]).stream().pipeThrough(new DecompressionStream(format));
+  return new Uint8Array(await new Response(stream).arrayBuffer());
 }
 
-async function extractKmlFromKmz(buf: Uint8Array): Promise<string> {
-  if (buf[0] !== 0x50 || buf[1] !== 0x4b) throw new Error("El KMZ no es un ZIP válido");
-  let off = 0;
+async function inflateZip(data: Uint8Array) {
+  try {
+    return await inflateBytes(data, "deflate-raw");
+  } catch {
+    return await inflateBytes(data, "deflate");
+  }
+}
+
+function decodeXmlBytes(buf: Uint8Array) {
+  const head = new TextDecoder("utf-8").decode(buf.subarray(0, 240));
+  const enc = /encoding=["']([^"']+)/i.exec(head)?.[1]?.toLowerCase();
+  if (enc && enc !== "utf-8" && enc !== "utf8") {
+    try {
+      return new TextDecoder(enc).decode(buf);
+    } catch {
+      /* latin1 / windows-1252 suelen fallar en TextDecoder */
+    }
+  }
+  return new TextDecoder("utf-8").decode(buf);
+}
+
+function findEocd(buf: Uint8Array) {
+  const min = 22;
+  const maxScan = Math.min(buf.length, 22 + 65535);
+  for (let i = buf.length - min; i >= buf.length - maxScan; i--) {
+    if (readU32(buf, i) === 0x06054b50) return i;
+  }
+  return -1;
+}
+
+async function unzipEntries(buf: Uint8Array): Promise<{ name: string; data: Uint8Array }[]> {
   const files: { name: string; data: Uint8Array }[] = [];
+  const eocd = findEocd(buf);
+  if (eocd >= 0) {
+    const cdEntries = readU16(buf, eocd + 10);
+    const cdOff = readU32(buf, eocd + 16);
+    if (cdOff === 0xffffffff || cdEntries === 0xffff) {
+      throw new Error("El KMZ es ZIP64; exportalo como KML.");
+    }
+    let off = cdOff;
+    for (let i = 0; i < cdEntries && off + 46 <= buf.length; i++) {
+      if (readU32(buf, off) !== 0x02014b50) break;
+      const method = readU16(buf, off + 10);
+      const comp = readU32(buf, off + 20);
+      const nameLen = readU16(buf, off + 28);
+      const extraLen = readU16(buf, off + 30);
+      const commentLen = readU16(buf, off + 32);
+      const localOff = readU32(buf, off + 42);
+      const name = new TextDecoder("utf-8").decode(buf.subarray(off + 46, off + 46 + nameLen));
+      off += 46 + nameLen + extraLen + commentLen;
+      if (readU32(buf, localOff) !== 0x04034b50) continue;
+      const locNameLen = readU16(buf, localOff + 26);
+      const locExtraLen = readU16(buf, localOff + 28);
+      const localComp = readU32(buf, localOff + 18);
+      const size = comp || localComp;
+      const start = localOff + 30 + locNameLen + locExtraLen;
+      const blob = buf.subarray(start, start + size);
+      try {
+        const data = method === 8 ? await inflateZip(blob) : method === 0 ? blob : null;
+        if (data) files.push({ name, data });
+      } catch {
+        /* archivo interno dañado: seguir con el resto */
+      }
+    }
+    if (files.length) return files;
+  }
+
+  let off = 0;
   while (off + 30 <= buf.length && readU32(buf, off) === 0x04034b50) {
     const method = readU16(buf, off + 8);
-    const comp = readU32(buf, off + 18) >>> 0;
+    const flags = readU16(buf, off + 6);
+    const comp = readU32(buf, off + 18);
     const nameLen = readU16(buf, off + 26);
     const extraLen = readU16(buf, off + 28);
     const name = new TextDecoder("utf-8").decode(buf.subarray(off + 30, off + 30 + nameLen));
     const start = off + 30 + nameLen + extraLen;
+    if ((flags & 0x8) !== 0 && !comp) break;
     const blob = buf.subarray(start, start + comp);
     off = start + comp;
-    let data = blob;
-    if (method === 8) data = await inflateRaw(blob);
-    else if (method !== 0) continue;
-    files.push({ name, data });
+    try {
+      const data = method === 8 ? await inflateZip(blob) : method === 0 ? blob : null;
+      if (data) files.push({ name, data });
+    } catch {
+      /* seguir */
+    }
   }
+  return files;
+}
+
+async function extractKmlFromKmz(buf: Uint8Array): Promise<string> {
+  if (buf[0] !== 0x50 || buf[1] !== 0x4b) throw new Error("El KMZ no es un ZIP válido");
+  const files = await unzipEntries(buf);
   const kml =
-    files.find((f) => /doc\.kml$/i.test(f.name)) ||
-    files.find((f) => /\.kml$/i.test(f.name));
+    files.find((f) => /(?:^|\/)doc\.kml$/i.test(f.name)) || files.find((f) => /\.kml$/i.test(f.name));
   if (!kml) throw new Error("El KMZ no incluye un archivo KML");
-  return new TextDecoder("utf-8").decode(kml.data);
+  return decodeXmlBytes(kml.data);
 }
 
 export async function readKmlFile(file: File): Promise<OverlayLayer[]> {
-  if (file.size > 8 * 1024 * 1024) throw new Error("El archivo supera 8 MB");
+  if (file.size > 32 * 1024 * 1024) throw new Error("El archivo supera 32 MB");
   const buf = new Uint8Array(await file.arrayBuffer());
   const name = file.name.toLowerCase();
   const xml =
     name.endsWith(".kmz") || (buf[0] === 0x50 && buf[1] === 0x4b)
       ? await extractKmlFromKmz(buf)
-      : new TextDecoder("utf-8").decode(buf);
+      : decodeXmlBytes(buf);
   return parseKml(xml, file.name);
 }

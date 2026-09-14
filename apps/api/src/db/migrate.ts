@@ -108,6 +108,8 @@ export async function ensureSchema() {
   await addColumn("sites", "map_lat", "TEXT");
   await addColumn("sites", "map_lng", "TEXT");
   await addColumn("sites", "map_zoom", "INTEGER");
+  await addColumn("sites", "map_bearing", "INTEGER");
+  await addColumn("sites", "map_view_saved", "INTEGER");
   await addColumn("sites", "map_overlays", "TEXT");
 
   await db.run(sql`

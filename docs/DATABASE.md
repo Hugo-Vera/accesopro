@@ -67,7 +67,7 @@ Fuente viva de columnas: `apps/api/src/db/schema.ts` + `migrate.ts`.
 
 | Tabla | Columnas clave |
 |-------|----------------|
-| `sites` | `id`, `tenant_id`, `name`, `agent_token`, `last_seen_at`, `map_lat`/`map_lng`/`map_zoom` (vista del plano), `map_overlays` (capas KML) |
+| `sites` | `id`, `tenant_id`, `name`, `agent_token`, `last_seen_at`, `map_lat`/`map_lng`/`map_zoom`/`map_bearing` (vista del plano), `map_view_saved` (1 si el admin guardó la cámara), `map_overlays` (capas KML) |
 | `dahua_devices` | `host`, `port` (HTTP/CGI), `rtsp_port`, `pss_port` (SmartPSS 37777), `username`, `password`, `device_type` (`asi_facial` / `camera_ip` / …), `sentido` (`in`/`out`), `lane_sector` (`vehicular`/`peatonal`), `use_live`, `use_local_relay` |
 | `actuators` | `name`, `kind`, `driver` (`dahua` / `ip`), `dahua_device_id`, `dahua_channel`, `pulse_ms`, `trigger_alpr`/`dahua`/`qr`/`manual` |
 | `cameras` | `rtsp_url`, `actuator_id` (legacy), `enabled` |

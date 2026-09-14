@@ -2,9 +2,10 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { FileUp, Hand, Home, Layers, Pentagon, Search, Trash2, Undo2, X } from "lucide-react";
+import { Compass, FileUp, Hand, Home, Layers, Pentagon, RotateCcw, Search, Trash2, Undo2, X } from "lucide-react";
 import "leaflet/dist/leaflet.css";
 import { api, withTenant } from "@/lib/api";
+import { attachMapBearing, normalizeBearing, type BearingMap } from "@/lib/leafletBearing";
 import {
   lotNumberFromName,
   overlayBounds,
@@ -24,6 +25,14 @@ type Lot = {
   mapLat: string | null;
   mapLng: string | null;
   lotPolygon: string | null;
+};
+
+type PlanView = {
+  mapLat: string;
+  mapLng: string;
+  mapZoom: number;
+  mapBearing?: number;
+  saved?: boolean;
 };
 
 type Tool = "move" | "lot" | "house";
@@ -137,9 +146,13 @@ export function SitePlanMap() {
   const [mapBase, setMapBase] = useState<PlanMapBase>(defaultPlanMapBase);
   const [kmlOpen, setKmlOpen] = useState(false);
   const [kmlPreview, setKmlPreview] = useState<OverlayLayer[] | null>(null);
+  const [kmlError, setKmlError] = useState<string | null>(null);
+  const [kmlFileName, setKmlFileName] = useState<string | null>(null);
+  const [kmlReading, setKmlReading] = useState(false);
   const [kmlSaveLayers, setKmlSaveLayers] = useState(true);
   const [kmlCreateLots, setKmlCreateLots] = useState(false);
   const [kmlHouse, setKmlHouse] = useState(true);
+  const [bearing, setBearing] = useState(0);
   const [form, setForm] = useState({ lotNumber: "", label: "", address: "", houseAtCenter: true, attachId: "" });
   const lotsRef = useRef(lots);
   lotsRef.current = lots;
@@ -152,7 +165,7 @@ export function SitePlanMap() {
     if (!tenantId) return;
     const d = await api<{
       canEdit: boolean;
-      view: { mapLat: string; mapLng: string; mapZoom: number };
+      view: PlanView;
       lots: Lot[];
       overlays?: OverlayLayer[];
     }>(withTenant("/api/plan", tenantId));
@@ -169,12 +182,15 @@ export function SitePlanMap() {
       if (dead || !hostRef.current || mapRef.current) return;
       LRef.current = L;
       const loaded = await load().catch(() => null);
-      const view = loaded?.view ?? { mapLat: "-34.6037", mapLng: "-58.3816", mapZoom: 16 };
+      const view = loaded?.view ?? { mapLat: "-34.6037", mapLng: "-58.3816", mapZoom: 16, mapBearing: 0, saved: false };
       const map = L.map(hostRef.current, { zoomControl: true, attributionControl: true }).setView(
         [Number(view.mapLat), Number(view.mapLng)],
         Number(view.mapZoom || 16),
       );
-      flyToLots(map, L, loaded?.lots ?? [], focusKey);
+      const startBearing = normalizeBearing(Number(view.mapBearing) || 0);
+      attachMapBearing(L, map, startBearing);
+      setBearing(startBearing);
+      if (focusKey || !view.saved) flyToLots(map, L, loaded?.lots ?? [], focusKey);
       tilesRef.current = makePlanTiles(L, defaultPlanMapBase()).addTo(map);
       layersRef.current = L.layerGroup().addTo(map);
       overlaysRef.current = L.layerGroup().addTo(map);
@@ -441,6 +457,9 @@ export function SitePlanMap() {
   function closeKml() {
     setKmlOpen(false);
     setKmlPreview(null);
+    setKmlError(null);
+    setKmlFileName(null);
+    setKmlReading(false);
     setKmlSaveLayers(true);
     setKmlCreateLots(false);
     setKmlHouse(true);
@@ -460,14 +479,26 @@ export function SitePlanMap() {
   }, Boolean(kmlOpen) || Boolean(modal) || tool !== "move" || draft.length > 0);
 
   async function saveView() {
-    const map = mapRef.current;
+    const map = mapRef.current as BearingMap | null;
     if (!map || !tenantId) return;
     const c = map.getCenter();
+    const mapBearing = map.getBearing?.() ?? bearing;
     await api(withTenant("/api/plan/view", tenantId), {
       method: "PATCH",
-      body: JSON.stringify({ mapLat: String(c.lat), mapLng: String(c.lng), mapZoom: map.getZoom() }),
+      body: JSON.stringify({
+        mapLat: String(c.lat),
+        mapLng: String(c.lng),
+        mapZoom: map.getZoom(),
+        mapBearing,
+      }),
     });
-    setMsg("Vista del barrio guardada.");
+    setMsg("Vista del barrio guardada (centro, zoom y giro).");
+  }
+
+  function applyBearing(next: number) {
+    const n = normalizeBearing(next);
+    setBearing(n);
+    (mapRef.current as BearingMap | null)?.setBearing(n);
   }
 
   function fitOverlayLayers(layers: OverlayLayer[]) {
@@ -487,23 +518,29 @@ export function SitePlanMap() {
 
   async function onKmlFile(file: File | null) {
     if (!file) return;
-    setMsg(null);
+    setKmlError(null);
+    setKmlPreview(null);
+    setKmlFileName(file.name);
+    setKmlReading(true);
     try {
       const layers = await readKmlFile(file);
       setKmlPreview(layers);
     } catch (err) {
       setKmlPreview(null);
-      setMsg(err instanceof Error ? err.message : "No se pudo leer el KML");
+      setKmlError(err instanceof Error ? err.message : "No se pudo leer el KML");
+    } finally {
+      setKmlReading(false);
     }
   }
 
   async function submitKml() {
     if (!tenantId || !kmlPreview?.length) return;
     if (!kmlSaveLayers && !kmlCreateLots) {
-      setMsg("Elegí guardar capas o crear lotes.");
+      setKmlError("Elegí guardar capas o crear lotes.");
       return;
     }
     setBusy(true);
+    setKmlError(null);
     setMsg(null);
     try {
       if (kmlSaveLayers) {
@@ -554,7 +591,7 @@ export function SitePlanMap() {
       closeKml();
       if (!kmlCreateLots) setMsg("Capas KML guardadas en el plano.");
     } catch (err) {
-      setMsg(err instanceof Error ? err.message : "No se pudo importar el KML");
+      setKmlError(err instanceof Error ? err.message : "No se pudo importar el KML");
     } finally {
       setBusy(false);
     }
@@ -696,7 +733,7 @@ export function SitePlanMap() {
         : "Clic en el primer punto (verde) o «Cerrar lote». Deshacer saca el último.";
     }
     if (tool === "house") return "Clic en el mapa (o sobre un lote) para ubicar la casa.";
-    return "Arrastrá el mapa. Clic en un lote o casa para editarlo.";
+    return "Arrastrá el mapa. Giro alinea el predio; Guardar vista deja centro, zoom y giro.";
   }, [canDraw, tool, draft.length]);
 
   return (
@@ -757,6 +794,29 @@ export function SitePlanMap() {
           </button>
         </div>
 
+        <div className="ops-plan-bearing" title="Girar el plano para alinear el barrio">
+          <Compass className="h-4 w-4 shrink-0" />
+          <span className="sr-only">Giro</span>
+          <input
+            type="range"
+            min={0}
+            max={359}
+            value={bearing}
+            aria-label="Giro del plano"
+            onChange={(e) => applyBearing(Number(e.target.value))}
+          />
+          <span className="ops-plan-bearing-deg">{bearing}°</span>
+          <button
+            type="button"
+            className="ops-plan-tool"
+            title="Norte arriba"
+            onClick={() => applyBearing(0)}
+          >
+            <RotateCcw className="h-3.5 w-3.5" />
+            Norte
+          </button>
+        </div>
+
         {tool === "lot" && draft.length > 0 ? (
           <button type="button" className="ops-plan-tool" onClick={undoLastPoint} title="Eliminar el último punto">
             <Undo2 className="h-4 w-4" />
@@ -793,6 +853,8 @@ export function SitePlanMap() {
             onClick={() => {
               setKmlOpen(true);
               setKmlPreview(null);
+              setKmlError(null);
+              setKmlFileName(null);
             }}
             title="Importar KML o KMZ"
           >
@@ -855,14 +917,6 @@ export function SitePlanMap() {
         <div ref={hostRef} className="ops-plan-map h-full min-h-[420px] w-full" />
       </div>
 
-      <input
-        ref={fileRef}
-        type="file"
-        accept=".kml,.kmz,application/vnd.google-earth.kml+xml,application/vnd.google-earth.kmz"
-        className="hidden"
-        onChange={(e) => void onKmlFile(e.target.files?.[0] ?? null)}
-      />
-
       {kmlOpen ? (
         <div
           className="fixed inset-0 z-[2000] flex items-center justify-center bg-black/60 p-4"
@@ -883,14 +937,34 @@ export function SitePlanMap() {
                 <X className="h-4 w-4" />
               </button>
             </div>
-            <button
-              type="button"
-              className="mb-3 inline-flex w-full items-center justify-center gap-2 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 py-3 text-xs font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
-              onClick={() => fileRef.current?.click()}
+            <label
+              className="mb-3 flex w-full cursor-pointer flex-col items-center justify-center gap-1 rounded-xl border border-dashed border-slate-300 bg-slate-50 px-3 py-4 text-xs font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+              onDragOver={(ev) => {
+                ev.preventDefault();
+                ev.stopPropagation();
+              }}
+              onDrop={(ev) => {
+                ev.preventDefault();
+                ev.stopPropagation();
+                void onKmlFile(ev.dataTransfer.files?.[0] ?? null);
+              }}
             >
               <FileUp className="h-4 w-4" />
-              Elegir archivo .kml o .kmz
-            </button>
+              {kmlReading ? "Leyendo archivo…" : kmlFileName ? kmlFileName : "Elegir archivo .kml o .kmz"}
+              <span className="font-normal text-[10px] text-slate-400">o arrastralo acá</span>
+              <input
+                ref={fileRef}
+                type="file"
+                accept=".kml,.kmz,application/vnd.google-earth.kml+xml,application/vnd.google-earth.kmz"
+                className="sr-only"
+                onChange={(e) => void onKmlFile(e.target.files?.[0] ?? null)}
+              />
+            </label>
+            {kmlError ? (
+              <p className="mb-3 rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-[11px] text-rose-700 dark:border-rose-900/60 dark:bg-rose-950/40 dark:text-rose-200">
+                {kmlError}
+              </p>
+            ) : null}
             {kmlPreview ? (
               <div className="mb-3 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-[11px] text-slate-600 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-300">
                 {(() => {
@@ -926,7 +1000,7 @@ export function SitePlanMap() {
               </button>
               <button
                 type="button"
-                disabled={busy || !kmlPreview}
+                disabled={busy || kmlReading || !kmlPreview}
                 onClick={() => void submitKml()}
                 className="rounded-xl bg-sky-600 px-4 py-2 text-xs font-semibold text-white hover:bg-sky-700 disabled:opacity-50"
               >

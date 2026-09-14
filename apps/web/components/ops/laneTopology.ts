@@ -109,9 +109,10 @@ export function buildLaneRelaySlots(manualActs: Actuator[], actuatorIds: string[
   const list = manualActs.filter((a) => idSet.has(a.id));
   return list.map((a) => {
     const preset = RELAY_PRESETS.find((p) => p.match.test(a.name) || p.match.test(a.kind));
+    const dbKind = a.kind === "barrier" || a.kind === "gate" ? "gate" : a.kind === "door" ? "door" : null;
     return {
       label: a.name,
-      kind: preset?.kind ?? a.kind ?? "gate",
+      kind: dbKind ?? preset?.kind ?? a.kind ?? "gate",
       danger: preset?.danger ?? /siren|emerg|pánico|panico/i.test(a.name),
       cam: preset?.cam ?? /barrera|portón|porton|garaje|peaton/i.test(a.name),
       actuator: a,

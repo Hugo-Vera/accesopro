@@ -111,6 +111,10 @@ export const sites = sqliteTable("sites", {
   mapLat: text("map_lat"),
   mapLng: text("map_lng"),
   mapZoom: integer("map_zoom"),
+  /** Giro del plano en grados (0 = norte arriba). */
+  mapBearing: integer("map_bearing"),
+  /** 1 si el admin guardó centro/zoom/giro (no pisar con fit de lotes). */
+  mapViewSaved: integer("map_view_saved", { mode: "boolean" }),
   /** Capas KML importadas (JSON: OverlayLayer[]). */
   mapOverlays: text("map_overlays"),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
