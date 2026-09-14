@@ -61,7 +61,7 @@ export default function DahuaEvidenciaPage() {
                 onClick={() => setSelected(e)}
               >
                 <div className="aspect-[3/4] bg-slate-100 dark:bg-slate-800">
-                  {src ? (
+                  {selected?.id === e.id && src ? (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img src={src} alt="" className="h-full w-full object-cover" />
                   ) : (

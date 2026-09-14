@@ -3,8 +3,6 @@
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { CheckCircle2, AlertTriangle, X, DoorOpen, ScanFace } from "lucide-react";
-import { markSnapshotFailed, snapshotProxyUrl } from "@/components/ops/parseFacialEvent";
-import { useDash } from "@/components/DashboardProvider";
 import { useEscapeKey } from "@/hooks/useEscapeKey";
 
 export type FacialEventAlert = {
@@ -29,13 +27,11 @@ interface Props {
 }
 
 export function LiveFacialAlertToast({ alert, onDismiss, onOpenRelay }: Props) {
-  const { tenantId } = useDash();
   const onDismissRef = useRef(onDismiss);
   onDismissRef.current = onDismiss;
   const [animKey, setAnimKey] = useState(0);
   const [mounted, setMounted] = useState(false);
   const [liveAlert, setLiveAlert] = useState<FacialEventAlert | null>(null);
-  const [photoFailed, setPhotoFailed] = useState(false);
 
   const shown = liveAlert ?? alert;
 
@@ -53,7 +49,6 @@ export function LiveFacialAlertToast({ alert, onDismiss, onOpenRelay }: Props) {
   useEffect(() => {
     if (alert?.id) {
       setLiveAlert(alert);
-      setPhotoFailed(false);
     } else {
       setLiveAlert(null);
     }
@@ -65,7 +60,6 @@ export function LiveFacialAlertToast({ alert, onDismiss, onOpenRelay }: Props) {
       const detail = (e as CustomEvent<FacialEventAlert>).detail;
       if (!detail?.id) return;
       setLiveAlert(detail);
-      setPhotoFailed(false);
     };
     window.addEventListener("ap:facial-alert", handler as EventListener);
     return () => window.removeEventListener("ap:facial-alert", handler as EventListener);
@@ -84,7 +78,6 @@ export function LiveFacialAlertToast({ alert, onDismiss, onOpenRelay }: Props) {
   if (!mounted || !shown) return null;
 
   const isApproved = shown.approved;
-  const photoProxy = !photoFailed ? snapshotProxyUrl(shown.deviceId, shown.snapshotUrl, tenantId) : null;
 
   const timeStr = shown.createdAt
     ? new Date(shown.createdAt).toLocaleTimeString("es-AR", {
@@ -164,37 +157,18 @@ export function LiveFacialAlertToast({ alert, onDismiss, onOpenRelay }: Props) {
               overflow: "hidden",
             }}
           >
-            {photoProxy ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={photoProxy}
-                alt={shown.personName}
-                style={{
-                  width: "100%",
-                  height: "100%",
-                  objectFit: "cover",
-                  objectPosition: "center top",
-                  display: "block",
-                }}
-                onError={() => {
-                  markSnapshotFailed(shown.deviceId, shown.snapshotUrl);
-                  setPhotoFailed(true);
-                }}
-              />
-            ) : (
-              <div
-                style={{
-                  position: "absolute",
-                  inset: 0,
-                  display: "grid",
-                  placeItems: "center",
-                  color: "#64748b",
-                  background: isApproved ? "#d1fae5" : "#ffe4e6",
-                }}
-              >
-                <ScanFace size={36} strokeWidth={1.5} />
-              </div>
-            )}
+            <div
+              style={{
+                position: "absolute",
+                inset: 0,
+                display: "grid",
+                placeItems: "center",
+                color: "#64748b",
+                background: isApproved ? "#d1fae5" : "#ffe4e6",
+              }}
+            >
+              <ScanFace size={36} strokeWidth={1.5} />
+            </div>
           </div>
 
           <div

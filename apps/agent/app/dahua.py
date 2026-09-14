@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 import re
+import threading
+import time
+from collections import deque
 from typing import Any
 
 import requests
@@ -10,6 +13,86 @@ import urllib3
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 TIMEOUT = 6
+
+_cgi_mu = threading.Lock()
+_cgi_inflight = 0
+_cgi_by_kind: dict[str, int] = {}
+_cgi_recent: deque[dict[str, Any]] = deque(maxlen=40)
+_cgi_window: deque[float] = deque()
+_host_locks: dict[str, threading.RLock] = {}
+_host_locks_mu = threading.Lock()
+
+
+def _host_lock(base: str) -> threading.RLock:
+    with _host_locks_mu:
+        lock = _host_locks.get(base)
+        if lock is None:
+            lock = threading.RLock()
+            _host_locks[base] = lock
+        return lock
+
+
+def cgi_kind(path: str) -> str:
+    p = (path or "").lower()
+    if "eventmanager" in p:
+        return "attach"
+    if "rpc2_loadfile" in p or "filemanager" in p:
+        return "filemanager"
+    if "recordfinder" in p:
+        return "recordfinder"
+    if "snapshot.cgi" in p:
+        return "snapshot"
+    if "rpc2_login" in p:
+        return "rpc_login"
+    if "/rpc2" in p:
+        return "rpc"
+    if "faceinfomanager" in p:
+        return "face"
+    if "recordupdater" in p:
+        return "record_update"
+    if "configmanager" in p:
+        return "config"
+    if "magicbox" in p:
+        return "probe"
+    if "accesscontrol.cgi" in p:
+        return "door"
+    return "other"
+
+
+def _cgi_begin(kind: str) -> float:
+    global _cgi_inflight
+    with _cgi_mu:
+        _cgi_inflight += 1
+        _cgi_by_kind[kind] = _cgi_by_kind.get(kind, 0) + 1
+    return time.perf_counter()
+
+
+def _cgi_end(kind: str, path: str, t0: float, ok: bool, err: str | None = None) -> None:
+    global _cgi_inflight
+    ms = int((time.perf_counter() - t0) * 1000)
+    now = time.time()
+    with _cgi_mu:
+        _cgi_inflight = max(0, _cgi_inflight - 1)
+        _cgi_window.append(now)
+        while _cgi_window and now - _cgi_window[0] > 60:
+            _cgi_window.popleft()
+        rec: dict[str, Any] = {"t": int(now), "kind": kind, "path": (path or "")[:96], "ms": ms, "ok": ok}
+        if err:
+            rec["err"] = err[:160]
+        _cgi_recent.appendleft(rec)
+
+
+def cgi_stats() -> dict[str, Any]:
+    now = time.time()
+    with _cgi_mu:
+        while _cgi_window and now - _cgi_window[0] > 60:
+            _cgi_window.popleft()
+        return {
+            "inflight": _cgi_inflight,
+            "last60s": len(_cgi_window),
+            "byKind": dict(_cgi_by_kind),
+            "recent": list(_cgi_recent)[:16],
+        }
 
 
 def parse_table(text: str) -> list[dict[str, str]]:
@@ -34,24 +117,34 @@ class DahuaClient:
         self.password = password
         self.session = requests.Session()
         self.session.verify = False
+        self._rpc_sid: str | None = None
+        self._rpc_sid_at = 0.0
 
     def _get(self, path: str) -> str:
         url = f"{self.base}{path}"
+        kind = cgi_kind(path)
         last_error: Exception | None = None
-        for auth in (
-            HTTPDigestAuth(self.username, self.password),
-            HTTPBasicAuth(self.username, self.password),
-        ):
+        with _host_lock(self.base):
+            t0 = _cgi_begin(kind)
             try:
-                res = self.session.get(url, auth=auth, timeout=TIMEOUT, verify=False)
-                if res.status_code in (401, 403):
-                    last_error = RuntimeError(f"HTTP {res.status_code}")
-                    continue
-                res.raise_for_status()
-                return res.text
-            except Exception as exc:  # noqa: BLE001
-                last_error = exc
-        raise last_error or RuntimeError("Sin respuesta del equipo Dahua")
+                for auth in (
+                    HTTPDigestAuth(self.username, self.password),
+                    HTTPBasicAuth(self.username, self.password),
+                ):
+                    try:
+                        res = self.session.get(url, auth=auth, timeout=TIMEOUT, verify=False)
+                        if res.status_code in (401, 403):
+                            last_error = RuntimeError(f"HTTP {res.status_code}")
+                            continue
+                        res.raise_for_status()
+                        _cgi_end(kind, path, t0, True)
+                        return res.text
+                    except Exception as exc:  # noqa: BLE001
+                        last_error = exc
+                raise last_error or RuntimeError("Sin respuesta del equipo Dahua")
+            except Exception as exc:
+                _cgi_end(kind, path, t0, False, str(exc))
+                raise
 
     def system_info(self) -> dict[str, str]:
         text = self._get("/cgi-bin/magicBox.cgi?action=getSystemInfo")
@@ -87,25 +180,34 @@ class DahuaClient:
         }
 
     def snapshot_jpeg(self, channel: int = 1) -> tuple[bytes, str]:
-        url = f"{self.base}/cgi-bin/snapshot.cgi?channel={channel}"
+        path = f"/cgi-bin/snapshot.cgi?channel={channel}"
+        url = f"{self.base}{path}"
+        kind = "snapshot"
         last_error: Exception | None = None
-        for auth in (
-            HTTPDigestAuth(self.username, self.password),
-            HTTPBasicAuth(self.username, self.password),
-        ):
+        with _host_lock(self.base):
+            t0 = _cgi_begin(kind)
             try:
-                res = self.session.get(url, auth=auth, timeout=TIMEOUT, verify=False)
-                if res.status_code in (401, 403):
-                    last_error = RuntimeError(f"HTTP {res.status_code}")
-                    continue
-                res.raise_for_status()
-                ctype = res.headers.get("Content-Type", "") or "image/jpeg"
-                if "image" not in ctype and not res.content.startswith(b"\xff\xd8"):
-                    raise RuntimeError("El equipo no devolvió una imagen")
-                return res.content, ctype.split(";")[0].strip() or "image/jpeg"
-            except Exception as exc:  # noqa: BLE001
-                last_error = exc
-        raise last_error or RuntimeError("Sin snapshot del equipo")
+                for auth in (
+                    HTTPDigestAuth(self.username, self.password),
+                    HTTPBasicAuth(self.username, self.password),
+                ):
+                    try:
+                        res = self.session.get(url, auth=auth, timeout=TIMEOUT, verify=False)
+                        if res.status_code in (401, 403):
+                            last_error = RuntimeError(f"HTTP {res.status_code}")
+                            continue
+                        res.raise_for_status()
+                        ctype = res.headers.get("Content-Type", "") or "image/jpeg"
+                        if "image" not in ctype and not res.content.startswith(b"\xff\xd8"):
+                            raise RuntimeError("El equipo no devolvió una imagen")
+                        _cgi_end(kind, path, t0, True)
+                        return res.content, ctype.split(";")[0].strip() or "image/jpeg"
+                    except Exception as exc:  # noqa: BLE001
+                        last_error = exc
+                raise last_error or RuntimeError("Sin snapshot del equipo")
+            except Exception as exc:
+                _cgi_end(kind, path, t0, False, str(exc))
+                raise
 
     def access_records(self, count: int = 50, start_time: int | None = None) -> list[dict[str, str]]:
         url = f"/cgi-bin/recordFinder.cgi?action=find&name=AccessControlCardRec&count={count}"
@@ -269,67 +371,90 @@ class DahuaClient:
         url = f"{self.base}{path}"
         last_error: Exception | None = None
         timeout = kwargs.pop("timeout", TIMEOUT)
-        for auth in (
-            HTTPDigestAuth(self.username, self.password),
-            HTTPBasicAuth(self.username, self.password),
-        ):
+        kind = cgi_kind(path)
+        with _host_lock(self.base):
+            t0 = _cgi_begin(kind)
             try:
-                res = self.session.request(method, url, auth=auth, timeout=timeout, verify=False, **kwargs)
-                if res.status_code in (401, 403):
-                    last_error = RuntimeError(f"HTTP {res.status_code}")
-                    continue
-                return res
-            except Exception as exc:  # noqa: BLE001
-                last_error = exc
-        raise last_error or RuntimeError("Sin respuesta del equipo Dahua")
+                for auth in (
+                    HTTPDigestAuth(self.username, self.password),
+                    HTTPBasicAuth(self.username, self.password),
+                ):
+                    try:
+                        res = self.session.request(method, url, auth=auth, timeout=timeout, verify=False, **kwargs)
+                        if res.status_code in (401, 403):
+                            last_error = RuntimeError(f"HTTP {res.status_code}")
+                            continue
+                        _cgi_end(kind, path, t0, True)
+                        return res
+                    except Exception as exc:  # noqa: BLE001
+                        last_error = exc
+                raise last_error or RuntimeError("Sin respuesta del equipo Dahua")
+            except Exception as exc:
+                _cgi_end(kind, path, t0, False, str(exc))
+                raise
 
-    def _rpc_login(self) -> str | None:
+    def _rpc_login(self, force: bool = False) -> str | None:
         import hashlib
-        try:
-            r1_res = self.session.post(
-                f"{self.base}/RPC2_Login",
-                json={
-                    "method": "global.login",
-                    "params": {"userName": self.username, "password": "", "clientType": "Web3.0"},
-                    "id": 1,
-                    "session": 0,
-                },
-                timeout=5,
-            )
-            r1 = r1_res.json()
-            params = r1.get("params") or {}
-            session = r1.get("session") or 0
-            realm = params.get("realm") or ""
-            random = params.get("random") or ""
-            if not realm or not random:
-                return None
 
-            def md5_upper(s: str) -> str:
-                return hashlib.md5(s.encode("utf-8")).hexdigest().upper()
-
-            c_upper = md5_upper(f"{self.username}:{realm}:{self.password}")
-            pwd_upper = md5_upper(f"{self.username}:{random}:{c_upper}")
-
-            r2_res = self.session.post(
-                f"{self.base}/RPC2_Login",
-                json={
-                    "method": "global.login",
-                    "params": {
-                        "userName": self.username,
-                        "password": pwd_upper,
-                        "clientType": "Web3.0",
-                        "authorityType": "Default",
+        if not force and self._rpc_sid and (time.time() - self._rpc_sid_at) < 45:
+            return self._rpc_sid
+        kind = "rpc_login"
+        path = "/RPC2_Login"
+        with _host_lock(self.base):
+            t0 = _cgi_begin(kind)
+            try:
+                r1_res = self.session.post(
+                    f"{self.base}/RPC2_Login",
+                    json={
+                        "method": "global.login",
+                        "params": {"userName": self.username, "password": "", "clientType": "Web3.0"},
+                        "id": 1,
+                        "session": 0,
                     },
-                    "id": 2,
-                    "session": session,
-                },
-                timeout=5,
-            )
-            r2 = r2_res.json()
-            if r2.get("result"):
-                return str(r2.get("session") or "")
-        except Exception:
-            pass
+                    timeout=5,
+                )
+                r1 = r1_res.json()
+                params = r1.get("params") or {}
+                session = r1.get("session") or 0
+                realm = params.get("realm") or ""
+                random = params.get("random") or ""
+                if not realm or not random:
+                    self._rpc_sid = None
+                    _cgi_end(kind, path, t0, False, "sin realm")
+                    return None
+
+                def md5_upper(s: str) -> str:
+                    return hashlib.md5(s.encode("utf-8")).hexdigest().upper()
+
+                c_upper = md5_upper(f"{self.username}:{realm}:{self.password}")
+                pwd_upper = md5_upper(f"{self.username}:{random}:{c_upper}")
+
+                r2_res = self.session.post(
+                    f"{self.base}/RPC2_Login",
+                    json={
+                        "method": "global.login",
+                        "params": {
+                            "userName": self.username,
+                            "password": pwd_upper,
+                            "clientType": "Web3.0",
+                            "authorityType": "Default",
+                        },
+                        "id": 2,
+                        "session": session,
+                    },
+                    timeout=5,
+                )
+                r2 = r2_res.json()
+                if r2.get("result"):
+                    self._rpc_sid = str(r2.get("session") or "")
+                    self._rpc_sid_at = time.time()
+                    _cgi_end(kind, path, t0, True)
+                    return self._rpc_sid
+                self._rpc_sid = None
+                _cgi_end(kind, path, t0, False, "login rejected")
+            except Exception as exc:  # noqa: BLE001
+                self._rpc_sid = None
+                _cgi_end(kind, path, t0, False, str(exc))
         return None
 
     def _rpc_send(self, method: str, params: Any = None, object_id: Any = None, session_id: str | None = None) -> dict[str, Any]:
@@ -344,15 +469,22 @@ class DahuaClient:
         }
         if object_id is not None:
             payload["object"] = object_id
-        try:
-            res = self.session.post(
-                f"{self.base}/RPC2",
-                json=payload,
-                timeout=8,
-            )
-            return res.json()
-        except Exception:
-            return {}
+        kind = cgi_kind(method)
+        with _host_lock(self.base):
+            t0 = _cgi_begin(kind)
+            try:
+                res = self.session.post(
+                    f"{self.base}/RPC2",
+                    json=payload,
+                    timeout=8,
+                )
+                data = res.json()
+                _cgi_end(kind, method, t0, True)
+                return data if isinstance(data, dict) else {}
+            except Exception as exc:  # noqa: BLE001
+                self._rpc_sid = None
+                _cgi_end(kind, method, t0, False, str(exc))
+                return {}
 
     def get_latest_access_records(self, count: int = 5) -> list[dict[str, Any]]:
         sid = self._rpc_login()
@@ -378,7 +510,7 @@ class DahuaClient:
         except Exception:
             return []
 
-    def list_persons(self, count: int = 200, fingerprints: bool = False) -> dict[str, Any]:
+    def list_persons(self, count: int = 200, fingerprints: bool = False, include_faces: bool = False) -> dict[str, Any]:
         text = self._get(
             f"/cgi-bin/recordFinder.cgi?action=find&name=AccessControlCard&count={int(count) or 200}"
         )
@@ -402,10 +534,12 @@ class DahuaClient:
                         if u.get("UserID"):
                             rpc_users[str(u["UserID"])] = u
 
-                    f_resp = self._rpc_send("AccessFace.list", {"UserIDList": user_ids}, session_id=sid)
-                    for f in f_resp.get("params", {}).get("FaceDataList", []):
-                        if f.get("UserID"):
-                            rpc_faces[str(f["UserID"])] = f
+                    # AccessFace.list trae JPEG de todas las caras: solo si la UI lo pide.
+                    if include_faces:
+                        f_resp = self._rpc_send("AccessFace.list", {"UserIDList": user_ids}, session_id=sid)
+                        for f in f_resp.get("params", {}).get("FaceDataList", []):
+                            if f.get("UserID"):
+                                rpc_faces[str(f["UserID"])] = f
 
                     if fingerprints:
                         for uid in user_ids[:30]:
@@ -792,6 +926,77 @@ class DahuaClient:
             },
             "accessControl": body[:300],
             "qr": qr_res,
+        }
+
+    def inspect(self) -> dict[str, Any]:
+        """Config liviana del lector. Sin snapshot.cgi, RecordFinder ni FileManager."""
+
+        def pick_lines(text: str, pred) -> dict[str, str]:
+            out: dict[str, str] = {}
+            for line in text.splitlines():
+                if "=" not in line:
+                    continue
+                if not pred(line):
+                    continue
+                k, v = line.split("=", 1)
+                out[k.strip().replace("table.", "")] = v.strip()
+            return out
+
+        info = self.system_info()
+        door = self.door_status(1)
+        ac: dict[str, str] = {}
+        try:
+            text = self._get("/cgi-bin/configManager.cgi?action=getConfig&name=AccessControl")
+            ac = pick_lines(
+                text,
+                lambda line: (
+                    any(
+                        x in line
+                        for x in (
+                            "FaceEnable",
+                            "FingerEnable",
+                            "CardEnable",
+                            "PwdEnable",
+                            "OpenMethod",
+                            "UnlockHoldInterval",
+                            "MaliciousAccessControlEnable",
+                        )
+                    )
+                    or (".Method=" in line and "TimeSchedule" not in line)
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001
+            ac = {"error": str(exc)[:160]}
+        rtsp: dict[str, str] = {}
+        try:
+            text = self._get("/cgi-bin/configManager.cgi?action=getConfig&name=RTSP")
+            rtsp = pick_lines(text, lambda line: "Enable" in line or "RTSP.Port=" in line)
+        except Exception as exc:  # noqa: BLE001
+            rtsp = {"error": str(exc)[:160]}
+        face_snap: dict[str, str] = {}
+        try:
+            text = self._get("/cgi-bin/configManager.cgi?action=getConfig&name=FaceSnapshot")
+            face_snap = pick_lines(text, lambda _line: True)
+        except Exception as exc:  # noqa: BLE001
+            face_snap = {"error": str(exc)[:160]}
+        qr: dict[str, Any] = {}
+        try:
+            qr = self.get_qr_config()
+        except Exception as exc:  # noqa: BLE001
+            qr = {"error": str(exc)[:160]}
+        return {
+            "ok": True,
+            "system": {
+                "deviceType": info.get("deviceType") or info.get("updateSerial"),
+                "serial": info.get("serialNumber"),
+                "hardware": info.get("hardwareVersion"),
+                "processor": info.get("processor"),
+            },
+            "door": door.get("status"),
+            "accessControl": ac,
+            "rtsp": rtsp,
+            "faceSnapshot": face_snap,
+            "qr": qr,
         }
 
 

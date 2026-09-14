@@ -105,7 +105,7 @@ export async function reconcileSiteRoster(siteId: string) {
   const report: { deviceId: string; missing: string[]; extra: string[]; repaired: number }[] = [];
 
   for (const d of devices) {
-    const cmd = await enqueue(siteId, "dahua_person_list", { deviceId: d.id, count: 500 });
+    const cmd = await enqueue(siteId, "dahua_person_list", { deviceId: d.id, count: 500, includeFaces: false });
     const done = await waitCommand(cmd, 35);
     const persons =
       done.ok && done.result && typeof done.result === "object" && "persons" in done.result

@@ -11,7 +11,7 @@ from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.responses import Response, StreamingResponse
 
 from .alpr import AlprWorker
-from .dahua import DahuaClient
+from .dahua import DahuaClient, cgi_stats
 from .hikvision import HikvisionClient, looks_like_hikvision
 from .live import hub_stats, iter_mjpeg_shared, rtsp_clients_for_host, stop_hub_for_host
 
@@ -80,8 +80,27 @@ def _device(device_id: str) -> dict[str, Any] | None:
     return None
 
 
+_clients: dict[str, DahuaClient] = {}
+_clients_lock = threading.Lock()
+
+
 def _client(dev: dict[str, Any]) -> DahuaClient:
-    return DahuaClient(dev["host"], dev["username"], dev["password"], int(dev.get("port") or 80))
+    did = str(dev.get("id") or "")
+    host = str(dev.get("host") or "")
+    user = str(dev.get("username") or "")
+    password = str(dev.get("password") or "")
+    port = int(dev.get("port") or 80)
+    with _clients_lock:
+        existing = _clients.get(did)
+        if existing and existing.username == user and existing.base.endswith(f"{host}:{port}"):
+            if existing.password != password:
+                existing.password = password
+                existing._rpc_sid = None
+            return existing
+        client = DahuaClient(host, user, password, port)
+        if did:
+            _clients[did] = client
+        return client
 
 
 def _hik_client(dev: dict[str, Any]) -> HikvisionClient:
@@ -403,6 +422,11 @@ def _poll_dahua() -> None:
             continue
         if _device_backoffs.get(dev_id, 0) > now:
             continue
+        hb = _attach_heartbeat_at.get(dev_id, 0.0)
+        if hb and (now - hb) <= 12.0:
+            # Attach sano: RecNo llega por eventManager. RecordFinder RPC traba el SoC.
+            _device_initialized.add(dev_id)
+            continue
         try:
             gap = dev_id not in _device_initialized
             records = _fetch_latest_records(dev, 8 if gap else 5)
@@ -489,7 +513,11 @@ def _run_command(cmd: dict[str, Any]) -> dict[str, Any]:
         dev = _device(payload.get("deviceId"))
         if not dev:
             return {"ok": False, "error": "Equipo no encontrado"}
-        return _client(dev).list_persons(int(payload.get("count") or 200), fingerprints=False)
+            return _client(dev).list_persons(
+                int(payload.get("count") or 200),
+                fingerprints=False,
+                include_faces=bool(payload.get("includeFaces", False)),
+            )
     if action == "dahua_person_enroll":
         dev = _device(payload.get("deviceId"))
         if not dev:
@@ -663,7 +691,10 @@ def _dahua_stream_one(dev_id: str) -> None:
             print(f"Stream attach -> {dev.get('name')} {dev.get('host')}")
             n = 0
             for event in _client(dev).stream_events(
-                on_heartbeat=lambda did=dev_id: _attach_heartbeat_at.__setitem__(did, time.time())
+                on_heartbeat=lambda did=dev_id: (
+                    _attach_heartbeat_at.__setitem__(did, time.time()),
+                    _stream_live.__setitem__(did, True),
+                )
             ):
                 _stream_live[dev_id] = True
                 _attach_heartbeat_at[dev_id] = time.time()
@@ -772,7 +803,7 @@ async def lifespan(_app: FastAPI):
     alpr.stop()
 
 
-app = FastAPI(title="AccesoPro Site Agent", version="0.3.8", lifespan=lifespan)
+app = FastAPI(title="AccesoPro Site Agent", version="0.3.9", lifespan=lifespan)
 
 
 ATTACH_OK_S = 15.0
@@ -788,6 +819,7 @@ def _reader_payload(dev: dict[str, Any]) -> dict[str, Any]:
     attach_ok = bool(hb) and (now - hb) <= ATTACH_OK_S
     rec_fresh = bool(rec_at) and (now - rec_at) <= REC_FRESH_S
     rec = _cursors.get(did)
+    rec_age = (now - rec_at) if rec_at else None
     stuck = _reader_stuck.get(did)
     if stuck == "face_stuck" and not rec_fresh:
         hint = "face_stuck"
@@ -795,6 +827,8 @@ def _reader_payload(dev: dict[str, Any]) -> dict[str, Any]:
         hint = "ok"
     elif not attach_ok:
         hint = "attach_down"
+    elif rec_age is not None and rec_age > 180:
+        hint = "idle"
     else:
         hint = "ok"
     return {
@@ -806,9 +840,11 @@ def _reader_payload(dev: dict[str, Any]) -> dict[str, Any]:
         "streamError": _stream_error.get(did),
         "recNo": rec[0] if rec else "",
         "lastRecNoAt": rec_at or None,
+        "recAgeSec": int(rec_age) if rec_age is not None else None,
         "rtspClients": rtsp_clients_for_host(host),
         "stuckHint": hint,
         "eventsViaPoller": rec_fresh and not attach_ok,
+        "pollerActive": not attach_ok,
     }
 
 
@@ -827,13 +863,14 @@ def health():
         "product": "AccesoPro",
         "cameras": len(_config.get("cameras") or []),
         "dahua": len(_config.get("dahua") or []),
-        "version": "0.3.8",
+        "version": "0.3.9",
         "streamLive": {k: bool(v) for k, v in _stream_live.items()},
         "streamError": dict(_stream_error),
         "cursors": {k: {"recNo": a, "rawTime": b} for k, (a, b) in _cursors.items()},
         "lastDispatchAt": _last_dispatch_at or None,
         "rtspHubs": hub_stats(),
         "readers": readers,
+        "cgi": cgi_stats(),
     }
 
 
@@ -946,6 +983,25 @@ def dahua_reader_status(
     if not dev:
         raise HTTPException(status_code=404, detail="Equipo no encontrado")
     return {"ok": True, **_reader_payload(dev)}
+
+
+@app.get("/dahua/{device_id}/inspect")
+def dahua_inspect(
+    device_id: str,
+    authorization: str | None = Header(default=None),
+    token: str | None = Query(default=None),
+):
+    """Config del ASI (AccessControl/RTSP/FaceSnapshot). No usa snapshot ni RecordFinder."""
+    _authorize(authorization, token)
+    _ensure_dahua_config()
+    dev = _device(device_id)
+    if not dev:
+        raise HTTPException(status_code=404, detail="Equipo no encontrado")
+    try:
+        body = _client(dev).inspect()
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {**body, **_reader_payload(dev), "cgi": cgi_stats()}
 
 
 @app.post("/dahua/{device_id}/face-probe")
@@ -1072,7 +1128,7 @@ def dahua_persons(
     dev = _device(device_id)
     if not dev:
         raise HTTPException(status_code=404, detail="Equipo no encontrado")
-    return _client(dev).list_persons(int(count or 200), fingerprints=False)
+    return _client(dev).list_persons(int(count or 200), fingerprints=False, include_faces=True)
 
 
 @app.get("/dahua/{device_id}/qr-config")

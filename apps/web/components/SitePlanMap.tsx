@@ -2,7 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { Compass, FileUp, Hand, Home, Layers, Pentagon, RotateCcw, Search, Trash2, Undo2, X } from "lucide-react";
+import { Compass, Crosshair, FileUp, Hand, Home, Layers, Pentagon, RotateCcw, Search, Trash2, Undo2, X } from "lucide-react";
 import "leaflet/dist/leaflet.css";
 import { api, withTenant } from "@/lib/api";
 import { attachMapBearing, normalizeBearing, type BearingMap } from "@/lib/leafletBearing";
@@ -13,7 +13,7 @@ import {
   readKmlFile,
   type OverlayLayer,
 } from "@/lib/kml";
-import { defaultPlanMapBase, makePlanTiles, type PlanMapBase } from "@/lib/planMap";
+import { defaultPlanMapStyle, fitPlanContent, makePlanTiles, persistPlanMapStyle, type PlanMapStyle } from "@/lib/planMap";
 import { useDash } from "@/components/DashboardProvider";
 import { useEscapeKey } from "@/hooks/useEscapeKey";
 
@@ -143,7 +143,7 @@ export function SitePlanMap() {
   const [busy, setBusy] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [showLotDetail, setShowLotDetail] = useState(true);
-  const [mapBase, setMapBase] = useState<PlanMapBase>(defaultPlanMapBase);
+  const [mapStyle, setMapStyle] = useState<PlanMapStyle>(defaultPlanMapStyle);
   const [kmlOpen, setKmlOpen] = useState(false);
   const [kmlPreview, setKmlPreview] = useState<OverlayLayer[] | null>(null);
   const [kmlError, setKmlError] = useState<string | null>(null);
@@ -190,8 +190,13 @@ export function SitePlanMap() {
       const startBearing = normalizeBearing(Number(view.mapBearing) || 0);
       attachMapBearing(L, map, startBearing);
       setBearing(startBearing);
-      if (focusKey || !view.saved) flyToLots(map, L, loaded?.lots ?? [], focusKey);
-      tilesRef.current = makePlanTiles(L, defaultPlanMapBase()).addTo(map);
+      if (focusKey) flyToLots(map, L, loaded?.lots ?? [], focusKey);
+      else if (!view.saved) {
+        if (!fitPlanContent(map, L, loaded?.lots ?? [], loaded?.overlays ?? [], { padding: 48, maxZoom: 18 })) {
+          flyToLots(map, L, loaded?.lots ?? [], "");
+        }
+      }
+      tilesRef.current = makePlanTiles(L, defaultPlanMapStyle()).addTo(map);
       layersRef.current = L.layerGroup().addTo(map);
       overlaysRef.current = L.layerGroup().addTo(map);
       draftRef.current = L.layerGroup().addTo(map);
@@ -330,9 +335,9 @@ export function SitePlanMap() {
     const L = LRef.current;
     if (!map || !L) return;
     tilesRef.current?.remove();
-    tilesRef.current = makePlanTiles(L, mapBase).addTo(map);
+    tilesRef.current = makePlanTiles(L, mapStyle).addTo(map);
     tilesRef.current.bringToBack();
-  }, [mapBase]);
+  }, [mapStyle]);
 
   const paintDraft = useCallback(
     (points: { lat: number; lng: number }[]) => {
@@ -499,6 +504,23 @@ export function SitePlanMap() {
     const n = normalizeBearing(next);
     setBearing(n);
     (mapRef.current as BearingMap | null)?.setBearing(n);
+  }
+
+  function changeMapStyle(next: PlanMapStyle) {
+    setMapStyle(next);
+    persistPlanMapStyle(next);
+  }
+
+  function recenterPlan() {
+    const map = mapRef.current;
+    const L = LRef.current;
+    if (!map || !L) return;
+    if (
+      !fitPlanContent(map, L, lotsRef.current, overlays, { padding: 48, maxZoom: 18 })
+    ) {
+      flyToLots(map, L, lotsRef.current, focusKey);
+    }
+    map.invalidateSize({ animate: false });
   }
 
   function fitOverlayLayers(layers: OverlayLayer[]) {
@@ -777,8 +799,8 @@ export function SitePlanMap() {
         <div className="flex items-center gap-1 rounded-lg bg-slate-100 p-0.5 dark:bg-slate-800">
           <button
             type="button"
-            className={`ops-plan-tool ${mapBase === "osm" ? "ops-plan-tool--on" : ""}`}
-            onClick={() => setMapBase("osm")}
+            className={`ops-plan-tool ${mapStyle === "osm" ? "ops-plan-tool--on" : ""}`}
+            onClick={() => changeMapStyle("osm")}
             title="OpenStreetMap"
           >
             <Layers className="h-4 w-4" />
@@ -786,11 +808,27 @@ export function SitePlanMap() {
           </button>
           <button
             type="button"
-            className={`ops-plan-tool ${mapBase === "google" ? "ops-plan-tool--on" : ""}`}
-            onClick={() => setMapBase("google")}
-            title="Google Maps"
+            className={`ops-plan-tool ${mapStyle === "roadmap" ? "ops-plan-tool--on" : ""}`}
+            onClick={() => changeMapStyle("roadmap")}
+            title="Google Maps — calles"
           >
-            Google
+            Calles
+          </button>
+          <button
+            type="button"
+            className={`ops-plan-tool ${mapStyle === "satellite" ? "ops-plan-tool--on" : ""}`}
+            onClick={() => changeMapStyle("satellite")}
+            title="Google Maps — satélite"
+          >
+            Satélite
+          </button>
+          <button
+            type="button"
+            className={`ops-plan-tool ${mapStyle === "hybrid" ? "ops-plan-tool--on" : ""}`}
+            onClick={() => changeMapStyle("hybrid")}
+            title="Google Maps — híbrido (satélite + nombres)"
+          >
+            Híbrido
           </button>
         </div>
 
@@ -867,6 +905,15 @@ export function SitePlanMap() {
             Guardar vista
           </button>
         ) : null}
+        <button
+          type="button"
+          className="ops-plan-tool"
+          onClick={recenterPlan}
+          title="Centrar el predio (lotes y capas)"
+        >
+          <Crosshair className="h-4 w-4" />
+          Centrar
+        </button>
       </div>
 
       {hits.length ? (

@@ -44,6 +44,7 @@ hardware.get("/status", async (c) => {
     .where(and(eq(events.siteId, scoped.site.id), eq(events.type, "plate"), gte(events.createdAt, start)))
     .get();
   let readers: Record<string, unknown> = {};
+  let cgi: unknown = null;
   if (agentOnline(scoped.site.lastSeenAt)) {
     try {
       const agentToken = process.env.SITE_AGENT_TOKEN ?? "accesopro-demo-agent";
@@ -52,8 +53,9 @@ hardware.get("/status", async (c) => {
         signal: AbortSignal.timeout(4000),
       });
       if (hr.ok) {
-        const hj = (await hr.json()) as { readers?: Record<string, unknown> };
+        const hj = (await hr.json()) as { readers?: Record<string, unknown>; cgi?: unknown };
         readers = hj.readers ?? {};
+        cgi = hj.cgi ?? null;
       }
     } catch {
       /* agent health opcional */
@@ -65,6 +67,7 @@ hardware.get("/status", async (c) => {
     eventsToday: Number(today?.n ?? 0),
     platesToday: Number(platesToday?.n ?? 0),
     readers,
+    cgi,
   });
 });
 
@@ -596,6 +599,39 @@ hardware.get("/dahua/:id/reader-status", async (c) => {
   } catch (err) {
     return c.json(
       { error: err instanceof Error ? err.message : "No se pudo leer el estado del lector" },
+      502,
+    );
+  }
+});
+
+hardware.get("/dahua/:id/inspect", async (c) => {
+  const denied = await denyUnlessCapability(c.get("user"), "access.dahua");
+  if (denied) return denied;
+  const scoped = await scopedSiteWithModule(c, "dahua_access");
+  if ("error" in scoped) return scoped.error;
+  const id = c.req.param("id");
+  if (!id) return c.json({ error: "Falta id" }, 400);
+  if (!agentOnline(scoped.site.lastSeenAt)) {
+    return c.json({ error: "El agent del sitio no está en línea." }, 503);
+  }
+  const row = await db
+    .select()
+    .from(dahuaDevices)
+    .where(and(eq(dahuaDevices.id, id), eq(dahuaDevices.siteId, scoped.site.id)))
+    .get();
+  if (!row) return c.json({ error: "Equipo no encontrado" }, 404);
+  const agentBase = agentBaseUrl();
+  const agentToken = process.env.SITE_AGENT_TOKEN ?? "accesopro-demo-agent";
+  try {
+    const res = await fetch(`${agentBase}/dahua/${id}/inspect`, {
+      headers: { Authorization: `Bearer ${agentToken}` },
+      signal: AbortSignal.timeout(12000),
+    });
+    const body = await res.json().catch(() => ({}));
+    return c.json(body, res.status === 200 ? 200 : 502);
+  } catch (err) {
+    return c.json(
+      { error: err instanceof Error ? err.message : "No se pudo leer la config del lector" },
       502,
     );
   }
@@ -1170,19 +1206,29 @@ hardware.get("/debug", async (c) => {
     })),
     dahuaCgi: [
       {
-        name: "getSystemInfo",
-        path: "/cgi-bin/magicBox.cgi?action=getSystemInfo",
-        uso: "Probar equipo (botón Probar en Acceso Dahua)",
+        name: "attach AccessControl",
+        path: "/cgi-bin/eventManager.cgi?action=attach&codes=[AccessControl]&heartbeat=5",
+        uso: "Stream vivo de pases. Un hilo. Si late, NO se usa RecordFinder.",
       },
       {
         name: "openDoor",
         path: "/cgi-bin/accessControl.cgi?action=openDoor&channel={n}",
-        uso: "Pulso del relé del terminal. El canal se tilda en el actuador.",
+        uso: "Pulso del relé del terminal. Puntual, no en bucle.",
       },
       {
-        name: "accessRecords",
-        path: "/cgi-bin/recordFinder.cgi?action=find&name=AccessControlCardRec",
-        uso: "Cola de accesos: cara, tarjeta, clave",
+        name: "RecordFinder RPC",
+        path: "RPC RecordFinder.doSeekFind (solo si el attach cayó)",
+        uso: "Respaldo de eventos. Con attach sano queda apagado: martillaba el SoC cada 8 s.",
+      },
+      {
+        name: "FileManager foto",
+        path: "RPC FileManager + /RPC2_Loadfile (al tocar un evento)",
+        uso: "Captura de evidencia. El historial ya no las pide en lote.",
+      },
+      {
+        name: "getSystemInfo",
+        path: "/cgi-bin/magicBox.cgi?action=getSystemInfo",
+        uso: "Probar equipo (botón en Acceso Dahua). No es ping de cara.",
       },
     ],
     comandosAccesoPro: [

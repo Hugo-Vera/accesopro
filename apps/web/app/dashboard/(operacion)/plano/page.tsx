@@ -19,7 +19,7 @@ export default function PlanoPage() {
       <div className="flex min-h-0 flex-col lg:h-[calc(100vh-7.5rem)]">
         <PageHeader
           title="Plano del predio"
-          subtitle="Mapa OpenStreetMap del barrio. Dibujá lotes y ubicá las casas; quedan en el padrón de propiedades."
+          subtitle="Calles, satélite o híbrido. Dibujá lotes, importá KML y guardá la vista."
         />
         <Suspense
           fallback={

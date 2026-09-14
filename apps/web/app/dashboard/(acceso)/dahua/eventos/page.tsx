@@ -408,7 +408,7 @@ export default function DahuaEventosPage() {
                     const devName = String(p.deviceName || "Lector Facial ASI");
                     const devId = String(p.deviceId || "");
                     const snapshotUrl = String(p.snapshotUrl || p.URL || "");
-                    const photoProxyUrl = getSnapshotUrl(devId, snapshotUrl);
+                    const hasSnap = Boolean(getSnapshotUrl(devId, snapshotUrl));
                     const rawDate = e.createdAt ? new Date(e.createdAt) : new Date();
 
                     return (
@@ -418,31 +418,14 @@ export default function DahuaEventosPage() {
                       >
                         {/* Miniatura de Captura */}
                         <td className="px-4 py-3 text-center">
-                          {photoProxyUrl ? (
-                            <button
-                              type="button"
-                              onClick={() => setSelectedPhotoEvent(e)}
-                              title="Ver captura en tamaño real"
-                              className="group relative inline-block h-10 w-10 overflow-hidden rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 shadow-2xs hover:scale-105 transition-transform"
-                            >
-                              <img
-                                src={photoProxyUrl}
-                                alt={personName}
-                                className="h-full w-full object-cover"
-                                onError={(ev) => {
-                                  markSnapshotFailed(String(devId || ""), snapshotUrl);
-                                  ev.currentTarget.style.display = "none";
-                                }}
-                              />
-                              <div className="absolute inset-0 grid place-items-center bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <Eye className="h-4 w-4 text-white" />
-                              </div>
-                            </button>
-                          ) : (
-                            <div className="inline-grid h-10 w-10 place-items-center rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-100 dark:bg-slate-800 text-slate-400">
-                              <Camera className="h-4 w-4 opacity-50" />
-                            </div>
-                          )}
+                          <button
+                            type="button"
+                            onClick={() => setSelectedPhotoEvent(e)}
+                            title="Ver captura (se pide al ASI solo al abrir)"
+                            className="group relative inline-grid h-10 w-10 place-items-center overflow-hidden rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-100 dark:bg-slate-800 text-slate-400 shadow-2xs hover:scale-105 transition-transform"
+                          >
+                            {hasSnap ? <Eye className="h-4 w-4" /> : <Camera className="h-4 w-4 opacity-50" />}
+                          </button>
                         </td>
 
                         {/* Fecha y Hora */}

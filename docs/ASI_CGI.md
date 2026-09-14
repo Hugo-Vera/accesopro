@@ -9,11 +9,11 @@ En AccesoPro el lector de este predio es un **ASI-6214S**. El encoder de video e
 | Uso | Protocolo | Comando | Notas |
 |-----|-----------|---------|--------|
 | Live portería | RTSP TCP 554 | `/cam/realmonitor?channel=1&subtype=1` | Extra 1 entero. ffmpeg solo escala (sin crop). AccesoCam hace `contain` en el recuadro. `subtype=0` satura la cara. |
-| Eventos en vivo | HTTP CGI Digest | `eventManager.cgi?action=attach&codes=[AccessControl]&heartbeat=5` | Heartbeat cada 5 s (rango 1–60 del manual). |
-| Historial / cursor RecNo | RPC `RecordFinder` (cola reciente) + CGI `recordFinder` de respaldo | El CGI `find&count=N` devuelve los **más viejos**; por eso el agent pide los últimos por RPC. |
-| Abrir | CGI | `accessControl.cgi?action=openDoor&channel=1` | |
-| Personas / cara | CGI | `FaceInfoManager.cgi`, `recordUpdater` AccessControlCard | Alta, foto de enroll, baja. |
-| Foto del **evento** | CGI | `snapManager.cgi?action=attachFileProc` o URL del registro (`URL` / `SnapURL`) | JPEG cuando ocurre AccessControl. No es live. |
+| Eventos en vivo | HTTP CGI Digest | `eventManager.cgi?action=attach&codes=[AccessControl]&heartbeat=5` | **Única consulta continua.** Heartbeat cada 5 s. |
+| Historial / cursor RecNo | RPC `RecordFinder` | **Solo si el attach cayó.** Con attach sano queda apagado: un login+6 RPC cada 8 s trababa el SoC. |
+| Abrir | CGI | `accessControl.cgi?action=openDoor&channel=1` | Puntual. |
+| Personas / cara | CGI | `FaceInfoManager.cgi`, `recordUpdater` AccessControlCard | Alta, foto de enroll, baja. El reconcile **no** baja JPEG de todas las caras. |
+| Foto del **evento** | RPC `FileManager` + `/RPC2_Loadfile` | Solo al **abrir** un evento (modal). Toast e historial ya no las piden en lote. |
 
 ## Qué no se usa en el ASI (aunque exista en cámaras)
 
@@ -24,6 +24,8 @@ En AccesoPro el lector de este predio es un **ASI-6214S**. El encoder de video e
 | `eventManager` `codes=[FaceRecognition]` | Código de IVS de cámara, no del PDF de Access Control. |
 | ISAPI `/ISAPI/Streaming/channels/…/picture` | Hikvision. |
 | Abrir el extra **y** el main a la vez | Dos clientes RTSP al mismo SoC. |
+| RecordFinder en paralelo al attach | CGI vivo + RPC de historial = SoC saturado, RecNo deja de subir. |
+| 80 miniaturas FileManager (Eventos / Evidencia) | Cada foto es login RPC + descarga. Congela la cara. |
 
 `snapshot.cgi` puntual (enroll «foto del lector») **solo** si no hay hub RTSP abierto contra esa IP.
 
@@ -31,32 +33,48 @@ En AccesoPro el lector de este predio es un **ASI-6214S**. El encoder de video e
 
 La pantalla del ASI-6214S es el **UI del equipo**. La foto de evidencia 384×640 sale del evento (`SnapURL`), no es live. AccesoCam, si se enciende, muestra el extra 1 **completo** (`contain`, sin recorte). El extra comparte SoC con la cara: en este predio el attach se cae si el live queda abierto. AccesoCam arranca apagado. Pedir SnapURL en bucle o el main (`subtype=0`) también traba.
 
+La web del propio ASI (pestaña **DAHUA ACCESS CONTROL**) usa el mismo SoC: dejarla abierta traba la cara igual que AccesoCam.
+
 ## Un cliente de video por IP
 
 Varias pestañas / Ingreso+Salida reutilizan un hub MJPEG en el agent (`apps/agent/app/live.py`), clave = **host** del lector. Chrome nunca abre `rtsp://`.
 
 El MJPEG pasa Next → API → agent. Si el browser corta el `<img>` (scroll, refresh, error), **hay que abortar** esas conexiones. Si no, `rtspHubs.users` sube (8–9) y el ffmpeg queda prendido aunque quede una sola pestaña. Health: `rtspHubs` debería quedar en **1** con AccesoCam abierto.
 
-## Probar si el lector está trabado (sin snapshot.cgi)
+## Monitoreo (sin snapshot.cgi)
 
-No usar `snapshot.cgi` como ping: puede trabarlo más.
+Health: `GET :8790/health` (también `cgi` = inflight / last60s / byKind / recent).
+
+| Campo | Cómo leerlo |
+|-------|-------------|
+| `attachOk` | Heartbeat del eventManager ≤ 15 s. CGI vivo. |
+| `streamLive` | El attach está conectado (no hace falta un pase). |
+| `recNo` / `recAgeSec` | Último pase visto. Si `recAgeSec` > 180 y nadie pasó cara: `stuckHint=idle`. |
+| `pollerActive` | `true` solo con attach caído (ahí sí corre RecordFinder). |
+| `rtspClients` | Debe ser 0 con AccesoCam apagado. |
+| `cgi.last60s` | Con attach sano debería ser ~0 (salvo un openDoor o un modal de foto). |
+| `stuckHint` | `ok` / `idle` / `attach_down` / `face_stuck`. |
+
+Config del lector (on demand, liviano): `GET :8790/dahua/{id}/inspect` o API `GET /api/dahua/{id}/inspect`.
+
+Probar si está trabado:
 
 1. Cerrar AccesoCam y la web de preview del ASI.
-2. Anotar `recNo` en `GET :8790/health` → `readers` (o cursor).
+2. Anotar `recNo` y `cgi.last60s` en health.
 3. Pasar una cara conocida (botón **Probar lector** en portería, o a mano).
 4. A ~8–10 s: `recNo` subió y hay toast → facial OK.
 5. `recNo` igual y attach con heartbeat → **motor de cara/video colgado**. Cortar live, esperar 15 s, repetir. Si sigue: reiniciar el ASI.
 6. Attach caído (`attachOk=false`) → CGI/red/401, no hace falta reiniciar el SoC primero.
 
-Health del agent: `attachOk`, `lastHeartbeatAt`, `recNo`, `lastRecNoAt`, `rtspClients`, `stuckHint` (`ok` / `attach_down` / `face_stuck`).
-
 ## Qué carga el ASI (orden)
 
-1. **RTSP extra 1** (AccesoCam). El dashboard lo abría solo al entrar a portería. En el ASI-6214S comparte SoC con la cara: attach CGI se cae y RecNo deja de subir. AccesoCam arranca **apagado**; el guardia lo enciende si hace falta. Si el attach se cae, el agent corta el hub RTSP.
-2. **eventManager attach** AccessControl — necesario para toast/historial. Un hilo, heartbeat 5 s.
-3. **RecordFinder** — respaldo cada 8 s si attach está sano; 1.6 s solo si attach cayó (y ya sin RTSP).
-4. **SnapURL** de evidencia — archivo del evento, no live. Historial pide las 4 filas visibles.
+1. **RTSP extra 1** (AccesoCam). En el ASI-6214S comparte SoC con la cara. Arranca **apagado**. Si el attach se cae, el agent corta el hub RTSP.
+2. **eventManager attach** AccessControl — necesario para toast/historial. Un hilo, heartbeat 5 s. **Esto es lo único en bucle.**
+3. **RecordFinder** — solo si attach cayó (cada 1.6 s). Con attach sano: **apagado**.
+4. **FileManager / SnapURL** — una foto, al abrir el modal de un evento. No en el toast ni en el listado.
 5. **snapshot.cgi** — enroll / test de Dispositivos. Bloqueado si hay RTSP.
-6. **openDoor / probe / personas** — puntuales, no en bucle.
+6. **openDoor / probe / inspect / personas** — puntuales. El padrón periódico no baja `AccessFace.list`.
 
 No mezclar 1+5. El heartbeat del agent (`/agent/heartbeat`) **no** habla con el ASI.
+
+CGI interactivo (RecordFinder, FileManager, probe) va serializado por host: no se pisan entre sí. El attach queda fuera de ese lock porque es un stream largo.
