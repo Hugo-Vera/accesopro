@@ -4,7 +4,7 @@ import { db } from "./db/client.js";
 import { actuators, cameras, commands, dahuaDevices, events, plates, sites } from "./db/schema.js";
 import { nid, normalizePlate } from "./scope.js";
 import { actuatorsForDahuaDevice, actuatorsForSentido, resolveDeviceLane } from "./accessPoints.js";
-import { fireActuator } from "./actuatorExec.js";
+import { enqueue, fireActuator, waitCommand } from "./actuatorExec.js";
 import { matchesSentido, sentidoOf } from "./engineBridge.js";
 import { broadcastRealtimeEvent } from "./eventStream.js";
 import { looksLikeJpeg, saveEventPhoto } from "./eventPhotos.js";
@@ -38,7 +38,9 @@ function accessDedupeKey(payload: Record<string, unknown>): string | null {
   const deviceId = String(payload.deviceId ?? "").trim();
   const recNo = String(payload.recNo ?? payload.RecNo ?? "").trim();
   if (deviceId && recNo) return `${deviceId}:rec:${recNo}`;
-  const stamp = String(payload.rawTime ?? payload.CreateTime ?? "").trim();
+  const stamp = String(payload.rawTime ?? payload.CreateTime ?? payload.RealUTC ?? "").trim();
+  const qr = String(payload.qrPayload ?? payload.QRCode ?? payload.QRCodeEx ?? "").trim().toUpperCase();
+  if (deviceId && qr && stamp) return `${deviceId}:qr:${qr}:${stamp}`;
   const uid = String(payload.userId ?? payload.UserID ?? payload.personName ?? "").trim();
   if (deviceId && stamp && uid) return `${deviceId}:t:${uid}:${stamp}`;
   return null;
@@ -203,14 +205,26 @@ agentRoutes.post("/events", async (c) => {
     const method = String(payload.Method ?? payload.methodCode ?? payload.method ?? "");
     const isRemoteUnlock = method === "4" || method === "remote";
     const deviceId = String(payload.deviceId ?? "");
-    const card = String(payload.cardNo ?? payload.CardNo ?? payload.qrPayload ?? payload.UserID ?? "").trim();
+    const card = String(payload.cardNo ?? payload.CardNo ?? payload.qrPayload ?? payload.QRCode ?? payload.UserID ?? "")
+      .trim()
+      .toUpperCase();
+    const errorCode = Number(payload.ErrorCode ?? payload.errorCode ?? 0);
+    const qrString = String(payload.qrPayload ?? payload.QRCode ?? payload.QRCodeEx ?? "").trim();
+    const qrDeniedByAsi = Boolean(qrString) && (failedStatus || errorCode === 96);
     const qrCred = card ? await findCredentialByPayload(siteId, card, "qr") : null;
-    let failed = failedStatus;
+    const cardCred = !qrCred && card ? await findCredentialByPayload(siteId, card, "card") : null;
+    const matchedCred = qrCred ?? cardCred;
+    let failed = failedStatus || errorCode === 96;
 
-    if (qrCred && qrCred.status === "active") {
-      payload.accessKind = payload.accessKind || "qr";
-      payload.credentialId = qrCred.id;
-      payload.method = asiMethodKey(payload.methodCode ?? payload.Method, "qr") === "unknown" ? "qr" : payload.method;
+    if (matchedCred && matchedCred.status === "active") {
+      payload.accessKind = payload.accessKind || (qrString || qrCred ? "qr" : "card");
+      payload.credentialId = matchedCred.id;
+      payload.method =
+        asiMethodKey(payload.methodCode ?? payload.Method, qrString ? "qr" : "card") === "unknown"
+          ? qrString
+            ? "qr"
+            : "card"
+          : payload.method;
     }
 
     if (deviceId) {
@@ -224,30 +238,40 @@ agentRoutes.post("/events", async (c) => {
       if (lane.accessPointId) payload.accessPointId = lane.accessPointId;
     }
 
-    // Pass-through: el lector no validó (status 0) y AccesoPro decide por vigencia, usos y baja.
+    // QR en ASI-6214S: el lector pita, manda ErrorCode 96 y no abre. AccesoPro decide y manda openDoor.
     if (
       failed &&
-      qrCred &&
-      qrCred.status === "active" &&
-      qrCred.validationMode === "passthrough"
+      matchedCred &&
+      matchedCred.status === "active" &&
+      (matchedCred.validationMode === "passthrough" || qrDeniedByAsi)
     ) {
       const now = Date.now();
-      const until = qrCred.validUntil instanceof Date ? qrCred.validUntil.getTime() : Number(qrCred.validUntil) || 0;
-      const from = qrCred.validFrom instanceof Date ? qrCred.validFrom.getTime() : Number(qrCred.validFrom) || 0;
+      const until =
+        matchedCred.validUntil instanceof Date ? matchedCred.validUntil.getTime() : Number(matchedCred.validUntil) || 0;
+      const from =
+        matchedCred.validFrom instanceof Date ? matchedCred.validFrom.getTime() : Number(matchedCred.validFrom) || 0;
       const inWindow = (!from || now >= from) && (!until || now <= until);
-      const usesOk = !qrCred.maxUses || qrCred.usedCount < qrCred.maxUses;
+      const usesOk = !matchedCred.maxUses || matchedCred.usedCount < matchedCred.maxUses;
       if (inWindow && usesOk && site) {
         failed = false;
         payload.approved = true;
         payload.status = "1";
         payload.passthroughGranted = true;
+        payload.asiErrorCode = errorCode || 96;
         try {
-          await incrementCredentialUse(qrCred.id);
+          await incrementCredentialUse(matchedCred.id);
           const sentido = eventSentido || "in";
-          const targets = await actuatorsForSentido(siteId, sentido);
-          for (const a of targets.filter((x) => x.triggerQr)) {
-            await fireActuator(site, a.id, "open");
-            openActuatorId = a.id;
+          const wired = deviceId ? await actuatorsForDahuaDevice(siteId, deviceId) : [];
+          const byLane = await actuatorsForSentido(siteId, sentido);
+          const targets = wired.length ? wired : byLane.filter((x) => x.triggerQr);
+          if (targets.length) {
+            for (const a of targets) {
+              await fireActuator(site, a.id, "open");
+              openActuatorId = a.id;
+            }
+          } else if (deviceId) {
+            const cmd = await enqueue(site.id, "dahua_open", { deviceId, channel: 1 });
+            await waitCommand(cmd);
           }
         } catch {
           /* el evento se guarda igual */

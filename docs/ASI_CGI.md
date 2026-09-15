@@ -81,7 +81,7 @@ CGI interactivo (RecordFinder, FileManager, probe) va serializado por host: no s
 
 ## Credenciales (maestro AccesoPro, réplica ASI)
 
-AccesoPro es el padrón maestro. El ASI recibe una copia ejecutable (cara, PIN, tarjeta, QR replicado como fila `AccessControlCard`) y sigue abriendo sin red. El pass-through (`QRCode.TransmissionEnable`) es la **excepción**: el lector no valida y AccesoPro decide (revocación instantánea, permanencia, autorización en el momento).
+AccesoPro es el padrón maestro. Cara, PIN y tarjeta se replican al ASI (`AccessControlCard`) y abren sin red. El QR en firmware `3.000.0000000.2.R` (ASI-6214S) **no** se compara contra ese `CardNo`: el attach llega con `QRCode`/`QRCodeEx` y `ErrorCode` 96 (bip, sin voz). AccesoPro valida el string y dispara `openDoor`. El pass-through nativo (`QRCode.TransmissionEnable` / Back-end Comparison del manual) es el mismo camino, documentado por Dahua como validación en un tercero.
 
 | Método | Quién valida (regla) | CGI / RPC | Notas |
 |--------|----------------------|-----------|--------|
@@ -89,8 +89,7 @@ AccesoPro es el padrón maestro. El ASI recibe una copia ejecutable (cara, PIN, 
 | Huella | ASI local | Solo `FingerEnable` + conteo `AccessFingerprint.startFind` | **No hay insert CGI.** Se enrola en el menú del lector. |
 | PIN | ASI local | `Password=` en `recordUpdater AccessControlCard` | |
 | Tarjeta | ASI local | `recordUpdater AccessControlCard` (`CardNo`) | Hex (0-9A-F, largo par, 4-32). Hasta 5 por persona. Este firmware no tiene `AccessCard.insert`. Extra: insert CGI mismo UserID; si UserID es único, fila satélite (`UserID` = `CardNo`). |
-| QR | ASI local (réplica) o AccesoPro (pass-through) | Mismo `CardNo` hexadecimal + nodo `QRCode` (`TransmissionEnable`, `ValidTime`) | Distinto de tarjeta. Un nombre el lector lo marca "código QR inválido". Presentar a 3-5 cm. |
-| QR | ASI local (réplica) o AccesoPro (pass-through) | Mismo `CardNo` hexadecimal + nodo `QRCode` (`TransmissionEnable`, `ValidTime`) | Distinto de tarjeta. Un nombre el lector lo marca "código QR inválido". Presentar a 3-5 cm. |
+| QR | AccesoPro (`openDoor`) | Attach `QRCode` + `accessControl.cgi?action=openDoor` | Un QR con el hex de la tarjeta **no** abre en local (Error 96). DSS/Smart PSS generan otro payload (visita dinámica o QR firmado). Presentar a 3-5 cm. |
 
 ### Códigos de `Method` (AccessControlCardRec)
 
@@ -121,8 +120,8 @@ Orden del manual: General=0, Blocklist=1, Guest=2, Patrol=3, VIP=4. **Confirmar 
 |------|--------|
 | Códigos 0, 1, 2, 3, 6, 15 | Manual de integración. El historial ya etiqueta desde el código crudo. |
 | Código 4 = apertura remota | Observado en AccesoPro (no reabrir relés). |
-| Código de Method del QR | **Sin confirmar.** `ASI_QR_METHOD_CODE = null`. Medir pasando un QR con Diagnóstico abierto. |
-| Campo del string del QR | **Sin confirmar.** El agent mira `QRCode` / `QrCode` / `QRCodeInfo` / `QRData` y, si no, `CardNo`. |
+| Código de Method del QR | **Sin `Method`.** El attach de QR no trae código 1 ni 15; trae `QRCode` + `ErrorCode` 96. `ASI_QR_METHOD_CODE` sigue `null`. |
+| Campo del string del QR | **Observado:** `QRCode` y `QRCodeEx` (sin `Method`). Un hex de tarjeta en el QR llega igual y el ASI responde `ErrorCode` 96. |
 | UserType guest = 2 | Del orden del manual. **Confirmar** con un invitado creado en el menú del ASI. |
 | `UseTime` + `ValidDateEnd` | Se escriben. Comprobar con un pase de un solo uso, pasarlo dos veces. |
 | `ValidTime` del nodo QRCode | Se lee y se escribe; unidad (segundos) **sin confirmar** en este firmware. |

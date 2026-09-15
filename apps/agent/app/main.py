@@ -314,10 +314,23 @@ def _normalize_access_rec(rec: dict[str, Any]) -> dict[str, Any]:
     # Alias comunes del eventManager vs recordFinder
     if not out.get("CreateTime") and out.get("LocalTime"):
         out["CreateTime"] = out["LocalTime"]
+    if not out.get("CreateTime") and out.get("RealUTC"):
+        out["CreateTime"] = out["RealUTC"]
     if not out.get("URL") and out.get("SnapURL"):
         out["URL"] = out["SnapURL"]
     if not out.get("CardName") and out.get("UserName"):
         out["CardName"] = out["UserName"]
+    qr = _qr_string_from_rec(out)
+    if qr:
+        out["QRCode"] = qr
+        if not str(out.get("CardNo") or "").strip():
+            out["CardNo"] = qr
+        # Este firmware (ASI-6214S) manda el QR sin Status: ErrorCode 96 = leído y rechazado.
+        err = _intish(out.get("ErrorCode"))
+        if out.get("Status") is None or str(out.get("Status")).strip() == "":
+            out["Status"] = "1" if err == 0 else "0"
+        elif err:
+            out["Status"] = "0"
     return out
 
 
@@ -328,11 +341,12 @@ def _record_key(dev_id: str, rec: dict[str, Any]) -> str:
     if rec_no:
         return f"{dev_id}:rec:{rec_no}:{stamp}"
     uid = str(rec.get("UserID") or rec.get("CardNo") or rec.get("CardName") or "").strip()
+    qr = str(rec.get("QRCode") or rec.get("QRCodeEx") or "").strip()
     url = str(rec.get("URL") or rec.get("SnapURL") or "").strip()
     status = str(rec.get("Status") or "").strip()
     method = str(rec.get("Method") or "").strip()
     # Stream AccessControl a menudo sin RecNo: no usar solo "dev::" (colisionaba todos).
-    return f"{dev_id}:live:{uid}:{status}:{method}:{stamp}:{url}"
+    return f"{dev_id}:live:{uid}:{qr}:{status}:{method}:{stamp}:{url}"
 
 
 def _norm_stamp(v: Any) -> str:
@@ -454,11 +468,14 @@ def _dispatch_access_event(
         else ("Rostro no identificado" if not is_approved else "Usuario Facial")
     )
 
-    person_identifier = str(rec.get("UserID") or rec.get("CardNo") or rec.get("CardName") or "anon")
+    person_identifier = str(
+        rec.get("UserID") or rec.get("CardNo") or qr_string or rec.get("CardName") or "anon"
+    )
     debounce_key = f"{dev_id}:{person_identifier}:{is_approved}"
+    debounce_s = 2.4 if is_qr else 1.2
     if not skip_debounce:
         last_event_time = _last_person_access.get(debounce_key, 0)
-        if abs(now - last_event_time) < 1.2:
+        if abs(now - last_event_time) < debounce_s:
             # No marcar seen: si el POST no corrió, el poll lo reintenta al vencer el debounce.
             return
     _last_person_access[debounce_key] = now
@@ -947,7 +964,7 @@ async def lifespan(_app: FastAPI):
     alpr.stop()
 
 
-app = FastAPI(title="AccesoPro Site Agent", version="0.3.15", lifespan=lifespan)
+app = FastAPI(title="AccesoPro Site Agent", version="0.3.16", lifespan=lifespan)
 
 
 ATTACH_OK_S = 15.0
@@ -1007,7 +1024,7 @@ def health():
         "product": "AccesoPro",
         "cameras": len(_config.get("cameras") or []),
         "dahua": len(_config.get("dahua") or []),
-        "version": "0.3.15",
+        "version": "0.3.16",
         "streamLive": {k: bool(v) for k, v in _stream_live.items()},
         "streamError": dict(_stream_error),
         "cursors": {k: {"recNo": a, "rawTime": b} for k, (a, b) in _cursors.items()},
