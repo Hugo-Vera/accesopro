@@ -154,13 +154,11 @@ export async function reconcileSiteRoster(siteId: string, onlyDeviceId?: string)
       done.ok && done.result && typeof done.result === "object" && "persons" in done.result
         ? ((done.result as { persons?: { userId?: string; cardNo?: string }[] }).persons ?? [])
         : [];
-    const onDeviceKeys = new Set(
-      persons
-        .map((p) => `${String(p.userId || "").trim()}\0${String(p.cardNo || "").trim()}`)
-        .filter((k) => !k.startsWith("\0")),
+    const onDeviceCards = new Set(
+      persons.map((p) => String(p.cardNo || "").trim().toUpperCase()).filter(Boolean),
     );
     const onDeviceUsers = new Set(persons.map((p) => String(p.userId || "").trim()).filter(Boolean));
-    const missingRows = expected.filter((e) => !onDeviceKeys.has(`${e.userId}\0${e.cardNo}`));
+    const missingRows = expected.filter((e) => !onDeviceCards.has(String(e.cardNo || "").trim().toUpperCase()));
     const extraUsers = [...onDeviceUsers].filter((id) => managedId(id) && !expectedIds.has(id));
     let repaired = 0;
     for (const row of missingRows) {
@@ -185,6 +183,7 @@ export async function reconcileSiteRoster(siteId: string, onlyDeviceId?: string)
       const card = String(p.cardNo || "").trim();
       if (!managedId(uid) || extraUsers.includes(uid)) continue;
       if (expectedKeys.has(`${uid}\0${card}`)) continue;
+      if (onDeviceCards.has(card.toUpperCase()) && expected.some((e) => String(e.cardNo || "").trim().toUpperCase() === card.toUpperCase())) continue;
       if (!card) continue;
       const del = await enqueue(siteId, "dahua_card_remove", { deviceId: d.id, userId: uid, cardNo: card });
       await waitCommand(del, 20);

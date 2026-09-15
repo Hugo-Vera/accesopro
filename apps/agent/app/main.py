@@ -947,7 +947,7 @@ async def lifespan(_app: FastAPI):
     alpr.stop()
 
 
-app = FastAPI(title="AccesoPro Site Agent", version="0.3.14", lifespan=lifespan)
+app = FastAPI(title="AccesoPro Site Agent", version="0.3.15", lifespan=lifespan)
 
 
 ATTACH_OK_S = 15.0
@@ -1007,7 +1007,7 @@ def health():
         "product": "AccesoPro",
         "cameras": len(_config.get("cameras") or []),
         "dahua": len(_config.get("dahua") or []),
-        "version": "0.3.14",
+        "version": "0.3.15",
         "streamLive": {k: bool(v) for k, v in _stream_live.items()},
         "streamError": dict(_stream_error),
         "cursors": {k: {"recNo": a, "rawTime": b} for k, (a, b) in _cursors.items()},

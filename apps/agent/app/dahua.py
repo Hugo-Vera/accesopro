@@ -601,34 +601,113 @@ class DahuaClient:
             )
         return {"ok": True, "persons": people, "count": len(people)}
 
-    def insert_extra_card(self, user_id: str, card_no: str, *, card_type: int = 0) -> dict[str, Any]:
-        """Segunda tarjeta/QR de una persona que ya existe. El insert CGI de AccessControlCard
-        con el mismo UserID en este firmware responde Bad Request."""
+    def _cgi_card_write(self, params: list[str]) -> tuple[bool, str]:
+        path = "/cgi-bin/recordUpdater.cgi?" + "&".join(params)
+        res = self._request("GET", path, timeout=12)
+        body = (res.text or "").strip()
+        ok = res.status_code < 400 and not (body.upper().startswith("ERROR") if body else False)
+        return ok, body
+
+    def insert_extra_card(
+        self,
+        user_id: str,
+        card_no: str,
+        *,
+        card_type: int = 0,
+        name: str = "",
+        existing: dict[str, Any] | None = None,
+        use_time: int = 0,
+        valid_date_start: str | None = None,
+        valid_date_end: str | None = None,
+        period_index: int | None = None,
+        doors: list[int] | None = None,
+    ) -> dict[str, Any]:
+        """Segunda tarjeta/QR de una persona que ya existe.
+
+        Este firmware (ASI-6214S) no tiene RPC `AccessCard.insert` (responde Method not found).
+        El PDF manda insert CGI con el mismo UserID y otro CardNo. Si el UserID es único,
+        se carga como persona satélite (UserID = CardNo) para que el lector sí la compare.
+        """
+        from urllib.parse import quote
+
         uid = str(user_id).strip()
         card = str(card_no).strip().upper()
-        sid = self._rpc_login()
-        if not sid:
-            return {"ok": False, "error": "Sin sesión RPC en el lector"}
-        body = {"UserID": uid, "CardNo": card, "CardType": int(card_type), "CardStatus": 0, "CardName": uid}
+        display = (name or (existing or {}).get("name") or uid).strip() or uid
+        keep_type = int((existing or {}).get("userType") or 0)
+        v_start = (valid_date_start or str((existing or {}).get("validDateStart") or "1970-01-01 00:00:00")).strip()
+        v_end = (valid_date_end or str((existing or {}).get("validDateEnd") or "2037-12-31 23:59:59")).strip()
+        period = 255 if period_index is None else int(period_index)
+        door_list = doors or [0]
         last_err = ""
-        for method in ("AccessCard.insert", "AccessControlCard.insert"):
-            for params in ({"CardList": [body]}, {"Cards": [body]}, {"Card": body}):
-                data = self._rpc_send(method, params, session_id=sid)
-                if not data:
-                    last_err = "sin respuesta RPC"
-                    continue
-                if data.get("result") in (True, 1):
-                    return {"ok": True, "userId": uid, "cardNo": card, "via": method}
-                err = data.get("error") if isinstance(data.get("error"), dict) else {}
-                msg = str(err.get("message") or err.get("code") or data.get("error") or "")
-                last_err = msg or last_err
-                code = err.get("code")
-                if code in (268894208, 268632064, -2147483643) or "unknown" in msg.lower():
-                    continue
-                if msg:
-                    last_err = msg[:300]
-                    break
-        return {"ok": False, "error": last_err[:300] or "El lector no aceptó la credencial extra"}
+
+        def attempt(params: list[str]) -> dict[str, Any] | None:
+            nonlocal last_err
+            ok, body = self._cgi_card_write(params)
+            if ok:
+                return {"ok": True, "userId": uid, "cardNo": card, "via": "cgi-insert"}
+            last_err = body[:300] or last_err
+            return None
+
+        base = [
+            "action=insert",
+            "name=AccessControlCard",
+            f"CardName={quote(display)}",
+            f"CardNo={quote(card)}",
+            f"UserID={quote(uid)}",
+            "CardStatus=0",
+            f"CardType={int(card_type)}",
+        ]
+        hit = attempt(base)
+        if hit:
+            return hit
+        with_doors = list(base)
+        for i, door in enumerate(door_list):
+            with_doors.append(f"Doors[{i}]={int(door)}")
+        hit = attempt(with_doors)
+        if hit:
+            return hit
+
+        next_rec = 1
+        try:
+            recs = [int(p.get("recNo") or 0) for p in self.list_persons(500).get("persons", [])]
+            next_rec = (max(recs) if recs else 0) + 1
+        except Exception:
+            pass
+        for rec_key in (f"recno={next_rec}", f"RecNo={next_rec}"):
+            hit = attempt(base + [rec_key, f"UserType={keep_type}", f"TimeSections[0]={period}"])
+            if hit:
+                return hit
+
+        # UserID único: el lector compara CardNo, da igual el UserID de la fila extra.
+        sat = card[:16]
+        if sat and sat != uid:
+            sat_type = 2 if int(use_time or 0) > 0 else keep_type
+            sat_params = [
+                "action=insert",
+                "name=AccessControlCard",
+                f"CardName={quote(display)}",
+                f"CardNo={quote(card)}",
+                f"UserID={quote(sat)}",
+                "CardStatus=0",
+                f"CardType={int(card_type)}",
+                f"UserType={int(sat_type)}",
+                f"UseTime={int(use_time or 0)}",
+                f"ValidDateStart={quote(v_start)}",
+                f"ValidDateEnd={quote(v_end)}",
+                f"TimeSections[0]={period}",
+            ]
+            for i, door in enumerate(door_list):
+                sat_params.append(f"Doors[{i}]={int(door)}")
+            ok, body = self._cgi_card_write(sat_params)
+            if ok:
+                return {"ok": True, "userId": sat, "cardNo": card, "via": "cgi-satellite"}
+            last_err = body[:300] or last_err
+
+        return {
+            "ok": False,
+            "error": last_err[:300]
+            or "El lector no aceptó una segunda credencial para esta persona.",
+        }
 
     def upsert_person(
         self,
@@ -663,10 +742,12 @@ class DahuaClient:
         period = 255 if period_index is None else int(period_index)
 
         # Una persona admite varias tarjetas: se actualiza la fila UserID+CardNo.
-        # Si el UserID ya existe con otro CardNo, el insert CGI suele devolver Bad Request
-        # (UserID único). La credencial extra va por AccessCard.insert (RPC).
+        # Si el UserID ya existe con otro CardNo, este firmware rechaza el insert CGI
+        # (UserID único) y no tiene AccessCard.insert. La extra va por CGI mínimo / RecNo
+        # o, si hace falta, una fila satélite con UserID = CardNo.
         existing_recno = None
         same_user_exists = False
+        existing_person: dict[str, Any] | None = None
         persons_list: list[dict[str, Any]] = []
         try:
             persons_list = self.list_persons(500).get("persons", [])
@@ -675,11 +756,30 @@ class DahuaClient:
                 same_card = str(p.get("cardNo")).strip().upper() == card
                 if same_user:
                     same_user_exists = True
+                    if existing_person is None:
+                        existing_person = p
                 if same_user and same_card:
                     existing_recno = p.get("recNo")
                     break
+                if same_card and not same_user:
+                    # Ya está en el lector (fila satélite). No pisar.
+                    return {"ok": True, "userId": str(p.get("userId") or uid), "cardNo": card, "via": "already"}
         except Exception:
             pass
+
+        if not existing_recno and same_user_exists:
+            return self.insert_extra_card(
+                uid,
+                card,
+                card_type=card_type,
+                name=name,
+                existing=existing_person,
+                use_time=use_time,
+                valid_date_start=v_start,
+                valid_date_end=v_end,
+                period_index=period,
+                doors=doors,
+            )
 
         if existing_recno:
             # En Dahua ASI, la actualización requiere recno en minúsculas
@@ -743,16 +843,6 @@ class DahuaClient:
                 pass
 
         cgi_failed = res.status_code >= 400 or (body and body.upper().startswith("ERROR"))
-        if cgi_failed and not existing_recno and same_user_exists:
-            extra = self.insert_extra_card(uid, card, card_type=card_type)
-            if extra.get("ok"):
-                return extra
-            return {
-                "ok": False,
-                "error": str(extra.get("error") or body[:300] or "El lector no aceptó la credencial extra"),
-                "response": body[:300],
-            }
-
         if cgi_failed:
             return {"ok": False, "error": body[:300] or f"HTTP {res.status_code}", "response": body[:300]}
         return {"ok": True, "userId": uid, "cardNo": card, "name": name, "recNo": existing_recno, "response": body[:200] or "OK"}
@@ -940,13 +1030,17 @@ class DahuaClient:
         from urllib.parse import quote
 
         rec = rec_no
+        want_card = str(card_no or "").strip().upper()
         if not rec:
             try:
                 persons_list = self.list_persons(500).get("persons", [])
                 for p in persons_list:
-                    same_user = not user_id or str(p.get("userId")).strip() == str(user_id).strip()
-                    same_card = not card_no or str(p.get("cardNo")).strip() == str(card_no).strip()
-                    if same_user and same_card and (user_id or card_no):
+                    got_card = str(p.get("cardNo") or "").strip().upper()
+                    if want_card:
+                        if got_card == want_card:
+                            rec = p.get("recNo")
+                            break
+                    elif user_id and str(p.get("userId")).strip() == str(user_id).strip():
                         rec = p.get("recNo")
                         break
             except Exception:

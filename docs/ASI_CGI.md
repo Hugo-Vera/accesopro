@@ -88,7 +88,8 @@ AccesoPro es el padrón maestro. El ASI recibe una copia ejecutable (cara, PIN, 
 | Cara | ASI local | `FaceInfoManager.cgi` | Hasta 2 caras. |
 | Huella | ASI local | Solo `FingerEnable` + conteo `AccessFingerprint.startFind` | **No hay insert CGI.** Se enrola en el menú del lector. |
 | PIN | ASI local | `Password=` en `recordUpdater AccessControlCard` | |
-| Tarjeta | ASI local | `recordUpdater AccessControlCard` (`CardNo`) | Hex (0-9A-F, largo par, 4-32). Hasta 5 por persona. Fila propia por CardNo. Extra: RPC `AccessCard.insert`. |
+| Tarjeta | ASI local | `recordUpdater AccessControlCard` (`CardNo`) | Hex (0-9A-F, largo par, 4-32). Hasta 5 por persona. Este firmware no tiene `AccessCard.insert`. Extra: insert CGI mismo UserID; si UserID es único, fila satélite (`UserID` = `CardNo`). |
+| QR | ASI local (réplica) o AccesoPro (pass-through) | Mismo `CardNo` hexadecimal + nodo `QRCode` (`TransmissionEnable`, `ValidTime`) | Distinto de tarjeta. Un nombre el lector lo marca "código QR inválido". Presentar a 3-5 cm. |
 | QR | ASI local (réplica) o AccesoPro (pass-through) | Mismo `CardNo` hexadecimal + nodo `QRCode` (`TransmissionEnable`, `ValidTime`) | Distinto de tarjeta. Un nombre el lector lo marca "código QR inválido". Presentar a 3-5 cm. |
 
 ### Códigos de `Method` (AccessControlCardRec)
@@ -126,6 +127,6 @@ Orden del manual: General=0, Blocklist=1, Guest=2, Patrol=3, VIP=4. **Confirmar 
 | `UseTime` + `ValidDateEnd` | Se escriben. Comprobar con un pase de un solo uso, pasarlo dos veces. |
 | `ValidTime` del nodo QRCode | Se lee y se escribe; unidad (segundos) **sin confirmar** en este firmware. |
 | `AccessControlCard.CardNo` | Hexadecimal (0-9A-F, largo par). Un texto como "Hugo" → Bad Request / "código QR inválido". |
-| Segunda tarjeta/QR del mismo UserID | CGI insert suele fallar (UserID único). Reintento por RPC `AccessCard.insert`. |
+| Segunda tarjeta/QR del mismo UserID | CGI insert extra (sin RPC). Este firmware responde `Method not found` a `AccessCard.insert`. Si UserID es único, réplica satélite `UserID=CardNo`. |
 | Insert de huella por CGI | **No aparece.** Enrolar en el menú del lector. AccesoPro cuenta con `AccessFingerprint.startFind`. |
 
