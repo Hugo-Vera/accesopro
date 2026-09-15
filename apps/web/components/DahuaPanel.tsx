@@ -34,7 +34,7 @@ export function DahuaPanel({ tenantId }: { tenantId: string }) {
     const [d, a, e] = await Promise.all([
       api<{ devices: Device[] }>(t("/api/dahua")),
       api<{ actuators: Actuator[] }>(t("/api/actuators")),
-      api<{ events: EventRow[] }>(t("/api/events?type=dahua_access&limit=24")),
+      api<{ events: EventRow[] }>(t("/api/events?type=dahua_access,qr_access&limit=24")),
     ]);
     setDevices(d.devices);
     setActuators(a.actuators.filter((x) => x.driver === "dahua"));

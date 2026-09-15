@@ -153,6 +153,20 @@ export async function deletePersonOnSiteDevicesWait(siteId: string, payload: Rec
   return results;
 }
 
+export async function removeCardOnSiteDevicesWait(
+  siteId: string,
+  payload: { userId?: string; cardNo?: string },
+) {
+  const list = await enrollableDevices(siteId);
+  return Promise.all(
+    list.map(async (d) => {
+      const cmd = await enqueue(siteId, "dahua_card_remove", { ...payload, deviceId: d.id });
+      const done = await waitCommand(cmd, 20);
+      return { deviceId: d.id, ok: done.ok, error: done.error };
+    }),
+  );
+}
+
 export function enrollOk(results: DeviceEnrollResult[]) {
   return results.length > 0 && results.every((r) => r.ok);
 }

@@ -95,6 +95,18 @@ def cgi_stats() -> dict[str, Any]:
         }
 
 
+"""Nodos que se sondean en el descubrimiento del firmware (Fase 0). Ver `raw_config_dump`."""
+CONFIG_PROBE_NODES = (
+    "QRCode",
+    "AccessControl",
+    "BackEndComparison",
+    "CardNoTransmission",
+    "AccessGeneral",
+    "FaceSnapshot",
+    "AccessTimeSchedule[0]",
+)
+
+
 def parse_table(text: str) -> list[dict[str, str]]:
     rows: dict[int, dict[str, str]] = {}
     for line in text.splitlines():
@@ -601,6 +613,7 @@ class DahuaClient:
         valid_date_end: str | None = None,
         period_index: int | None = None,
         user_type: int = 0,
+        card_type: int = 0,
         use_time: int = 0,
     ) -> dict[str, Any]:
         from urllib.parse import quote
@@ -614,12 +627,15 @@ class DahuaClient:
         v_end = (valid_date_end or "2037-12-31 23:59:59").strip()
         period = 255 if period_index is None else int(period_index)
 
-        # Verificar si la persona ya existe en el lector para actualizarla en lugar de duplicar
+        # Una persona admite varias tarjetas: se actualiza solo la fila UserID+CardNo.
+        # Si el UserID existe con otro CardNo, se inserta una fila nueva (hasta 5).
         existing_recno = None
         try:
             persons_list = self.list_persons(500).get("persons", [])
             for p in persons_list:
-                if str(p.get("userId")).strip() == uid or str(p.get("cardNo")).strip() == card:
+                same_user = str(p.get("userId")).strip() == uid
+                same_card = str(p.get("cardNo")).strip() == card
+                if same_user and same_card:
                     existing_recno = p.get("recNo")
                     break
         except Exception:
@@ -635,7 +651,7 @@ class DahuaClient:
                 f"CardNo={quote(card)}",
                 f"UserID={quote(uid)}",
                 "CardStatus=0",
-                f"CardType=0",
+                f"CardType={int(card_type)}",
                 f"UserType={int(user_type)}",
                 f"UseTime={int(use_time)}",
                 f"ValidDateStart={quote(v_start)}",
@@ -650,7 +666,7 @@ class DahuaClient:
                 f"CardNo={quote(card)}",
                 f"UserID={quote(uid)}",
                 "CardStatus=0",
-                f"CardType=0",
+                f"CardType={int(card_type)}",
                 f"UserType={int(user_type)}",
                 f"UseTime={int(use_time)}",
                 f"ValidDateStart={quote(v_start)}",
@@ -672,7 +688,9 @@ class DahuaClient:
             try:
                 persons_list = self.list_persons(500).get("persons", [])
                 for p in persons_list:
-                    if str(p.get("userId")).strip() == uid or str(p.get("cardNo")).strip() == card:
+                    same_user = str(p.get("userId")).strip() == uid
+                    same_card = str(p.get("cardNo")).strip() == card
+                    if same_user and same_card:
                         existing_recno = p.get("recNo")
                         break
                 if existing_recno:
@@ -866,6 +884,31 @@ class DahuaClient:
             return {"ok": False, "error": body[:300] or f"HTTP {res.status_code}", "face": face_msg}
         return {"ok": True, "response": body[:200] or "OK", "face": face_msg}
 
+    def remove_card(self, *, user_id: str | None = None, card_no: str | None = None, rec_no: str | None = None) -> dict[str, Any]:
+        """Baja una sola credencial (tarjeta o QR replicado como CardNo) sin tocar la cara."""
+        from urllib.parse import quote
+
+        rec = rec_no
+        if not rec:
+            try:
+                persons_list = self.list_persons(500).get("persons", [])
+                for p in persons_list:
+                    same_user = not user_id or str(p.get("userId")).strip() == str(user_id).strip()
+                    same_card = not card_no or str(p.get("cardNo")).strip() == str(card_no).strip()
+                    if same_user and same_card and (user_id or card_no):
+                        rec = p.get("recNo")
+                        break
+            except Exception:
+                pass
+        if not rec:
+            return {"ok": False, "error": "No se encontró esa credencial en el lector"}
+        path = f"/cgi-bin/recordUpdater.cgi?action=remove&name=AccessControlCard&recno={quote(str(rec))}"
+        res = self._request("GET", path, timeout=12)
+        body = (res.text or "").strip()
+        if res.status_code >= 400 or (body and body.upper().startswith("ERROR")):
+            return {"ok": False, "error": body[:300] or f"HTTP {res.status_code}"}
+        return {"ok": True, "response": body[:200] or "OK"}
+
     def get_access_control(self) -> dict[str, Any]:
         text = self._get("/cgi-bin/configManager.cgi?action=getConfig&name=AccessControl")
         info: dict[str, str] = {}
@@ -875,6 +918,42 @@ class DahuaClient:
                 info[k.strip()] = v.strip()
         return {"ok": True, "raw": info}
 
+    def raw_config_dump(self, nodes: list[str] | None = None) -> dict[str, Any]:
+        """Volcado sin filtrar de nodos de config: para medir el firmware, no para operar.
+
+        `QRCode` y `AccessControl` existen seguro. El resto es sondeo para ubicar el
+        "Card No. Pass-through" del bloque Back-end Comparison del manual, que no
+        sabemos en qué nodo vive en este firmware.
+        """
+        out: dict[str, Any] = {}
+        for node in nodes or list(CONFIG_PROBE_NODES):
+            try:
+                text = self._get(f"/cgi-bin/configManager.cgi?action=getConfig&name={node}")
+            except Exception as exc:  # noqa: BLE001
+                out[node] = {"ok": False, "error": str(exc)[:200]}
+                continue
+            lines: dict[str, str] = {}
+            for line in text.splitlines():
+                if "=" not in line:
+                    continue
+                k, v = line.split("=", 1)
+                lines[k.strip().replace("table.", "")] = v.strip()
+            if not lines:
+                out[node] = {"ok": False, "error": (text or "").strip()[:200] or "sin datos"}
+                continue
+            out[node] = {"ok": True, "count": len(lines), "lines": lines}
+        return {"ok": True, "nodes": out}
+
+    def raw_person_rows(self, count: int = 20) -> dict[str, Any]:
+        """Filas crudas de AccessControlCard para leer UserType, CardType, UseTime y ValidDate
+        tal como los guarda el equipo. Incluye el texto sin parsear porque la forma exacta de
+        las claves es justamente lo que hay que medir."""
+        text = self._get(
+            f"/cgi-bin/recordFinder.cgi?action=find&name=AccessControlCard&count={int(count) or 20}"
+        )
+        rows = parse_table(text)
+        return {"ok": True, "count": len(rows), "rows": rows, "raw": text[:6000]}
+
     def set_unlock_methods(
         self,
         *,
@@ -882,8 +961,9 @@ class DahuaClient:
         fingerprint: bool = False,
         card: bool = False,
         password: bool = False,
-        qr: bool = False,
     ) -> dict[str, Any]:
+        """Solo el nodo AccessControl. El QR se maneja aparte con `set_qr_config`, que es
+        pass-through al back-end y no un método más de esta lista."""
         method = 0
         if password:
             method |= 1
@@ -913,19 +993,16 @@ class DahuaClient:
         ]
         query = "&".join(flags)
         res = self._request("GET", f"/cgi-bin/configManager.cgi?action=setConfig&{query}", timeout=8)
-        qr_res = self.set_qr_config(enable=qr, valid_time=15)
         body = (res.text or "").strip()
         return {
-            "ok": res.status_code == 200 and bool(qr_res.get("ok")),
+            "ok": res.status_code == 200,
             "methods": {
                 "face": face,
                 "fingerprint": fingerprint,
                 "card": card,
                 "password": password,
-                "qr": qr,
             },
             "accessControl": body[:300],
-            "qr": qr_res,
         }
 
     def inspect(self) -> dict[str, Any]:

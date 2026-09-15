@@ -4,6 +4,7 @@ import os
 import queue
 import threading
 import time
+from collections import deque
 from contextlib import asynccontextmanager
 from typing import Any
 
@@ -23,6 +24,22 @@ HEADERS = {"Authorization": f"Bearer {TOKEN}"}
 _stop = threading.Event()
 _config: dict[str, Any] = {"dahua": [], "actuators": [], "cameras": [], "plates": []}
 
+# Espejo de METHOD_CODE_ROWS en packages/catalog, que es la fuente de verdad: el agent solo
+# necesita el nombre para decidir si fue apertura remota. La etiqueta del historial la deriva
+# la web desde methodCode. El QR no tiene código documentado: se mide antes de agregarlo.
+ASI_METHOD_NAMES = {
+    "0": "password",
+    "1": "card",
+    "2": "password_after_card",
+    "3": "card_after_password",
+    "4": "remote",
+    "6": "fingerprint",
+    "15": "facial",
+}
+# Espejo de ASI_QR_METHOD_CODE. Queda None hasta medirlo en Diagnóstico.
+ASI_QR_METHOD_CODE: str | None = None
+QR_STRING_KEYS = ("QRCode", "QrCode", "QRCodeInfo", "QRData", "CodeInfo")
+
 
 def _new_http() -> httpx.Client:
     return httpx.Client(timeout=httpx.Timeout(20.0, connect=5.0), headers=HEADERS)
@@ -32,6 +49,60 @@ _http = _new_http()
 _record_snap_lock = threading.Lock()
 _record_snap_cache: dict[str, tuple[bytes, str]] = {}
 _photo_q: queue.Queue[tuple[str, str, str]] = queue.Queue(maxsize=64)
+# Descubrimiento (Fase 0): eventos tal como llegan del ASI, antes de normalizar y deduplicar.
+_raw_events: deque[dict[str, Any]] = deque(maxlen=80)
+_raw_events_lock = threading.Lock()
+
+
+def _json_safe(v: Any, depth: int = 0) -> Any:
+    if depth > 4:
+        return str(v)[:200]
+    if isinstance(v, dict):
+        return {str(k): _json_safe(x, depth + 1) for k, x in v.items()}
+    if isinstance(v, (list, tuple)):
+        return [_json_safe(x, depth + 1) for x in list(v)[:20]]
+    if v is None or isinstance(v, (int, float, bool)):
+        return v
+    if isinstance(v, str):
+        return v if len(v) <= 400 else f"{v[:400]}…"
+    return str(v)[:200]
+
+
+def _qr_string_from_rec(rec: dict[str, Any]) -> str:
+    """El manual no dice en qué campo viaja el string del QR: se prueba la lista, no se inventa."""
+    for key in QR_STRING_KEYS:
+        val = rec.get(key)
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+        if isinstance(val, dict):
+            nested = val.get("QRCode") or val.get("Code") or val.get("Data")
+            if isinstance(nested, str) and nested.strip():
+                return nested.strip()
+    return ""
+
+
+def _is_qr_event(rec: dict[str, Any], method_code: str, qr_string: str) -> bool:
+    if ASI_QR_METHOD_CODE is not None and method_code == str(ASI_QR_METHOD_CODE):
+        return True
+    return bool(qr_string)
+
+
+def _capture_raw_event(dev_id: str, rec: dict[str, Any], source: str) -> None:
+    """Sin filtrar y sin mapear: es el instrumento para medir el Method real de cada
+    credencial y en qué campo llega el string del QR."""
+    if not isinstance(rec, dict):
+        return
+    try:
+        entry = {
+            "at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "deviceId": dev_id,
+            "source": source,
+            "record": _json_safe(rec),
+        }
+        with _raw_events_lock:
+            _raw_events.append(entry)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def _reset_http() -> None:
@@ -350,9 +421,16 @@ def _load_sync_cursors() -> None:
             _cursors_loaded = True
 
 
-def _dispatch_access_event(dev: dict[str, Any], rec: dict[str, Any], *, skip_debounce: bool = False) -> None:
+def _dispatch_access_event(
+    dev: dict[str, Any],
+    rec: dict[str, Any],
+    *,
+    skip_debounce: bool = False,
+    source: str = "stream",
+) -> None:
     global _last_dispatch_at
     now = time.time()
+    _capture_raw_event(str(dev.get("id") or ""), rec, source)
     rec = _normalize_access_rec(rec)
     if not rec:
         return
@@ -367,21 +445,9 @@ def _dispatch_access_event(dev: dict[str, Any], rec: dict[str, Any], *, skip_deb
     status_code = str(rec.get("Status") if rec.get("Status") is not None else "0")
     is_approved = status_code == "1"
     method_code = str(rec.get("Method") or "")
-    method_name = (
-        "remote"
-        if method_code in ("4", 4)
-        else "facial"
-        if method_code in ("15", 15)
-        else "card"
-        if method_code in ("1", 1)
-        else "fingerprint"
-        if method_code in ("2", 2)
-        else "qr"
-        if method_code in ("6", 6)
-        else "password"
-        if method_code in ("3", 3)
-        else "other"
-    )
+    qr_string = _qr_string_from_rec(rec)
+    is_qr = _is_qr_event(rec, method_code, qr_string)
+    method_name = "qr" if is_qr else ASI_METHOD_NAMES.get(method_code, "other")
     person_name = rec.get("CardName") or rec.get("UserID") or (
         "Apertura remota"
         if method_name == "remote"
@@ -401,7 +467,8 @@ def _dispatch_access_event(dev: dict[str, Any], rec: dict[str, Any], *, skip_deb
         posted = api_post(
             "/agent/events",
             {
-                "type": "dahua_access",
+                # qr_access cuando el attach trae el string o el Method medido; si no, dahua_access.
+                "type": "qr_access" if is_qr else "dahua_access",
                 "payload": {
                     **{k: v for k, v in rec.items() if not isinstance(v, (dict, list))},
                     "deviceId": dev_id,
@@ -412,7 +479,10 @@ def _dispatch_access_event(dev: dict[str, Any], rec: dict[str, Any], *, skip_deb
                     "approved": is_approved,
                     "personName": person_name,
                     "userId": rec.get("UserID") or "",
-                    "cardNo": rec.get("CardNo") or "",
+                    "cardNo": qr_string or rec.get("CardNo") or "",
+                    "qrPayload": qr_string or None,
+                    "accessKind": "qr" if is_qr else None,
+                    "resultado": "autorizado" if is_approved else "denegado",
                     "recNo": rec_no,
                     "rawTime": stamp,
                     "snapshotUrl": rec.get("URL") or rec.get("SnapURL") or "",
@@ -521,7 +591,7 @@ def _poll_dahua() -> None:
                 age = _record_age_seconds(rec_n)
                 # Sin hora parseable: publicar (el ASI a veces manda epoch). Solo omitir si es viejo de verdad.
                 if age is None or age <= 120:
-                    _dispatch_access_event(dev, rec_n, skip_debounce=True)
+                    _dispatch_access_event(dev, rec_n, skip_debounce=True, source="poll")
                     posted += 1
                 else:
                     _seen_records.add(_record_key(dev_id, rec_n))
@@ -538,7 +608,7 @@ def _poll_dahua() -> None:
             if _cursors.get(dev_id) and not _is_newer_than_cursor(dev_id, rec_n):
                 _seen_records.add(_record_key(dev_id, rec_n))
                 continue
-            _dispatch_access_event(dev, rec)
+            _dispatch_access_event(dev, rec, source="poll")
 
 
 def _run_command(cmd: dict[str, Any]) -> dict[str, Any]:
@@ -582,11 +652,11 @@ def _run_command(cmd: dict[str, Any]) -> dict[str, Any]:
         dev = _device(payload.get("deviceId"))
         if not dev:
             return {"ok": False, "error": "Equipo no encontrado"}
-            return _client(dev).list_persons(
-                int(payload.get("count") or 200),
-                fingerprints=False,
-                include_faces=bool(payload.get("includeFaces", False)),
-            )
+        return _client(dev).list_persons(
+            int(payload.get("count") or 200),
+            fingerprints=bool(payload.get("fingerprints", False)),
+            include_faces=bool(payload.get("includeFaces", False)),
+        )
     if action == "dahua_person_enroll":
         dev = _device(payload.get("deviceId"))
         if not dev:
@@ -614,6 +684,7 @@ def _run_command(cmd: dict[str, Any]) -> dict[str, Any]:
             valid_date_end=payload.get("validDateEnd"),
             period_index=payload.get("periodIndex"),
             user_type=int(payload.get("userType") or 0),
+            card_type=int(payload.get("cardType") or 0),
             use_time=int(payload.get("useTime") or 0),
         )
         if not created.get("ok"):
@@ -628,14 +699,8 @@ def _run_command(cmd: dict[str, Any]) -> dict[str, Any]:
                     "person": created,
                     "face": face,
                 }
-        # QR de acceso = CardNo (el ASI lo lee si QR unlock está on)
-        return {
-            "ok": True,
-            "person": created,
-            "face": face,
-            "qrPayload": card_no,
-            "hint": "El QR contiene el CardNo. En el ASI debe estar habilitada la lectura de QR.",
-        }
+        # El QR es una credencial propia del padrón maestro, no el CardNo de esta persona.
+        return {"ok": True, "person": created, "face": face}
     if action == "dahua_person_delete":
         dev = _device(payload.get("deviceId"))
         if not dev:
@@ -644,6 +709,15 @@ def _run_command(cmd: dict[str, Any]) -> dict[str, Any]:
             user_id=payload.get("userId"),
             rec_no=payload.get("recNo"),
             card_no=payload.get("cardNo"),
+        )
+    if action == "dahua_card_remove":
+        dev = _device(payload.get("deviceId"))
+        if not dev:
+            return {"ok": False, "error": "Equipo no encontrado"}
+        return _client(dev).remove_card(
+            user_id=payload.get("userId"),
+            card_no=payload.get("cardNo"),
+            rec_no=payload.get("recNo"),
         )
     if action == "dahua_qr_get_config":
         dev = _device(payload.get("deviceId"))
@@ -666,7 +740,6 @@ def _run_command(cmd: dict[str, Any]) -> dict[str, Any]:
             fingerprint=bool(payload.get("fingerprint", False)),
             card=bool(payload.get("card", False)),
             password=bool(payload.get("password", False)),
-            qr=bool(payload.get("qr", False)),
         )
     if action == "dahua_schedules_get":
         dev = _device(payload.get("deviceId"))
@@ -771,7 +844,7 @@ def _dahua_stream_one(dev_id: str) -> None:
                     break
                 if isinstance(event, dict):
                     live = _device(dev_id) or dev
-                    _dispatch_access_event(live, event)
+                    _dispatch_access_event(live, event, source="stream")
                     n += 1
             if n == 0:
                 print(f"Stream {dev.get('name')}: attach cerró sin eventos")
@@ -874,7 +947,7 @@ async def lifespan(_app: FastAPI):
     alpr.stop()
 
 
-app = FastAPI(title="AccesoPro Site Agent", version="0.3.10", lifespan=lifespan)
+app = FastAPI(title="AccesoPro Site Agent", version="0.3.13", lifespan=lifespan)
 
 
 ATTACH_OK_S = 15.0
@@ -934,7 +1007,7 @@ def health():
         "product": "AccesoPro",
         "cameras": len(_config.get("cameras") or []),
         "dahua": len(_config.get("dahua") or []),
-        "version": "0.3.9",
+        "version": "0.3.13",
         "streamLive": {k: bool(v) for k, v in _stream_live.items()},
         "streamError": dict(_stream_error),
         "cursors": {k: {"recNo": a, "rawTime": b} for k, (a, b) in _cursors.items()},
@@ -1075,6 +1148,61 @@ def dahua_inspect(
     return {**body, **_reader_payload(dev), "cgi": cgi_stats()}
 
 
+@app.get("/dahua/{device_id}/config-dump")
+def dahua_config_dump(
+    device_id: str,
+    nodes: str = Query(default=""),
+    authorization: str | None = Header(default=None),
+    token: str | None = Query(default=None),
+):
+    """Volcado crudo de nodos de config del lector. Instrumento de medición, no de operación."""
+    _authorize(authorization, token)
+    _ensure_dahua_config()
+    dev = _device(device_id)
+    if not dev:
+        raise HTTPException(status_code=404, detail="Equipo no encontrado")
+    wanted = [n.strip() for n in (nodes or "").split(",") if n.strip()] or None
+    try:
+        return _client(dev).raw_config_dump(wanted)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.get("/dahua/{device_id}/person-rows")
+def dahua_person_rows(
+    device_id: str,
+    count: int = 20,
+    authorization: str | None = Header(default=None),
+    token: str | None = Query(default=None),
+):
+    """Filas crudas del padrón: para leer UserType, CardType, UseTime y ValidDate del equipo."""
+    _authorize(authorization, token)
+    _ensure_dahua_config()
+    dev = _device(device_id)
+    if not dev:
+        raise HTTPException(status_code=404, detail="Equipo no encontrado")
+    try:
+        return _client(dev).raw_person_rows(max(1, min(int(count or 20), 100)))
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.get("/raw-events")
+def raw_events(
+    device_id: str = Query(default="", alias="deviceId"),
+    authorization: str | None = Header(default=None),
+    token: str | None = Query(default=None),
+):
+    """Eventos tal como llegaron del ASI, sin normalizar ni mapear."""
+    _authorize(authorization, token)
+    with _raw_events_lock:
+        rows = list(_raw_events)
+    if device_id:
+        rows = [r for r in rows if str(r.get("deviceId")) == device_id]
+    rows.reverse()
+    return {"ok": True, "count": len(rows), "events": rows}
+
+
 @app.post("/dahua/{device_id}/face-probe")
 def dahua_face_probe(
     device_id: str,
@@ -1169,7 +1297,7 @@ def dahua_records(
     if int(ingest or 0):
         for rec in rows:
             before = _last_dispatch_at
-            _dispatch_access_event(dev, rec, skip_debounce=True)
+            _dispatch_access_event(dev, rec, skip_debounce=True, source="records")
             if _last_dispatch_at != before:
                 posted += 1
     return {
@@ -1199,7 +1327,7 @@ def dahua_persons(
     dev = _device(device_id)
     if not dev:
         raise HTTPException(status_code=404, detail="Equipo no encontrado")
-    return _client(dev).list_persons(int(count or 200), fingerprints=False, include_faces=True)
+    return _client(dev).list_persons(int(count or 200), fingerprints=True, include_faces=True)
 
 
 @app.get("/dahua/{device_id}/qr-config")

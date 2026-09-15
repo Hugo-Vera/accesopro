@@ -1,10 +1,13 @@
-import { and, desc, eq, gte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import { Hono } from "hono";
+import type { Context } from "hono";
 import type { AuthUser } from "./auth.js";
 import { requireAuth } from "./auth.js";
 import { db } from "./db/client.js";
 import { accessPointActuators, accessPointCameras, accessPointDevices, actuators, cameras, commands, dahuaDevices, departments, events, plates } from "./db/schema.js";
 import { enqueue, fireActuator, waitCommand } from "./actuatorExec.js";
+import { isEnrollableDeviceType } from "./dahuaSite.js";
+import { seedDeviceRoster } from "./rosterReconcile.js";
 import { agentOnline, nid, normalizePlate, scopedSite, scopedSiteWithModule } from "./scope.js";
 import { parseDeviceLaneSector, parseDeviceSentido, syncDeviceLaneWiring } from "./accessPoints.js";
 import { denyUnlessCapability } from "./grants.js";
@@ -219,6 +222,13 @@ hardware.post("/dahua", async (c) => {
   );
 
   await enqueue(scoped.site.id, "probe_dahua", { deviceId });
+  if (isEnrollableDeviceType(deviceType)) {
+    setTimeout(() => {
+      void seedDeviceRoster(scoped.site.id, deviceId).catch((err) =>
+        console.error("seed roster ASI:", err),
+      );
+    }, 8_000);
+  }
   return c.json({ ok: true, id: deviceId, actuatorId });
 });
 
@@ -638,6 +648,52 @@ hardware.get("/dahua/:id/inspect", async (c) => {
   }
 });
 
+/** Descubrimiento del firmware (Fase 0): volcado crudo del lector, sin mapear. */
+async function agentDiagnostic(c: Context<Env>, path: string, timeoutMs = 15000) {
+  const denied = await denyUnlessCapability(c.get("user"), "core.config");
+  if (denied) return denied;
+  const scoped = await scopedSiteWithModule(c, "dahua_access");
+  if ("error" in scoped) return scoped.error;
+  const id = c.req.param("id");
+  if (!id) return c.json({ error: "Falta id" }, 400);
+  if (!agentOnline(scoped.site.lastSeenAt)) {
+    return c.json({ error: "El agent del sitio no está en línea." }, 503);
+  }
+  const row = await db
+    .select({ id: dahuaDevices.id })
+    .from(dahuaDevices)
+    .where(and(eq(dahuaDevices.id, id), eq(dahuaDevices.siteId, scoped.site.id)))
+    .get();
+  if (!row) return c.json({ error: "Equipo no encontrado" }, 404);
+  const agentToken = process.env.SITE_AGENT_TOKEN ?? "accesopro-demo-agent";
+  try {
+    const res = await fetch(`${agentBaseUrl()}${path.replace(":id", id)}`, {
+      headers: { Authorization: `Bearer ${agentToken}` },
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+    const body = await res.json().catch(() => ({}));
+    return c.json(body, res.status === 200 ? 200 : 502);
+  } catch (err) {
+    return c.json({ error: err instanceof Error ? err.message : "No se pudo leer el lector" }, 502);
+  }
+}
+
+hardware.get("/dahua/:id/config-dump", async (c) => {
+  const nodes = c.req.query("nodes") ?? "";
+  const qs = nodes ? `?nodes=${encodeURIComponent(nodes)}` : "";
+  return agentDiagnostic(c, `/dahua/:id/config-dump${qs}`, 20000);
+});
+
+hardware.get("/dahua/:id/person-rows", async (c) => {
+  const count = Number(c.req.query("count") ?? 20);
+  const safe = Number.isFinite(count) ? Math.min(Math.max(Math.trunc(count), 1), 100) : 20;
+  return agentDiagnostic(c, `/dahua/:id/person-rows?count=${safe}`);
+});
+
+hardware.get("/dahua/:id/raw-events", async (c) =>
+  agentDiagnostic(c, `/raw-events?deviceId=${encodeURIComponent(c.req.param("id") ?? "")}`, 8000),
+);
+
 hardware.post("/dahua/:id/face-probe", async (c) => {
   const denied = await denyUnlessCapability(c.get("user"), "dahua.live");
   if (denied) return denied;
@@ -865,7 +921,7 @@ hardware.get("/dahua/:id/persons", async (c) => {
   } catch {
     /* cola */
   }
-  const cmd = await enqueue(scoped.site.id, "dahua_person_list", { deviceId: id });
+  const cmd = await enqueue(scoped.site.id, "dahua_person_list", { deviceId: id, fingerprints: true });
   const done = await waitCommand(cmd, 30);
   if (!done.ok) return c.json({ error: done.error || "No se pudo listar" }, 502);
   return c.json(done.result ?? { ok: true, persons: [] });
@@ -900,6 +956,7 @@ hardware.post("/dahua/:id/persons", async (c) => {
     validDateEnd?: string;
     periodIndex?: number;
     userType?: number;
+    cardType?: number;
     useTime?: number;
   }>();
   const name = body.name?.trim();
@@ -917,6 +974,7 @@ hardware.post("/dahua/:id/persons", async (c) => {
     validDateEnd: body.validDateEnd?.trim() || undefined,
     periodIndex: body.periodIndex !== undefined ? Number(body.periodIndex) : 255,
     userType: Number(body.userType || 0),
+    cardType: Number(body.cardType || 0),
     useTime: Number(body.useTime || 0),
   });
   const done = await waitCommand(cmd, 50);
@@ -1322,13 +1380,14 @@ hardware.get("/events", async (c) => {
   const scoped = await scopedSite(c);
   if ("error" in scoped) return scoped.error;
   const type = c.req.query("type");
+  const types = type ? type.split(",").map((t) => t.trim()).filter(Boolean) : [];
   const rawLimit = Number(c.req.query("limit") || 24);
   const limit = Number.isFinite(rawLimit) ? Math.min(Math.max(Math.trunc(rawLimit), 1), 200) : 24;
-  const rows = type
+  const rows = types.length
     ? await db
         .select()
         .from(events)
-        .where(and(eq(events.siteId, scoped.site.id), eq(events.type, type)))
+        .where(and(eq(events.siteId, scoped.site.id), types.length === 1 ? eq(events.type, types[0]!) : inArray(events.type, types)))
         .orderBy(desc(events.createdAt))
         .limit(limit)
     : await db

@@ -10,12 +10,12 @@ export async function syncAsiUnlockMethods(tenantId: string) {
   const site = await db.select().from(sites).where(eq(sites.tenantId, tenantId)).get();
   if (!site) return { ok: false, error: "Sitio no encontrado" };
 
+  // El QR no entra acá: su nodo es `QRCode` y su toggle es pass-through, no un flag de DoorParam.
   const methods = {
     face: await tenantFeatureEnabled(tenantId, "dahua.face"),
     fingerprint: await tenantFeatureEnabled(tenantId, "dahua.fingerprint"),
     card: await tenantFeatureEnabled(tenantId, "dahua.card"),
     password: await tenantFeatureEnabled(tenantId, "dahua.password"),
-    qr: await tenantFeatureEnabled(tenantId, "dahua.qr"),
   };
 
   const devices = await db.select().from(dahuaDevices).where(eq(dahuaDevices.siteId, site.id));

@@ -4,6 +4,7 @@ import { db } from "./db/client.js";
 import { events } from "./db/schema.js";
 import { nid, scopedSiteWithModule } from "./scope.js";
 import type { AuthUser } from "./auth.js";
+import { asiMethodKey } from "@accesopro/catalog";
 
 type AttendanceEnv = { Variables: { user: AuthUser } };
 
@@ -17,21 +18,30 @@ export type NormalizedAttendance = {
   personName: string;
   personId: string;
   direction: "in" | "out";
-  method: "facial" | "card" | "fingerprint" | "qr" | "manual" | "password" | "other";
+  method: "facial" | "card" | "fingerprint" | "qr" | "manual" | "password" | "remote" | "combined" | "other";
   device: string;
   authorized: boolean;
   notes?: string;
 };
 
-function parseMethod(rawMethod: unknown): NormalizedAttendance["method"] {
-  const m = String(rawMethod ?? "").trim();
-  if (m === "15" || m.toLowerCase().includes("face") || m.toLowerCase().includes("facial")) return "facial";
-  if (m === "1" || m.toLowerCase().includes("card") || m.toLowerCase().includes("tarjeta")) return "card";
-  if (m === "2" || m.toLowerCase().includes("finger") || m.toLowerCase().includes("huella")) return "fingerprint";
-  if (m === "6" || m.toLowerCase().includes("qr")) return "qr";
-  if (m === "3" || m.toLowerCase().includes("pass") || m.toLowerCase().includes("pin")) return "password";
-  if (m.toLowerCase().includes("manual")) return "manual";
-  return "other";
+/** El código crudo del ASI manda; la tabla vive en packages/catalog. */
+function parseMethod(rawCode: unknown, storedName?: unknown): NormalizedAttendance["method"] {
+  const key = asiMethodKey(rawCode, storedName);
+  switch (key) {
+    case "facial":
+    case "card":
+    case "fingerprint":
+    case "qr":
+    case "password":
+    case "manual":
+    case "remote":
+      return key;
+    case "password_after_card":
+    case "card_after_password":
+      return "combined";
+    default:
+      return "other";
+  }
 }
 
 function parseDirection(rawType: unknown, rawState: unknown, rawSentido: unknown): "in" | "out" {
@@ -113,7 +123,10 @@ attendanceApi.get("/attendance", async (c) => {
     ).trim();
 
     const direction = parseDirection(payload.Type, payload.AttendanceState, payload.sentido);
-    const method = row.type === "manual_attendance" ? "manual" : parseMethod(payload.Method || payload.method);
+    const method =
+      row.type === "manual_attendance"
+        ? "manual"
+        : parseMethod(payload.methodCode ?? payload.Method, payload.method);
     const device = String(payload.deviceName || payload.deviceId || (row.type === "manual_attendance" ? "Manual" : "Terminal")).trim();
 
     const authorized =

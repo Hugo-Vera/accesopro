@@ -22,6 +22,8 @@ import {
 } from "./dahuaSite.js";
 import { nid, normalizePlate, scopedSiteWithModule } from "./scope.js";
 import { makeVisitToken } from "./visitPass.js";
+import { revokeCredentialsForUser, upsertCredential } from "./credentials.js";
+import { ASI_CARD_TYPES, ASI_USER_TYPES } from "@accesopro/catalog";
 import { applyRoleTemplate, userHasCapability } from "./grants.js";
 import { assertFeature, tenantFeatureEnabled } from "./features.js";
 import {
@@ -806,7 +808,8 @@ residents.get("/me/visit-passes", async (c) => {
   return c.json({
     passes: rows.map((p) => ({
       ...p,
-      qrPayload: `ACCESOPRO:V1:${p.token}`,
+      // El lector compara el token crudo; los QR viejos con prefijo los sigue aceptando la API.
+      qrPayload: p.dahuaCardNo || p.token,
     })),
   });
 });
@@ -827,9 +830,11 @@ residents.post("/me/visit-passes", async (c) => {
     horaDesde?: string;
     horaHasta?: string;
     authorizationId?: string;
+    maxUses?: number;
   }>();
   const guestName = body.guestName?.trim();
   if (!guestName) return c.json({ error: "Falta el nombre del visitante" }, 400);
+  const maxUses = Math.max(0, Math.trunc(Number(body.maxUses ?? 0) || 0));
   const validFrom = parseDateInput(body.validFrom);
   const validUntil = parseDateInput(body.validUntil, new Date(validFrom.getTime() + 8 * 60 * 60 * 1000));
   if (validUntil <= validFrom) return c.json({ error: "La vigencia de fin debe ser posterior al inicio" }, 400);
@@ -857,14 +862,29 @@ residents.post("/me/visit-passes", async (c) => {
     createdAt: new Date(),
   });
 
+  // Padrón maestro: el pase es una credencial QR con vigencia y usos propios.
+  await upsertCredential({
+    siteId: ctx.property.siteId,
+    dahuaUserId,
+    kind: "qr",
+    payload: token,
+    label: guestName,
+    validFrom,
+    validUntil,
+    maxUses,
+  });
+
   let dahuaSynced = false;
+  // Réplica ejecutable: invitado con vigencia y usos, para que el lector decida sin red.
   const results = await enrollPersonOnSiteDevicesWait(
     ctx.property.siteId,
     {
       userId: dahuaUserId,
       name: guestName,
       cardNo: token,
-      userType: 1,
+      userType: ASI_USER_TYPES.guest,
+      cardType: ASI_CARD_TYPES.guest,
+      useTime: maxUses,
     },
     { fechaDesde: validFrom, fechaHasta: validUntil, horaDesde: body.horaDesde, horaHasta: body.horaHasta },
   );
@@ -877,8 +897,10 @@ residents.post("/me/visit-passes", async (c) => {
     ok: true,
     id: passId,
     token,
-    qrPayload: `ACCESOPRO:V1:${token}`,
+    // Sin prefijo: es exactamente lo que el lector compara contra su copia.
+    qrPayload: token,
     lotNumber: ctx.property.lotNumber,
+    maxUses,
     dahuaSynced,
     deviceSync: results,
   });
@@ -895,6 +917,9 @@ residents.post("/me/visit-passes/:id/revoke", async (c) => {
     .update(visitPasses)
     .set({ status: "revoked" })
     .where(and(eq(visitPasses.id, passId), eq(visitPasses.propertyId, ctx.property.id)));
+
+  // Padrón maestro primero: si el borrado en el lector falla, la credencial ya está de baja.
+  await revokeCredentialsForUser(ctx.property.siteId, `v_${passId.slice(-8)}`);
 
   // Revocar también del terminal Dahua
   try {

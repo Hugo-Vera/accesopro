@@ -4,6 +4,7 @@ import { FormEvent, useCallback, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { useEscapeKey } from "@/hooks/useEscapeKey";
+import { LocalQr } from "@/components/LocalQr";
 import {
   User,
   Users,
@@ -855,10 +856,7 @@ export function OwnerPortal() {
               {passes
                 .filter((p) => p.status === "active")
                 .map((p) => {
-                  const qrUrl = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(
-                    p.qrPayload || p.id
-                  )}`;
-                  const shareText = `Hola ${p.guestName}! Te comparto tu código QR de acceso para ingresar a Barrio Las Acacias (Lote ${property.lotNumber}). Validez: ${fmtDate(p.validFrom)} hasta ${fmtDate(p.validUntil)}. Al llegar, mostralo frente a la cámara del lector.`;
+                  const shareText = `Hola ${p.guestName}! Te comparto tu código QR de acceso para ingresar a Barrio Las Acacias (Lote ${property.lotNumber}). Validez: ${fmtDate(p.validFrom)} hasta ${fmtDate(p.validUntil)}. Al llegar, mostralo frente a la cámara del lector, a 3-5 cm de la lente.`;
                   const waUrl = `https://wa.me/?text=${encodeURIComponent(shareText)}`;
 
                   return (
@@ -899,10 +897,11 @@ export function OwnerPortal() {
                       </div>
 
                       <div className="mt-4 flex flex-col items-center justify-center rounded-xl bg-slate-50 p-4 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800">
-                        <img
-                          src={qrUrl}
-                          alt="QR de Acceso"
-                          className="h-36 w-36 rounded-lg border border-slate-200 bg-white p-1 shadow-sm"
+                        <LocalQr
+                          payload={p.qrPayload || p.id}
+                          size={144}
+                          alt={`QR de acceso de ${p.guestName}`}
+                          className="border border-slate-200 p-1 shadow-sm"
                         />
                         <p className="mt-2 text-center font-mono text-[10px] text-slate-500 dark:text-slate-400">
                           {p.qrPayload || p.id}

@@ -6,11 +6,10 @@ import { QrCode, Shield, CheckCircle2, AlertCircle, RefreshCw, Smartphone, Key, 
 import { api, withTenant } from "@/lib/api";
 import { useDash } from "@/components/DashboardProvider";
 import { useToast } from "@/components/Toast";
-import { useTheme } from "@/components/ThemeProvider";
+import { LocalQr } from "@/components/LocalQr";
 
 export default function DahuaQrPage() {
   const { tenantId } = useDash();
-  const { theme } = useTheme();
   const toast = useToast();
   const [device, setDevice] = useState<{ id: string; name: string } | null>(null);
   const [qrConfig, setQrConfig] = useState<{ transmissionEnable: boolean; validTime: number } | null>(null);
@@ -20,7 +19,6 @@ export default function DahuaQrPage() {
 
   // Test QR generator state
   const [testPayload, setTestPayload] = useState("B2FC3764");
-  const [qrSvgUrl, setQrSvgUrl] = useState<string>("");
 
   function t(path: string) {
     return withTenant(path, tenantId);
@@ -31,17 +29,6 @@ export default function DahuaQrPage() {
       loadDeviceAndConfig();
     }
   }, [tenantId]);
-
-  useEffect(() => {
-    if (testPayload.trim()) {
-      // Generate QR code SVG data URL or dynamic URL adaptive to theme
-      const encoded = encodeURIComponent(testPayload.trim());
-      const isDark = theme === "dark";
-      const color = isDark ? "00f0ff" : "0f172a";
-      const bgcolor = isDark ? "0b0f17" : "ffffff";
-      setQrSvgUrl(`https://api.qrserver.com/v1/create-qr-code/?size=240x240&data=${encoded}&format=svg&color=${color}&bgcolor=${bgcolor}`);
-    }
-  }, [testPayload, theme]);
 
   const [devices, setDevices] = useState<Array<{ id: string; name: string; host?: string; deviceType?: string }>>([]);
 
@@ -160,7 +147,7 @@ export default function DahuaQrPage() {
                 <div className="flex items-start justify-between gap-4 p-3 bg-slate-50 dark:bg-[#0b0f17] border border-slate-200 dark:border-[#1f2937] rounded-lg transition-colors">
                   <div>
                     <div className="font-medium text-sm text-slate-900 dark:text-slate-100 flex items-center gap-2">
-                      Lectura y Transmisión de QR
+                      {qrConfig?.transmissionEnable ? "Valida AccesoPro" : "Valida el lector"}
                       {qrConfig?.transmissionEnable ? (
                         <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-700 dark:text-emerald-400 bg-emerald-100 dark:bg-emerald-950/50 px-2 py-0.5 rounded-full border border-emerald-300 dark:border-emerald-800/50">
                           <CheckCircle2 className="w-3 h-3" /> ACTIVO
@@ -172,7 +159,8 @@ export default function DahuaQrPage() {
                       )}
                     </div>
                     <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                      Habilita el procesador óptico de la cámara para capturar y cotejar códigos QR contra las tarjetas autorizadas.
+                      Valida el lector (recomendado): compara el QR contra su padrón y abre sin red.
+                      Valida AccesoPro: el ASI no decide y pasa el string. Si AccesoPro no responde, no abre.
                     </p>
                   </div>
 
@@ -196,7 +184,7 @@ export default function DahuaQrPage() {
                 <div className="p-3 bg-slate-50 dark:bg-[#0b0f17] border border-slate-200 dark:border-[#1f2937] rounded-lg transition-colors">
                   <div className="flex items-center justify-between mb-2">
                     <label className="text-sm font-medium text-slate-700 dark:text-slate-200">
-                      Tiempo de Validez de Lectura (segundos)
+                      ValidTime del firmware (medir en Diagnóstico)
                     </label>
                     <span className="text-xs font-mono font-bold text-cyan-600 dark:text-cyan-400">
                       {qrConfig?.validTime || 15}s
@@ -240,7 +228,10 @@ export default function DahuaQrPage() {
                 <span>Mapeo Técnico</span>
               </div>
               <p>
-                El lector ASI lee el contenido del QR y busca coincidencia con el campo <strong className="text-slate-900 dark:text-slate-200">CardNo</strong> del usuario. Si coincide y el período está vigente, ejecuta la apertura del relé.
+                QR y tarjeta son credenciales distintas. En modo local el lector compara el string del QR
+                (máximo 128 bytes, a 3-5 cm de la lente) contra su copia. El pass-through
+                (<span className="font-mono">QRCode.TransmissionEnable</span>) es la excepción: AccesoPro
+                decide revocación instantánea, permanencia o autorización en el momento.
               </p>
             </div>
           </div>
@@ -259,7 +250,7 @@ export default function DahuaQrPage() {
               <div className="mt-4 space-y-4">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Payload del Código QR (CardNo o Token)
+                    Payload del Código QR
                   </label>
                   <div className="relative">
                     <input
@@ -272,18 +263,14 @@ export default function DahuaQrPage() {
                     <Key className="w-4 h-4 text-slate-400 absolute right-3 top-2.5" />
                   </div>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
-                    Ingrese el número de tarjeta del usuario para verificar la apertura frente al lente.
+                    El string que el lector va a comparar. No es el número de una tarjeta.
                   </p>
                 </div>
 
                 <div className="flex flex-col items-center justify-center p-6 bg-slate-50 dark:bg-[#0b0f17] border border-slate-200 dark:border-[#1f2937] rounded-xl transition-colors">
-                  {qrSvgUrl ? (
+                  {testPayload.trim() ? (
                     <div className="p-3 bg-white rounded-xl shadow-md border border-slate-200 dark:border-cyan-900/50">
-                      <img
-                        src={qrSvgUrl}
-                        alt="Código QR de Prueba"
-                        className="w-48 h-48 rounded"
-                      />
+                      <LocalQr payload={testPayload.trim()} size={192} alt="Código QR de prueba" />
                     </div>
                   ) : (
                     <div className="w-48 h-48 flex items-center justify-center text-xs text-slate-400">
@@ -294,7 +281,7 @@ export default function DahuaQrPage() {
                   <div className="mt-3 text-center">
                     <div className="text-xs font-mono font-bold text-cyan-700 dark:text-cyan-400">{testPayload}</div>
                     <div className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                      Presentar este código a 20-30 cm de la cámara del ASI
+                      Presentar este código a 3-5 cm de la lente del ASI
                     </div>
                   </div>
                 </div>
@@ -305,14 +292,7 @@ export default function DahuaQrPage() {
               <span className="flex items-center gap-1">
                 <Smartphone className="w-4 h-4 text-slate-400" /> Compatible con pantalla de celular
               </span>
-              <a
-                href={qrSvgUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="text-cyan-600 dark:text-cyan-400 hover:underline font-medium"
-              >
-                Abrir en pantalla completa
-              </a>
+              <span>Generado en este equipo, sin internet</span>
             </div>
           </div>
         </div>

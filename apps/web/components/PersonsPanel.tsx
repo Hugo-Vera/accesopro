@@ -42,6 +42,19 @@ import {
 
 type IconProps = SVGProps<SVGSVGElement>;
 
+/** Credencial del padrón maestro de AccesoPro. Tarjeta, QR y PIN son cosas distintas. */
+type PersonCredential = {
+  id: string;
+  kind: "card" | "qr" | "pin";
+  payload: string;
+  label?: string | null;
+  validUntil?: number | null;
+  maxUses: number;
+  usedCount: number;
+  validationMode: "local" | "passthrough";
+  status: string;
+};
+
 function IconHome(props: IconProps) {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" {...props}>
@@ -216,6 +229,8 @@ function CreatePersonModal({
   onSuccess: (name: string, enrolledData: any) => void;
 }) {
   const toast = useToast();
+  const { featureOn, can } = useDash();
+  const passwordPackOn = featureOn("dahua.password") && can("dahua.password");
   useEscapeKey(onClose, isOpen);
 
   const [name, setName] = useState("");
@@ -406,11 +421,8 @@ function CreatePersonModal({
         }),
       });
 
-      const card = r.qrPayload || r.person?.cardNo || cardNo;
-      let qrUrl: string | null = null;
-      if (card) {
-        qrUrl = await QRCode.toDataURL(card, { width: 320, margin: 1 });
-      }
+      // El QR ya no se dibuja desde el CardNo: se emite aparte, desde el bloque Códigos QR.
+      const card = r.person?.cardNo || cardNo;
 
       const enrolledData = {
         name: name.trim(),
@@ -419,10 +431,20 @@ function CreatePersonModal({
         role: role,
         lotNumber: lotNumber.trim(),
         photoUrl: photoPreview,
-        qrUrl: qrUrl,
+        qrUrl: null,
       };
 
       stopWebcam();
+      if (passwordPackOn && pinPassword.trim()) {
+        try {
+          await api(t("/api/credentials"), {
+            method: "POST",
+            body: JSON.stringify({ userId: uid, kind: "pin", payload: pinPassword.trim(), label: name.trim() }),
+          });
+        } catch {
+          /* el enroll en el lector ya llevó el PIN */
+        }
+      }
       toast.success("Persona registrada", `${name.trim()} fue enrolado en el lector Dahua con éxito.`);
       onSuccess(name.trim(), enrolledData);
     } catch (err) {
@@ -548,7 +570,7 @@ function CreatePersonModal({
                 </div>
               </div>
 
-              {/* PIN opcional */}
+              {passwordPackOn ? (
               <div>
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   PIN numérico para teclado ASI (Opcional, 4 a 6 dígitos)
@@ -562,6 +584,7 @@ function CreatePersonModal({
                   className="w-full max-w-xs rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#0b0f17] px-3.5 py-2 text-sm font-mono text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-600 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                 />
               </div>
+              ) : null}
             </div>
 
             {/* Captura Facial Biométrica */}
@@ -780,8 +803,23 @@ function EditPersonModal({
   onClose: () => void;
   onSuccess: (updatedName: string, lastEnrolledData: any) => void;
 }) {
-  useEscapeKey(onClose, true);
+  useEscapeKey(() => {
+    if (showAddCardModal) {
+      setShowAddCardModal(false);
+      return;
+    }
+    if (showAddQrModal) {
+      setShowAddQrModal(false);
+      return;
+    }
+    onClose();
+  }, true);
   const toast = useToast();
+  const { featureOn, can } = useDash();
+  const qrPackOn = featureOn("dahua.qr") && can("dahua.qr");
+  const cardPackOn = featureOn("dahua.card") && can("dahua.card");
+  const fingerprintPackOn = featureOn("dahua.fingerprint") && can("dahua.fingerprint");
+  const passwordPackOn = featureOn("dahua.password") && can("dahua.password");
 
   let initialName = person.name || "";
   let initialLot = "";
@@ -831,6 +869,19 @@ function EditPersonModal({
   const [cardListenCountdown, setCardListenCountdown] = useState(15);
   const [cardListenError, setCardListenError] = useState<string | null>(null);
 
+  // Códigos QR: credencial propia del padrón maestro, no el número de la tarjeta.
+  const [qrCreds, setQrCreds] = useState<PersonCredential[]>([]);
+  const [cardCreds, setCardCreds] = useState<PersonCredential[]>([]);
+  const [syncRows, setSyncRows] = useState<Array<{ deviceId: string; status: string; lastError: string | null }>>([]);
+  const [qrImages, setQrImages] = useState<Record<string, string>>({});
+  const [showAddQrModal, setShowAddQrModal] = useState(false);
+  const [newQrInput, setNewQrInput] = useState("");
+  const [newQrUntil, setNewQrUntil] = useState("");
+  const [newQrUses, setNewQrUses] = useState(0);
+  const [newQrMode, setNewQrMode] = useState<"local" | "passthrough">("local");
+  const [qrBusy, setQrBusy] = useState(false);
+  const [qrError, setQrError] = useState<string | null>(null);
+
   // Huellas digitales (Terminal Dahua ASI admite hasta 3 huellas por persona)
   const FINGER_LABELS = [
     "Índice Derecho (Principal)",
@@ -850,7 +901,6 @@ function EditPersonModal({
     }
     return list;
   });
-  const [enrollingFingerprint, setEnrollingFingerprint] = useState(false);
   const [fingerprintMsg, setFingerprintMsg] = useState<string | null>(null);
 
   // Acordeones abiertos
@@ -858,6 +908,7 @@ function EditPersonModal({
     face: true,
     password: false,
     card: true,
+    qr: false,
     fingerprint: false,
   });
 
@@ -893,6 +944,11 @@ function EditPersonModal({
       })
       .catch(() => {});
   }, [tenantId]);
+
+  useEffect(() => {
+    loadCredentials();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tenantId, person.userId, qrPackOn, cardPackOn]);
 
   function stopWebcam() {
     if (streamRef.current) {
@@ -1034,12 +1090,7 @@ function EditPersonModal({
 
       if (data.ok && data.cardNo) {
         const cardCode = String(data.cardNo).trim();
-        if (!cards.includes(cardCode)) {
-          setCards((prev) => [...prev, cardCode]);
-          toast.success("Tarjeta detectada", `Tarjeta ${cardCode} asignada desde el lector ASI.`);
-        } else {
-          toast.info("Tarjeta existente", `La tarjeta ${cardCode} ya está en la lista.`);
-        }
+        await persistCard(cardCode);
         setShowAddCardModal(false);
       } else {
         const errMsg = data.error || "No se detectó ninguna tarjeta en el tiempo límite.";
@@ -1055,52 +1106,149 @@ function EditPersonModal({
     }
   };
 
-  const handleAddManualCard = () => {
+  const handleAddManualCard = async () => {
     const card = newCardInput.trim().toUpperCase();
     if (!card) return;
-    if (!cards.includes(card)) {
-      setCards((prev) => [...prev, card]);
-      toast.success("Tarjeta vinculada", `Tarjeta ${card} agregada manualmente.`);
-    } else {
-      toast.info("Tarjeta ya asignada", `La tarjeta ${card} ya está en la lista.`);
-    }
+    await persistCard(card);
     setNewCardInput("");
     setShowAddCardModal(false);
   };
 
-  const handleRemoveCard = (cardToRemove: string) => {
+  const handleRemoveCard = async (cardToRemove: string) => {
+    const row = cardCreds.find((c) => c.payload === cardToRemove);
+    if (row) {
+      try {
+        await api(t(`/api/credentials/${row.id}`), { method: "DELETE" });
+      } catch (err) {
+        toast.error("Error", err instanceof Error ? err.message : "No se pudo dar de baja la tarjeta");
+        return;
+      }
+    }
     setCards((prev) => prev.filter((c) => c !== cardToRemove));
+    setCardCreds((prev) => prev.filter((c) => c.payload !== cardToRemove));
     toast.info("Tarjeta removida", `Se desvinculó la tarjeta ${cardToRemove}.`);
   };
 
-  const handleEnrollFingerprint = () => {
-    if (fingerprints.length >= 3) {
-      toast.warning("Límite de huellas", "El terminal Dahua ASI admite hasta un máximo de 3 huellas por usuario.");
+  const persistCard = async (cardCode: string) => {
+    if (cards.includes(cardCode) || cardCreds.some((c) => c.payload === cardCode)) {
+      toast.info("Tarjeta existente", `La tarjeta ${cardCode} ya está en la lista.`);
       return;
     }
-    setEnrollingFingerprint(true);
-    const nextSlotNum = fingerprints.length + 1;
-    const nextLabel = FINGER_LABELS[fingerprints.length] || `Huella ${nextSlotNum}`;
-    setFingerprintMsg(`Lector en modo enrolamiento para ${nextLabel}. Apoyá el dedo en el sensor biométrico del ASI...`);
-
-    setTimeout(() => {
-      setFingerprints((prev) => [
-        ...prev,
-        {
-          id: nextSlotNum,
-          label: `Huella ${nextSlotNum}`,
-          fingerName: nextLabel,
-        },
-      ]);
-      setEnrollingFingerprint(false);
-      setFingerprintMsg(`Huella #${nextSlotNum} (${nextLabel}) registrada exitosamente en el lector.`);
-      toast.success("Huella registrada", `Huella #${nextSlotNum} (${nextLabel}) registrada exitosamente en el lector.`);
-    }, 3500);
+    if (cardPackOn) {
+      try {
+        await api(t("/api/credentials"), {
+          method: "POST",
+          body: JSON.stringify({
+            userId: person.userId,
+            kind: "card",
+            payload: cardCode,
+            label: name.trim() || person.name,
+          }),
+        });
+      } catch (err) {
+        toast.error("Error al guardar la tarjeta", err instanceof Error ? err.message : "No se pudo replicar al lector");
+        return;
+      }
+    }
+    setCards((prev) => [...prev, cardCode]);
+    toast.success("Tarjeta vinculada", `Tarjeta ${cardCode} guardada en el padrón maestro.`);
+    await loadCredentials();
   };
 
-  const handleRemoveFingerprint = (id: number) => {
-    setFingerprints((prev) => prev.filter((f) => f.id !== id));
-    toast.info("Huella removida", `Se removió la huella #${id} del perfil.`);
+  const loadCredentials = async () => {
+    try {
+      const data = await api<{ credentials?: PersonCredential[] }>(
+        t(`/api/credentials?userId=${encodeURIComponent(person.userId)}`),
+      );
+      const all = data.credentials ?? [];
+      const qrs = all.filter((r) => r.kind === "qr" && r.status === "active");
+      const cardsRows = all.filter((r) => r.kind === "card" && r.status === "active");
+      const pinRow = all.find((r) => r.kind === "pin" && r.status === "active");
+      setQrCreds(qrs);
+      setCardCreds(cardsRows);
+      if (cardsRows.length) {
+        setCards(cardsRows.map((r) => r.payload));
+      }
+      if (pinRow?.payload && !pinPassword) {
+        setPinPassword(pinRow.payload);
+      }
+      const images: Record<string, string> = {};
+      for (const r of qrs) {
+        images[r.id] = await QRCode.toDataURL(r.payload, { width: 240, margin: 1 });
+      }
+      setQrImages(images);
+    } catch {
+      // Sin pack o sin permiso: el bloque queda vacío, no rompe la ficha.
+    }
+    try {
+      const sync = await api<{ sync?: Array<{ deviceId: string; status: string; lastError: string | null }> }>(
+        t(`/api/credentials/sync?userId=${encodeURIComponent(person.userId)}`),
+      );
+      setSyncRows(sync.sync ?? []);
+    } catch {
+      setSyncRows([]);
+    }
+  };
+
+  const handleAddQr = async () => {
+    // El lector coteja el string tal cual: sin prefijos y por debajo de 128 bytes.
+    const payload = (newQrInput.trim() || `QR${Date.now().toString(36).toUpperCase()}`).trim();
+    setQrBusy(true);
+    setQrError(null);
+    try {
+      await api(t("/api/credentials"), {
+        method: "POST",
+        body: JSON.stringify({
+          userId: person.userId,
+          kind: "qr",
+          payload,
+          label: name.trim() || person.name,
+          validUntil: newQrUntil ? new Date(newQrUntil).getTime() : null,
+          maxUses: newQrUses,
+          validationMode: newQrMode,
+        }),
+      });
+      await loadCredentials();
+      setShowAddQrModal(false);
+      setNewQrInput("");
+      setNewQrUntil("");
+      setNewQrUses(0);
+      setNewQrMode("local");
+      toast.success("QR emitido", `Código ${payload} guardado en el padrón maestro.`);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "No se pudo emitir el QR";
+      setQrError(msg);
+      toast.error("Error al emitir el QR", msg);
+    } finally {
+      setQrBusy(false);
+    }
+  };
+
+  const handleRevokeQr = async (id: string) => {
+    try {
+      await api(t(`/api/credentials/${id}`), { method: "DELETE" });
+      await loadCredentials();
+      toast.info("QR dado de baja", "El código dejó de ser válido en el padrón maestro.");
+    } catch (err) {
+      toast.error("Error", err instanceof Error ? err.message : "No se pudo dar de baja");
+    }
+  };
+
+  const handleEnrollFingerprint = () => {
+    toast.info(
+      "Enrolamiento en el lector",
+      "La huella se registra en el menú del ASI. AccesoPro lee el conteo al listar personas y da de baja la plantilla junto con la persona.",
+    );
+    setFingerprintMsg(
+      "No hay enrolamiento remoto por CGI en este firmware. Registrá la huella en el lector y recargá el padrón para ver el conteo.",
+    );
+  };
+
+  const handleRemoveFingerprint = () => {
+    toast.info(
+      "Baja en el lector",
+      "La baja de una huella suelta no está en el CGI. Hay que borrar la persona en el lector o enrolar de nuevo ahí.",
+    );
   };
 
   async function handleSave(e: FormEvent) {
@@ -1144,11 +1292,35 @@ function EditPersonModal({
         }),
       });
 
-      const card = r.qrPayload || r.person?.cardNo || primaryCard;
-      let qrUrl: string | null = null;
-      if (card) {
-        qrUrl = await QRCode.toDataURL(card, { width: 300, margin: 1 });
+      const card = r.person?.cardNo || primaryCard;
+      // Las tarjetas también viven en el padrón maestro, no solo en el lector.
+      for (const c of cards) {
+        try {
+          await api(t("/api/credentials"), {
+            method: "POST",
+            body: JSON.stringify({ userId: person.userId, kind: "card", payload: c, label: name.trim() }),
+          });
+        } catch {
+          // Sin pack de tarjeta o número ya tomado: el enroll en el lector no se revierte por esto.
+        }
       }
+      if (passwordPackOn && pinPassword.trim()) {
+        try {
+          await api(t("/api/credentials"), {
+            method: "POST",
+            body: JSON.stringify({
+              userId: person.userId,
+              kind: "pin",
+              payload: pinPassword.trim(),
+              label: name.trim(),
+            }),
+          });
+        } catch {
+          /* el PIN ya viajó en el enroll */
+        }
+      }
+      // El QR es credencial aparte: se muestra el vigente, no un dibujo del número de tarjeta.
+      const qrUrl = qrCreds[0] ? qrImages[qrCreds[0].id] || null : null;
 
       const enrolledData = {
         name: name.trim(),
@@ -1172,7 +1344,7 @@ function EditPersonModal({
     }
   }
 
-  const toggleSection = (key: "face" | "password" | "card" | "fingerprint") => {
+  const toggleSection = (key: "face" | "password" | "card" | "qr" | "fingerprint") => {
     setOpenSections((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
@@ -1432,7 +1604,19 @@ function EditPersonModal({
                 )}
               </div>
 
+              {syncRows.length > 0 && (
+                <div className="rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-[#0b0f17] p-3 text-[11px] text-slate-600 dark:text-slate-300">
+                  <p className="font-semibold text-slate-800 dark:text-slate-200 mb-1">Réplica en lectores</p>
+                  {syncRows.map((s) => (
+                    <p key={s.deviceId} className={s.status === "ok" ? "text-emerald-700 dark:text-emerald-400" : "text-rose-700 dark:text-rose-400"}>
+                      {s.deviceId.slice(0, 8)}: {s.status === "ok" ? "sincronizado" : s.lastError || s.status}
+                    </p>
+                  ))}
+                </div>
+              )}
+
               {/* Acordeón 2: Tarjetas RFID */}
+              {cardPackOn && (
               <div className="rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden bg-white dark:bg-[#0b0f17]">
                 <button
                   type="button"
@@ -1483,8 +1667,82 @@ function EditPersonModal({
                   </div>
                 )}
               </div>
+              )}
 
-              {/* Acordeón 3: Huella digital */}
+              {/* Acordeón 3: Códigos QR (credencial propia, no el número de la tarjeta) */}
+              {qrPackOn && (
+                <div className="rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden bg-white dark:bg-[#0b0f17]">
+                  <button
+                    type="button"
+                    onClick={() => toggleSection("qr")}
+                    className="w-full flex items-center justify-between p-3.5 bg-slate-50 dark:bg-[#0b0f17] hover:bg-slate-100 dark:hover:bg-slate-900 transition-colors text-left"
+                  >
+                    <div className="flex items-center gap-2">
+                      {openSections.qr ? <ChevronUp className="w-4 h-4 text-blue-600 dark:text-blue-400" /> : <ChevronDown className="w-4 h-4 text-slate-400" />}
+                      <span className="text-xs font-bold text-slate-800 dark:text-slate-200">Códigos QR</span>
+                    </div>
+                    <span className="text-xs font-mono text-slate-500">
+                      {qrCreds.length > 0 ? `Vigentes: ${qrCreds.length}` : "Sin QR"}
+                    </span>
+                  </button>
+
+                  {openSections.qr && (
+                    <div className="p-4 bg-white dark:bg-[#111827] space-y-3">
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                        El QR es una credencial aparte de la tarjeta: el lector lo compara contra su
+                        propia copia. Máximo 128 bytes y se lee a 3-5 cm de la lente.
+                      </p>
+                      <div className="flex flex-wrap gap-2.5">
+                        {qrCreds.map((cred) => (
+                          <div
+                            key={cred.id}
+                            className="flex items-center gap-2.5 px-3 py-2 bg-slate-50 dark:bg-[#0b0f17] border border-slate-200 dark:border-slate-800 rounded-xl"
+                          >
+                            {qrImages[cred.id] ? (
+                              // eslint-disable-next-line @next/next/no-img-element
+                              <img src={qrImages[cred.id]} alt={`QR ${cred.payload}`} className="h-12 w-12 rounded bg-white" />
+                            ) : (
+                              <QrCode className="w-4 h-4 text-cyan-600 dark:text-cyan-400" />
+                            )}
+                            <div className="min-w-0">
+                              <p className="font-mono text-xs font-bold text-slate-800 dark:text-slate-200 truncate">
+                                {cred.payload}
+                              </p>
+                              <p className="text-[10px] text-slate-500 dark:text-slate-400">
+                                {cred.validUntil ? `Vence ${new Date(cred.validUntil).toLocaleDateString("es-AR")}` : "Sin vencimiento"}
+                                {cred.maxUses > 0 ? ` · ${cred.usedCount}/${cred.maxUses} usos` : ""}
+                                {cred.validationMode === "passthrough" ? " · valida AccesoPro" : " · valida el lector"}
+                              </p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => handleRevokeQr(cred.id)}
+                              className="p-1 text-slate-400 hover:text-rose-500 transition-colors"
+                              title="Dar de baja el QR"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        ))}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setQrError(null);
+                            setShowAddQrModal(true);
+                          }}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 border border-dashed border-slate-300 dark:border-slate-700 hover:border-cyan-500 bg-slate-50 dark:bg-[#0b0f17] text-xs font-semibold text-slate-600 dark:text-slate-300 hover:text-cyan-600 dark:hover:text-cyan-400 rounded-xl transition-colors"
+                        >
+                          <Plus className="w-3.5 h-3.5" />
+                          <span>Emitir QR</span>
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Acordeón 4: Huella digital */}
+              {fingerprintPackOn && (
               <div className="rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden bg-white dark:bg-[#0b0f17]">
                 <button
                   type="button"
@@ -1529,9 +1787,9 @@ function EditPersonModal({
                             </div>
                             <button
                               type="button"
-                              onClick={() => handleRemoveFingerprint(fp.id)}
+                              onClick={() => handleRemoveFingerprint()}
                               className="p-1.5 text-slate-400 hover:text-rose-500 transition-colors"
-                              title="Remover huella"
+                              title="Baja de huella"
                             >
                               <Trash2 className="w-4 h-4" />
                             </button>
@@ -1548,7 +1806,7 @@ function EditPersonModal({
                             Sin huellas enroladas
                           </div>
                           <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                            Podés registrar hasta 3 huellas dactilares por persona en este equipo.
+                            El CGI de este firmware no enrola huellas. Se registran en el menú del ASI.
                           </p>
                         </div>
                       </div>
@@ -1562,18 +1820,11 @@ function EditPersonModal({
                       {fingerprints.length < 3 ? (
                         <button
                           type="button"
-                          disabled={enrollingFingerprint}
                           onClick={handleEnrollFingerprint}
-                          className="px-3.5 py-1.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-xl shadow-sm transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                          className="px-3.5 py-1.5 bg-slate-100 hover:bg-slate-200 dark:bg-slate-800 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-200 text-xs font-bold rounded-xl border border-slate-200 dark:border-slate-700 transition-colors flex items-center gap-1.5"
                         >
                           <Fingerprint className="w-4 h-4" />
-                          <span>
-                            {enrollingFingerprint
-                              ? "Esperando sensor ASI..."
-                              : fingerprints.length === 0
-                              ? "Habilitar Registro en ASI"
-                              : `Añadir Huella #${fingerprints.length + 1}`}
-                          </span>
+                          <span>Cómo enrolar en el ASI</span>
                         </button>
                       ) : (
                         <span className="text-xs font-semibold text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 px-3 py-1 rounded-xl border border-amber-200 dark:border-amber-800">
@@ -1590,8 +1841,10 @@ function EditPersonModal({
                   </div>
                 )}
               </div>
+              )}
 
-              {/* Acordeón 4: PIN de Acceso */}
+              {/* Acordeón 5: PIN de Acceso */}
+              {passwordPackOn && (
               <div className="rounded-xl border border-slate-200 dark:border-slate-800 overflow-hidden bg-white dark:bg-[#0b0f17]">
                 <button
                   type="button"
@@ -1623,6 +1876,7 @@ function EditPersonModal({
                   </div>
                 )}
               </div>
+              )}
             </div>
           </div>
 
@@ -1731,6 +1985,120 @@ function EditPersonModal({
                     Agregar
                   </button>
                 </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Submodal Emitir QR */}
+        {showAddQrModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 dark:bg-black/80 p-4 backdrop-blur-sm">
+            <div className="w-full max-w-md rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-[#111827] p-5 shadow-2xl space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-3">
+                <div className="flex items-center gap-2 font-bold text-slate-900 dark:text-white text-sm">
+                  <QrCode className="w-4 h-4 text-cyan-600 dark:text-cyan-400" />
+                  <span>Emitir código QR</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowAddQrModal(false)}
+                  className="text-slate-400 hover:text-slate-700 dark:hover:text-white"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="space-y-2">
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  Contenido del QR
+                </label>
+                <input
+                  type="text"
+                  value={newQrInput}
+                  onChange={(e) => setNewQrInput(e.target.value)}
+                  placeholder="Se genera solo si lo dejás vacío"
+                  className="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#0b0f17] px-3.5 py-2 text-sm font-mono text-slate-900 dark:text-white focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500"
+                />
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                  El lector compara exactamente este texto. Sin prefijos y hasta 128 bytes.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                    Vence
+                  </label>
+                  <input
+                    type="datetime-local"
+                    value={newQrUntil}
+                    onChange={(e) => setNewQrUntil(e.target.value)}
+                    className="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#0b0f17] px-3 py-2 text-sm text-slate-900 dark:text-white focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                    Usos (0 = sin límite)
+                  </label>
+                  <input
+                    type="number"
+                    min={0}
+                    value={newQrUses}
+                    onChange={(e) => setNewQrUses(Math.max(0, Number(e.target.value) || 0))}
+                    className="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#0b0f17] px-3 py-2 text-sm text-slate-900 dark:text-white focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500"
+                  />
+                </div>
+              </div>
+
+              <div className="space-y-2">
+                <p className="text-xs font-semibold text-slate-700 dark:text-slate-300">Quién valida</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setNewQrMode("local")}
+                    className={`rounded-xl border px-3 py-2 text-left text-[11px] ${
+                      newQrMode === "local"
+                        ? "border-cyan-600 bg-cyan-50 text-cyan-800 dark:bg-cyan-950/40 dark:text-cyan-200"
+                        : "border-slate-200 text-slate-600 dark:border-slate-700 dark:text-slate-300"
+                    }`}
+                  >
+                    <span className="block font-bold">Valida el lector</span>
+                    Abre sin red, con la copia del padrón.
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setNewQrMode("passthrough")}
+                    className={`rounded-xl border px-3 py-2 text-left text-[11px] ${
+                      newQrMode === "passthrough"
+                        ? "border-amber-600 bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-200"
+                        : "border-slate-200 text-slate-600 dark:border-slate-700 dark:text-slate-300"
+                    }`}
+                  >
+                    <span className="block font-bold">Valida AccesoPro</span>
+                    Excepción: revocación al momento. Si AccesoPro no responde, no abre.
+                  </button>
+                </div>
+              </div>
+
+              {qrError ? <p className="text-xs font-semibold text-rose-600 dark:text-rose-400">{qrError}</p> : null}
+
+              <div className="flex justify-end gap-2 pt-1">
+                <button
+                  type="button"
+                  onClick={() => setShowAddQrModal(false)}
+                  className="px-4 py-2 text-xs font-bold text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={handleAddQr}
+                  disabled={qrBusy}
+                  className="inline-flex items-center gap-1.5 px-4 py-2 bg-cyan-600 hover:bg-cyan-500 disabled:opacity-50 text-white text-xs font-bold rounded-xl shadow-sm transition-colors"
+                >
+                  {qrBusy ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <QrCode className="w-3.5 h-3.5" />}
+                  <span>{qrBusy ? "Emitiendo…" : "Emitir"}</span>
+                </button>
               </div>
             </div>
           </div>

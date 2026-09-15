@@ -30,6 +30,7 @@ import { dniEnrollApi } from "./dniEnroll.js";
 import { attendanceApi } from "./attendance.js";
 import { visitorsApi } from "./visitors.js";
 import { eventStreamRoutes } from "./eventStream.js";
+import { credentialsApi } from "./credentials.js";
 import {
   assignPlanToTenant,
   getTenantPlan,
@@ -230,9 +231,9 @@ app.post("/api/visit-passes/scan", async (c) => {
   return c.json(result, result.ok ? 200 : 403);
 });
 
-app.route("/api", eventStreamRoutes);
-
 app.use("/api/*", requireAuth);
+
+app.route("/api", eventStreamRoutes);
 
 app.get("/api/catalog", (c) => c.json({ modules: MODULE_CATALOG, plans: PLAN_CATALOG.map(serializePlan) }));
 
@@ -414,6 +415,7 @@ app.route("/api", attendanceApi);
 app.route("/api", visitorsApi);
 app.route("/api", alarmsApi);
 app.route("/api", dniEnrollApi);
+app.route("/api", credentialsApi);
 app.route("/agent", agentRoutes);
 
 app.get("/api/dashboard", async (c) => {

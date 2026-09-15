@@ -1,14 +1,16 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { Hono } from "hono";
 import { db } from "./db/client.js";
 import { actuators, cameras, commands, dahuaDevices, events, plates, sites } from "./db/schema.js";
 import { nid, normalizePlate } from "./scope.js";
-import { actuatorsForDahuaDevice, resolveDeviceLane } from "./accessPoints.js";
+import { actuatorsForDahuaDevice, actuatorsForSentido, resolveDeviceLane } from "./accessPoints.js";
 import { fireActuator } from "./actuatorExec.js";
 import { matchesSentido, sentidoOf } from "./engineBridge.js";
 import { broadcastRealtimeEvent } from "./eventStream.js";
 import { looksLikeJpeg, saveEventPhoto } from "./eventPhotos.js";
 import { markVisitStayByCard } from "./visitPass.js";
+import { findCredentialByPayload, incrementCredentialUse } from "./credentials.js";
+import { asiMethodKey } from "@accesopro/catalog";
 
 type AgentEnv = { Variables: { siteId: string } };
 
@@ -55,7 +57,7 @@ agentRoutes.get("/sync-state", async (c) => {
   const rows = await db
     .select()
     .from(events)
-    .where(and(eq(events.siteId, siteId), eq(events.type, "dahua_access")))
+    .where(and(eq(events.siteId, siteId), inArray(events.type, ["dahua_access", "qr_access"])))
     .orderBy(desc(events.createdAt))
     .limit(80);
 
@@ -164,7 +166,8 @@ agentRoutes.post("/events", async (c) => {
     }
   }
 
-  if (body.type === "dahua_access") {
+  const isReaderAccess = body.type === "dahua_access" || body.type === "qr_access";
+  if (isReaderAccess) {
     const dedupeKey = accessDedupeKey(payload);
     if (dedupeKey && recentAccessKeys.has(dedupeKey)) {
       return c.json({ ok: true, duplicate: true, openActuatorId: null });
@@ -176,7 +179,7 @@ agentRoutes.post("/events", async (c) => {
         const recent = await db
           .select({ payload: events.payload })
           .from(events)
-          .where(and(eq(events.siteId, siteId), eq(events.type, "dahua_access")))
+          .where(and(eq(events.siteId, siteId), inArray(events.type, ["dahua_access", "qr_access"])))
           .orderBy(desc(events.createdAt))
           .limit(40);
         for (const row of recent) {
@@ -196,10 +199,19 @@ agentRoutes.post("/events", async (c) => {
       }
     }
 
-    const failed = String(payload.Status ?? payload.status ?? "1") === "0";
+    const failedStatus = String(payload.Status ?? payload.status ?? "1") === "0";
     const method = String(payload.Method ?? payload.methodCode ?? payload.method ?? "");
     const isRemoteUnlock = method === "4" || method === "remote";
     const deviceId = String(payload.deviceId ?? "");
+    const card = String(payload.cardNo ?? payload.CardNo ?? payload.qrPayload ?? payload.UserID ?? "").trim();
+    const qrCred = card ? await findCredentialByPayload(siteId, card, "qr") : null;
+    let failed = failedStatus;
+
+    if (qrCred && qrCred.status === "active") {
+      payload.accessKind = payload.accessKind || "qr";
+      payload.credentialId = qrCred.id;
+      payload.method = asiMethodKey(payload.methodCode ?? payload.Method, "qr") === "unknown" ? "qr" : payload.method;
+    }
 
     if (deviceId) {
       const lane = await resolveDeviceLane(deviceId);
@@ -212,14 +224,44 @@ agentRoutes.post("/events", async (c) => {
       if (lane.accessPointId) payload.accessPointId = lane.accessPointId;
     }
 
+    // Pass-through: el lector no validó (status 0) y AccesoPro decide por vigencia, usos y baja.
+    if (
+      failed &&
+      qrCred &&
+      qrCred.status === "active" &&
+      qrCred.validationMode === "passthrough"
+    ) {
+      const now = Date.now();
+      const until = qrCred.validUntil instanceof Date ? qrCred.validUntil.getTime() : Number(qrCred.validUntil) || 0;
+      const from = qrCred.validFrom instanceof Date ? qrCred.validFrom.getTime() : Number(qrCred.validFrom) || 0;
+      const inWindow = (!from || now >= from) && (!until || now <= until);
+      const usesOk = !qrCred.maxUses || qrCred.usedCount < qrCred.maxUses;
+      if (inWindow && usesOk && site) {
+        failed = false;
+        payload.approved = true;
+        payload.status = "1";
+        payload.passthroughGranted = true;
+        try {
+          await incrementCredentialUse(qrCred.id);
+          const sentido = eventSentido || "in";
+          const targets = await actuatorsForSentido(siteId, sentido);
+          for (const a of targets.filter((x) => x.triggerQr)) {
+            await fireActuator(site, a.id, "open");
+            openActuatorId = a.id;
+          }
+        } catch {
+          /* el evento se guarda igual */
+        }
+      }
+    }
+
     // Evitamos bucle infinito: si ya es una apertura remota (Method 4), no disparamos actuadores.
     // Además, el terminal Dahua ya acciona su propio relé localmente al reconocer la cara;
     // solo se disparan actuadores vinculados distintos (barreras auxiliares u otros relés).
-    if (!failed && !isRemoteUnlock && site) {
+    if (!failed && !isRemoteUnlock && !payload.passthroughGranted && site) {
       try {
         const targets = await actuatorsForDahuaDevice(siteId, deviceId);
         for (const a of targets) {
-          // El ASI ya abre su relé local; no re-encolar el mismo equipo.
           if (a.driver === "dahua" && a.dahuaDeviceId === deviceId) continue;
           await fireActuator(site, a.id, "open");
         }
@@ -230,7 +272,6 @@ agentRoutes.post("/events", async (c) => {
 
     if (!failed && !isRemoteUnlock && eventSentido) {
       try {
-        const card = String(payload.cardNo ?? payload.CardNo ?? payload.UserID ?? "").trim();
         const stay = await markVisitStayByCard(siteId, card, eventSentido, eventDate);
         if (stay) {
           payload.accessKind = "visita";
@@ -243,7 +284,8 @@ agentRoutes.post("/events", async (c) => {
     }
   }
 
-  if (body.type === "qr_access" || body.type === "dni_access") {
+  // qr_access del portal / DNI (sin attach del ASI): no pasa por el bloque del lector.
+  if ((body.type === "qr_access" && !payload.deviceId) || body.type === "dni_access") {
     const resultado = String(payload.resultado ?? "autorizado");
     const failed = resultado !== "autorizado" && resultado !== "manual";
     const sentido = sentidoOf(String(payload.sentido ?? "in"));
@@ -270,7 +312,7 @@ agentRoutes.post("/events", async (c) => {
     accessPointId: eventAccessPointId,
   });
 
-  if (body.type === "dahua_access") {
+  if (body.type === "dahua_access" || body.type === "qr_access") {
     const k = accessDedupeKey(payload);
     if (k) rememberAccessKey(k);
   }

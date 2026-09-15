@@ -1,4 +1,4 @@
-import { integer, primaryKey, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { integer, primaryKey, sqliteTable, text, uniqueIndex } from "drizzle-orm/sqlite-core";
 
 export const tenants = sqliteTable("tenants", {
   id: text("id").primaryKey(),
@@ -571,6 +571,42 @@ export const dahuaPeriodSlots = sqliteTable("dahua_period_slots", {
   periodIndex: integer("period_index").notNull(),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
 });
+
+/**
+ * Padrón maestro de credenciales. AccesoPro es el dueño de la verdad y el ASI recibe una copia.
+ * Tarjeta y QR son credenciales distintas (el ASI las trata en nodos distintos), no el mismo número.
+ * Una persona admite varias: el lector soporta hasta 5 tarjetas, 3 huellas y 2 caras.
+ */
+export const personCredentials = sqliteTable(
+  "person_credentials",
+  {
+    id: text("id").primaryKey(),
+    siteId: text("site_id")
+      .notNull()
+      .references(() => sites.id),
+    /** UserID de la persona en el padrón del lector. */
+    dahuaUserId: text("dahua_user_id").notNull(),
+    /** card | qr | pin */
+    kind: text("kind").notNull(),
+    /** Lo que el lector coteja: CardNo, string del QR o PIN. */
+    payload: text("payload").notNull(),
+    label: text("label"),
+    validFrom: integer("valid_from", { mode: "timestamp_ms" }),
+    validUntil: integer("valid_until", { mode: "timestamp_ms" }),
+    /** Usos permitidos; 0 = sin límite. Viaja al equipo como UseTime. */
+    maxUses: integer("max_uses").notNull().default(0),
+    usedCount: integer("used_count").notNull().default(0),
+    /** local = decide el lector con su copia. passthrough = el lector consulta a AccesoPro. */
+    validationMode: text("validation_mode").notNull().default("local"),
+    /** active | revoked */
+    status: text("status").notNull().default("active"),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+    revokedAt: integer("revoked_at", { mode: "timestamp_ms" }),
+  },
+  (t) => ({
+    uniqPayload: uniqueIndex("person_credentials_payload_uq").on(t.siteId, t.kind, t.payload),
+  }),
+);
 
 /** Resultado de enroll por lector (ingreso / salida). */
 export const credentialDeviceSync = sqliteTable("credential_device_sync", {

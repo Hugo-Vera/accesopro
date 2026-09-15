@@ -48,6 +48,7 @@ API: `GET/PATCH /api/tenants/:id/features`. UI: Configuración → Módulos (blo
 
 - **AccesoPro:** dashboard Next (`apps/web`), API módulos (`apps/api`), Dahua CGI agent (`apps/agent`).
 - Eventos faciales: sync incremental ASI → SQLite (`GET /agent/sync-state` + stream; sin dump del historial del lector al arrancar). La foto del pase la copia el agent una vez (FileManager) a `apps/api/data/evidence`; toast/historial leen `GET /api/events/:id/photo`. Live/toast: `docs/PLAN_PORTERIA.md`.
+- Padrón maestro de credenciales (`person_credentials`): AccesoPro replica cara/PIN/tarjeta/QR al ASI para que decida offline. QR ≠ tarjeta. Pass-through (`QRCode.TransmissionEnable`) solo para excepciones. Huella: se enrola en el lector. Códigos de método: `packages/catalog` `METHOD_CODE_ROWS`. Detalle: `docs/ASI_CGI.md`.
 - ALPR: módulo `alpr` nativo (eventos `type=plate`, lista `plates`, cámaras en `access_point_cameras.role=alpr`). Agent opcional `AGENT_ALPR=1`.
 - En este predio hay NAT WAN de prueba al ASI (HTTP/SDK/RTSP TCP): **`docs/SITE_RB4011.md`** (sección 0, a mano). CGI vs RTSP del ASI (no mezclar `snapshot.cgi` con live): **`docs/ASI_CGI.md`**.
 

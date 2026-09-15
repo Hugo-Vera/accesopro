@@ -1,4 +1,5 @@
 import type { FacialEventAlert } from "@/components/LiveFacialAlertToast";
+import { asiMethodLabel } from "@accesopro/catalog";
 import { apiUrl } from "@/lib/api";
 
 export type EventRow = {
@@ -50,7 +51,8 @@ export function parseFacialEvent(
       p.UserID ||
       (isApproved ? "Usuario ASI" : "Rostro no reconocido"),
   );
-  const method = String(p.method || (p.Method === "15" ? "facial" : "biométrico"));
+  // Etiqueta ya resuelta contra el catálogo: el código crudo manda sobre el nombre guardado.
+  const method = asiMethodLabel(p.methodCode ?? p.Method, p.method);
   const deviceName = String(p.deviceName || "Lector Facial Dahua");
   const deviceId = String(p.deviceId || "");
   const snapshotUrl = normalizeSnapshotUrl(p.snapshotUrl || p.URL);

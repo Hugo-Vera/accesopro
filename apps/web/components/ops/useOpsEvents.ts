@@ -214,7 +214,7 @@ export function useOpsEvents({ tenantId, enabled, onAlert }: Options) {
       if (closed || sseStarted) return;
       sseStarted = true;
       try {
-        es = new EventSource(apiUrl(withTenant("/api/events/stream?type=dahua_access", tenantId)), {
+        es = new EventSource(apiUrl(withTenant("/api/events/stream?type=dahua_access,qr_access", tenantId)), {
           withCredentials: true,
         });
       } catch {
@@ -261,7 +261,7 @@ export function useOpsEvents({ tenantId, enabled, onAlert }: Options) {
 
     const fetchList = async () => {
       const res = await api<{ events: EventRow[] }>(
-        withTenant("/api/events?type=dahua_access&limit=24", tenantId),
+        withTenant("/api/events?type=dahua_access,qr_access&limit=24", tenantId),
       );
       return (res?.events || []).map((e) => ({ ...e, id: String(e.id) }));
     };

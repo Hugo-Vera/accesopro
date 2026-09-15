@@ -23,7 +23,9 @@ import {
   AlertTriangle,
   Camera,
   ShieldAlert,
+  HelpCircle,
 } from "lucide-react";
+import { asiMethodKey, asiMethodLabel } from "@accesopro/catalog";
 import { eventPhotoUrl } from "@/components/ops/parseFacialEvent";
 import { EventPhoto } from "@/components/ops/EventPhoto";
 import { useEscapeKey } from "@/hooks/useEscapeKey";
@@ -33,6 +35,38 @@ type EventRow = {
   type: string;
   createdAt: string | number;
   payload: Record<string, any>;
+};
+
+const METHOD_BADGE_STYLES: Record<string, string> = {
+  facial:
+    "bg-blue-50 text-blue-700 border border-blue-200 dark:bg-blue-950/60 dark:text-blue-300 dark:border-blue-800/60",
+  card:
+    "bg-indigo-50 text-indigo-700 border border-indigo-200 dark:bg-indigo-950/60 dark:text-indigo-300 dark:border-indigo-800/60",
+  remote:
+    "bg-purple-50 text-purple-700 border border-purple-200 dark:bg-purple-950/60 dark:text-purple-300 dark:border-purple-800/60",
+  qr:
+    "bg-cyan-50 text-cyan-700 border border-cyan-200 dark:bg-cyan-950/60 dark:text-cyan-300 dark:border-cyan-800/60",
+  password:
+    "bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-800/60",
+  password_after_card:
+    "bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-800/60",
+  card_after_password:
+    "bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-800/60",
+  fingerprint:
+    "bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-950/60 dark:text-emerald-300 dark:border-emerald-800/60",
+  unknown:
+    "bg-slate-100 text-slate-700 border border-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700",
+};
+
+const METHOD_BADGE_ICONS: Record<string, typeof ScanFace> = {
+  facial: ScanFace,
+  card: CreditCard,
+  remote: Radio,
+  qr: QrCode,
+  password: KeyRound,
+  password_after_card: KeyRound,
+  card_after_password: KeyRound,
+  fingerprint: Fingerprint,
 };
 
 export default function DahuaEventosPage() {
@@ -61,7 +95,7 @@ export default function DahuaEventosPage() {
   const loadEvents = () => {
     if (!tenantId) return;
     setLoading(true);
-    api<{ events: EventRow[] }>(withTenant("/api/events?type=dahua_access&limit=80", tenantId))
+    api<{ events: EventRow[] }>(withTenant("/api/events?type=dahua_access,qr_access&limit=80", tenantId))
       .then((d) => {
         setEvents(d.events || []);
         setError(null);
@@ -77,7 +111,7 @@ export default function DahuaEventosPage() {
     let es: EventSource | null = null;
     let pollTimer: ReturnType<typeof setInterval> | null = null;
     try {
-      es = new EventSource(apiUrl(withTenant("/api/events/stream?type=dahua_access", tenantId)), {
+      es = new EventSource(apiUrl(withTenant("/api/events/stream?type=dahua_access,qr_access", tenantId)), {
         withCredentials: true,
       });
       es.addEventListener("access_event", (event: MessageEvent) => {
@@ -111,7 +145,7 @@ export default function DahuaEventosPage() {
     // SSE a menudo 503 detrás de Docker; poll corto para que el historial no quede congelado
     pollTimer = setInterval(() => {
       if (!tenantId) return;
-      api<{ events: EventRow[] }>(withTenant("/api/events?type=dahua_access&limit=80", tenantId))
+      api<{ events: EventRow[] }>(withTenant("/api/events?type=dahua_access,qr_access&limit=80", tenantId))
         .then((d) => {
           setEvents(d.events || []);
           setError(null);
@@ -191,61 +225,24 @@ export default function DahuaEventosPage() {
     for (const e of events) {
       const p = e.payload || {};
       const isApp = p.approved === true || String(p.status ?? p.Status ?? "0") === "1";
-      const m = String(p.method || p.Method || "");
-      if (m === "remote" || m === "4") remote++;
+      if (asiMethodKey(p.methodCode ?? p.Method, p.method) === "remote") remote++;
       if (isApp) approved++;
       else failed++;
     }
     return { total: events.length, approved, failed, remote };
   }, [events]);
 
+  /** El código crudo del ASI manda: el historial viejo se corrige solo, sin tocar la evidencia. */
   function getMethodBadge(method: string, methodCode: string) {
-    const m = (method || "").toLowerCase();
-    const code = String(methodCode || "");
-    if (m === "facial" || code === "15") {
-      return (
-        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-blue-50 text-blue-700 border border-blue-200 dark:bg-blue-950/60 dark:text-blue-300 dark:border-blue-800/60">
-          <ScanFace className="w-3.5 h-3.5" />
-          <span>Rostro</span>
-        </span>
-      );
-    }
-    if (m === "card" || code === "1") {
-      return (
-        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-indigo-50 text-indigo-700 border border-indigo-200 dark:bg-indigo-950/60 dark:text-indigo-300 dark:border-indigo-800/60">
-          <CreditCard className="w-3.5 h-3.5" />
-          <span>Tarjeta</span>
-        </span>
-      );
-    }
-    if (m === "remote" || code === "4") {
-      return (
-        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-purple-50 text-purple-700 border border-purple-200 dark:bg-purple-950/60 dark:text-purple-300 dark:border-purple-800/60">
-          <Radio className="w-3.5 h-3.5" />
-          <span>Remoto</span>
-        </span>
-      );
-    }
-    if (m === "qr" || code === "6") {
-      return (
-        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-cyan-50 text-cyan-700 border border-cyan-200 dark:bg-cyan-950/60 dark:text-cyan-300 dark:border-cyan-800/60">
-          <QrCode className="w-3.5 h-3.5" />
-          <span>Código QR</span>
-        </span>
-      );
-    }
-    if (m === "password" || code === "3") {
-      return (
-        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-amber-50 text-amber-700 border border-amber-200 dark:bg-amber-950/60 dark:text-amber-300 dark:border-amber-800/60">
-          <KeyRound className="w-3.5 h-3.5" />
-          <span>PIN</span>
-        </span>
-      );
-    }
+    const key = asiMethodKey(methodCode, method);
+    const style = METHOD_BADGE_STYLES[key] ?? METHOD_BADGE_STYLES.unknown;
+    const Icon = METHOD_BADGE_ICONS[key] ?? HelpCircle;
     return (
-      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-semibold bg-slate-100 text-slate-700 border border-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700">
-        <Fingerprint className="w-3.5 h-3.5" />
-        <span>{method || "Biométrico"}</span>
+      <span
+        className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md text-[11px] font-semibold ${style}`}
+      >
+        <Icon className="w-3.5 h-3.5" />
+        <span>{asiMethodLabel(methodCode, method)}</span>
       </span>
     );
   }
@@ -489,7 +486,7 @@ export default function DahuaEventosPage() {
 
                         {/* Método */}
                         <td className="px-4 py-3 whitespace-nowrap">
-                          {getMethodBadge(p.method, p.Method)}
+                          {getMethodBadge(p.method, p.methodCode ?? p.Method)}
                         </td>
 
                         {/* Estado */}

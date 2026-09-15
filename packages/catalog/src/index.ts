@@ -280,7 +280,7 @@ export const CAPABILITY_CATALOG: CapabilityDef[] = [
   { key: "dahua.open", group: "Dahua", name: "Abrir desde Dahua", summary: "openDoor / relé del terminal.", moduleKey: "dahua_access" },
   { key: "dahua.persons", group: "Dahua", name: "Personas en el lector", summary: "Padrón: quién existe, vigencia y baja.", moduleKey: "dahua_access" },
   { key: "dahua.face", group: "Dahua", name: "Facial", summary: "Desbloqueo por cara y carga de foto.", moduleKey: "dahua_access" },
-  { key: "dahua.fingerprint", group: "Dahua", name: "Huella", summary: "Desbloqueo por huella digital.", moduleKey: "dahua_access" },
+  { key: "dahua.fingerprint", group: "Dahua", name: "Huella", summary: "Se enrola en el lector. AccesoPro lee el conteo.", moduleKey: "dahua_access" },
   { key: "dahua.card", group: "Dahua", name: "Tarjeta", summary: "Desbloqueo por tarjeta / CardNo.", moduleKey: "dahua_access" },
   { key: "dahua.password", group: "Dahua", name: "Contraseña del lector", summary: "PIN / clave en el ASI.", moduleKey: "dahua_access" },
   { key: "dahua.qr", group: "Dahua", name: "QR en el lector", summary: "QR nativo del ASI (paso por puerta).", moduleKey: "dahua_access" },
@@ -388,7 +388,7 @@ export const FEATURE_PACK_CATALOG: FeaturePackDef[] = [
     key: "dahua.fingerprint",
     parentModule: "dahua_access",
     name: "Huella",
-    summary: "Método huella digital en el ASI.",
+    summary: "Se enrola en el menú del ASI. AccesoPro lee el conteo y da de baja con la persona.",
     capabilityKey: "dahua.fingerprint",
     href: "/dashboard/dahua/personas",
     defaultOn: false,
@@ -418,7 +418,7 @@ export const FEATURE_PACK_CATALOG: FeaturePackDef[] = [
     key: "dahua.qr",
     parentModule: "dahua_access",
     name: "QR del equipo",
-    summary: "Lectura y emisión de QR nativo del ASI.",
+    summary: "QR nativo del ASI: réplica local o pass-through a AccesoPro.",
     capabilityKey: "dahua.qr",
     href: "/dashboard/dahua/qr",
     defaultOn: false,
@@ -568,14 +568,116 @@ export function isFeatureKey(value: string): boolean {
   return FEATURE_PACK_CATALOG.some((f) => f.key === value);
 }
 
-/** Métodos de desbloqueo del ASI que se venden por pack y se escriben en DoorParam. */
+/**
+ * Métodos de desbloqueo que se escriben en el nodo `AccessControl` del ASI.
+ * El QR no está acá a propósito: vive en el nodo `QRCode` y su toggle
+ * (`TransmissionEnable`) es pass-through al back-end, no "habilitar QR".
+ */
 export const ASI_UNLOCK_METHOD_PACKS = [
   "dahua.face",
   "dahua.fingerprint",
   "dahua.card",
   "dahua.password",
-  "dahua.qr",
 ] as const;
+
+/* —— Códigos del campo `Method` del ASI (manual de integración Dahua) —— */
+
+export type AsiMethodKey =
+  | "password"
+  | "card"
+  | "password_after_card"
+  | "card_after_password"
+  | "remote"
+  | "fingerprint"
+  | "facial"
+  | "qr";
+
+export type AsiMethodDef = {
+  code: number;
+  key: AsiMethodKey;
+  label: string;
+  /** `manual`: documentado por Dahua. `observado`: medido en este firmware, sin línea en el manual. */
+  source: "manual" | "observado";
+};
+
+/**
+ * Única fuente de verdad de los códigos que emite el ASI. Nadie más arma su propia tabla.
+ * El código del QR no está documentado: se mide en Diagnóstico (eventos crudos del lector)
+ * y se declara en `ASI_QR_METHOD_CODE`.
+ */
+export const METHOD_CODE_ROWS: AsiMethodDef[] = [
+  { code: 0, key: "password", label: "Clave PIN", source: "manual" },
+  { code: 1, key: "card", label: "Tarjeta", source: "manual" },
+  { code: 2, key: "password_after_card", label: "Tarjeta + clave", source: "manual" },
+  { code: 3, key: "card_after_password", label: "Clave + tarjeta", source: "manual" },
+  { code: 4, key: "remote", label: "Apertura remota", source: "observado" },
+  { code: 6, key: "fingerprint", label: "Huella", source: "manual" },
+  { code: 15, key: "facial", label: "Rostro", source: "manual" },
+];
+
+/** Código de `Method` con el que este firmware reporta el QR. `null` hasta medirlo en el equipo. */
+export const ASI_QR_METHOD_CODE: number | null = null;
+
+/* —— UserType / CardType del padrón del ASI —— */
+
+/**
+ * Orden del manual: General, Blocklist, Guest, Patrol, VIP. Confirmar con el volcado crudo del
+ * padrón (Diagnóstico → Volcar padrón crudo) antes de cambiarlo: un invitado cargado como
+ * `blocklist` entra directo a la lista negra del lector.
+ *
+ * `guest` es el único tipo que el manual habilita para abrir "dentro de un período o por una
+ * cantidad de veces": es el que corresponde a un pase de visita.
+ */
+export const ASI_USER_TYPES = {
+  general: 0,
+  blocklist: 1,
+  guest: 2,
+  patrol: 3,
+  vip: 4,
+} as const;
+
+export type AsiUserTypeKey = keyof typeof ASI_USER_TYPES;
+
+/** Tipo de tarjeta en `AccessControlCard`. Misma enumeración que `UserType`, mismo pendiente. */
+export const ASI_CARD_TYPES = ASI_USER_TYPES;
+
+export function asiMethodByCode(code: unknown): AsiMethodDef | null {
+  const raw = String(code ?? "").trim();
+  if (!raw) return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n)) return null;
+  if (ASI_QR_METHOD_CODE !== null && n === ASI_QR_METHOD_CODE) {
+    return { code: n, key: "qr", label: "Código QR", source: "observado" };
+  }
+  return METHOD_CODE_ROWS.find((m) => m.code === n) ?? null;
+}
+
+/**
+ * Clave del método de un evento. El código crudo manda: así el historial viejo se corrige solo
+ * sin reescribir evidencia. El nombre guardado solo se usa cuando no hay código.
+ */
+export function asiMethodKey(code: unknown, storedName?: unknown): AsiMethodKey | "manual" | "unknown" {
+  const hit = asiMethodByCode(code);
+  if (hit) return hit.key;
+  const name = String(storedName ?? "").trim().toLowerCase();
+  if (name === "manual") return "manual";
+  if (name === "qr") return "qr";
+  const byName = METHOD_CODE_ROWS.find((m) => m.key === name);
+  return byName ? byName.key : "unknown";
+}
+
+/** Etiqueta del historial. Lo que no está medido se muestra como desconocido, no se adivina. */
+export function asiMethodLabel(code: unknown, storedName?: unknown): string {
+  const key = asiMethodKey(code, storedName);
+  if (key === "manual") return "Manual";
+  if (key === "qr") return "Código QR";
+  if (key !== "unknown") {
+    const hit = METHOD_CODE_ROWS.find((m) => m.key === key);
+    if (hit) return hit.label;
+  }
+  const raw = String(code ?? "").trim();
+  return raw ? `Desconocido (código ${raw})` : "Desconocido";
+}
 
 /* —— Puntos de acceso (topología del predio; no es un módulo comercial) —— */
 

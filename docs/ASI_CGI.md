@@ -78,3 +78,52 @@ Probar si está trabado:
 No mezclar 1+5. El heartbeat del agent (`/agent/heartbeat`) **no** habla con el ASI.
 
 CGI interactivo (RecordFinder, FileManager, probe) va serializado por host: no se pisan entre sí. El attach queda fuera de ese lock porque es un stream largo.
+
+## Credenciales (maestro AccesoPro, réplica ASI)
+
+AccesoPro es el padrón maestro. El ASI recibe una copia ejecutable (cara, PIN, tarjeta, QR replicado como fila `AccessControlCard`) y sigue abriendo sin red. El pass-through (`QRCode.TransmissionEnable`) es la **excepción**: el lector no valida y AccesoPro decide (revocación instantánea, permanencia, autorización en el momento).
+
+| Método | Quién valida (regla) | CGI / RPC | Notas |
+|--------|----------------------|-----------|--------|
+| Cara | ASI local | `FaceInfoManager.cgi` | Hasta 2 caras. |
+| Huella | ASI local | Solo `FingerEnable` + conteo `AccessFingerprint.startFind` | **No hay insert CGI.** Se enrola en el menú del lector. |
+| PIN | ASI local | `Password=` en `recordUpdater AccessControlCard` | |
+| Tarjeta | ASI local | `recordUpdater AccessControlCard` (`CardNo`) | Hasta 5 por persona. Fila propia por CardNo. |
+| QR | ASI local (réplica) o AccesoPro (pass-through) | Nodo `QRCode` (`TransmissionEnable`, `ValidTime`) | Distinto de tarjeta. Payload < 128 bytes, 3-5 cm de la lente. |
+
+### Códigos de `Method` (AccessControlCardRec)
+
+Fuente: manual de integración, salvo lo marcado como observado. El historial etiqueta desde el **código crudo** (`packages/catalog` `METHOD_CODE_ROWS`). Lo no medido se muestra como `Desconocido (código N)`.
+
+| Código | Método | Fuente |
+|--------|--------|--------|
+| 0 | PIN / clave | manual |
+| 1 | Tarjeta | manual |
+| 2 | Tarjeta + clave | manual |
+| 3 | Clave + tarjeta | manual |
+| 4 | Apertura remota | observado (no reabrir relés) |
+| 6 | Huella | manual |
+| 15 | Rostro | manual |
+| QR | *sin código documentado* | medir en Diagnóstico → eventos crudos; `ASI_QR_METHOD_CODE` queda `null` hasta entonces |
+
+### UserType / CardType
+
+Orden del manual: General=0, Blocklist=1, Guest=2, Patrol=3, VIP=4. **Confirmar con Diagnóstico → Volcar padrón crudo.** Los pases de visita se enrolan como `guest` (2), no como `1` (riesgo de lista negra). `Guest` es el tipo que el manual limita por vigencia o cantidad de usos (`UseTime`).
+
+### Instrumento de medición
+
+`/dashboard/diagnostico` → panel **Descubrimiento del lector ASI**: volcado de `QRCode`, `AccessControl` y nodos de pass-through; padrón crudo; eventos del attach sin mapear. No opera el equipo: solo lee.
+
+### Medido vs pendiente (firmware `3.000.0000000.2.R`)
+
+| Dato | Estado |
+|------|--------|
+| Códigos 0, 1, 2, 3, 6, 15 | Manual de integración. El historial ya etiqueta desde el código crudo. |
+| Código 4 = apertura remota | Observado en AccesoPro (no reabrir relés). |
+| Código de Method del QR | **Sin confirmar.** `ASI_QR_METHOD_CODE = null`. Medir pasando un QR con Diagnóstico abierto. |
+| Campo del string del QR | **Sin confirmar.** El agent mira `QRCode` / `QrCode` / `QRCodeInfo` / `QRData` y, si no, `CardNo`. |
+| UserType guest = 2 | Del orden del manual. **Confirmar** con un invitado creado en el menú del ASI. |
+| `UseTime` + `ValidDateEnd` | Se escriben. Comprobar con un pase de un solo uso, pasarlo dos veces. |
+| `ValidTime` del nodo QRCode | Se lee y se escribe; unidad (segundos) **sin confirmar** en este firmware. |
+| Insert de huella por CGI | **No aparece.** Enrolar en el menú del lector. AccesoPro cuenta con `AccessFingerprint.startFind`. |
+

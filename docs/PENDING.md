@@ -47,22 +47,24 @@ Snapshot 2026-09-10. No mezclar con update Ubuntu.
 ## Personas y credenciales (`dahua.persons`)
 
 - [x] MVP: alta cara + QR (CardNo) + listar + borrar.
-- [ ] Editar persona / vigencia / franjas.
-- [ ] Huella y tarjeta física.
-- [ ] PIN / contraseña desde el panel.
+- [ ] Editar persona / vigencia / franjas (parcial: vigencia y UseTime ya viajan al ASI).
+- [ ] Huella: enrolar por CGI (no existe en este firmware; se registra en el menú del ASI).
+- [x] Tarjeta física: padrón maestro + réplica `AccessControlCard` (alta/baja, listen).
+- [x] PIN / contraseña desde el panel (credencial `pin` del padrón maestro, replica `Password=` al ASI).
 - [ ] Listado si firmware usa AccessUser.cgi.
 
 ## QR: dos cosas distintas
 
 | Tipo | Dónde | Para qué |
 |------|--------|----------|
-| **QR nativo ASI** | Pack `dahua.qr` | Ajustes del terminal |
-| **QR visita AccesoPro** | Módulo `visitors` | Pase firmado; portal genera |
+| **QR nativo ASI** | Pack `dahua.qr` | Réplica local o pass-through (`TransmissionEnable`) |
+| **QR visita AccesoPro** | Módulo `visitors` | Pase con vigencia y usos; se replica como invitado (`UserType` guest) |
 
-- [x] Pack `dahua.qr`: UI ajustes CGI (parcial).
-- [x] Portal: emitir / revocar QR visita.
-- [x] Lectura ASI → AccesoPro (`markVisitStayByCard` + `scanVisitPass` con wiring).
-- [x] Payload QR alineado con CardNo enrollado.
+- [x] Pack `dahua.qr`: UI con los dos modos (valida el lector / valida AccesoPro).
+- [x] Portal: emitir / revocar QR visita (imagen local, sin `qrserver.com`).
+- [x] Lectura ASI → AccesoPro (`markVisitStayByCard` + pass-through si el lector rechaza).
+- [x] QR y tarjeta separados en el padrón maestro (`person_credentials`).
+- [ ] Código de `Method` del QR: medir en Diagnóstico (eventos crudos) y cargar `ASI_QR_METHOD_CODE`.
 
 ## Live / evidencia
 

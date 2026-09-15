@@ -31,10 +31,6 @@ function timeLabel(createdAt: string | number | undefined) {
   return `${dd}/${mm} ${hh}:${min}`;
 }
 
-function methodLabel(method: string) {
-  return method === "facial" ? "Rostro" : method;
-}
-
 function FeedThumb({
   alert,
   className,
@@ -223,7 +219,7 @@ function EventDetailModal({
               <div style={{ marginTop: 8, fontSize: 15, color: "#475569", lineHeight: 1.35 }}>
                 {alert.deviceName}
                 <span style={{ opacity: 0.55 }}> · </span>
-                {alert.method === "facial" ? "Rostro" : alert.method}
+                {alert.method}
               </div>
               {!isApproved ? (
                 <div style={{ marginTop: 10, fontSize: 15, fontWeight: 700, color: "#be123c", lineHeight: 1.35 }}>
@@ -324,9 +320,7 @@ export function LiveFacialFeed({
                       compact ? "text-[11.5px]" : "text-[12px]"
                     }`}
                   >
-                    {compact
-                      ? methodLabel(alert.method)
-                      : `${alert.deviceName} · ${methodLabel(alert.method)}`}
+                    {compact ? alert.method : `${alert.deviceName} · ${alert.method}`}
                   </p>
                   <div className="flex min-w-0 items-center justify-between gap-2">
                     <time

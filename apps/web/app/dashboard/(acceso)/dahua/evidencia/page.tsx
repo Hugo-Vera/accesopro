@@ -26,7 +26,7 @@ export default function DahuaEvidenciaPage() {
 
   useEffect(() => {
     if (!tenantId) return;
-    api<{ events: EventRow[] }>(withTenant("/api/events?type=dahua_access&limit=80", tenantId))
+    api<{ events: EventRow[] }>(withTenant("/api/events?type=dahua_access,qr_access&limit=80", tenantId))
       .then((d) => setEvents(d.events || []))
       .catch((err) => setError(err instanceof Error ? err.message : "Error"));
   }, [tenantId]);

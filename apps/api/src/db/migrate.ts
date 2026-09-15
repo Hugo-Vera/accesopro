@@ -637,6 +637,57 @@ async function backfillAccessPointsFromLegacy() {
       UNIQUE (device_id, fingerprint)
     )
   `);
+  // Padrón maestro de credenciales: tarjeta y QR son cosas distintas, no el mismo número.
+  await db.run(sql`
+    CREATE TABLE IF NOT EXISTS person_credentials (
+      id TEXT PRIMARY KEY,
+      site_id TEXT NOT NULL REFERENCES sites(id),
+      dahua_user_id TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      label TEXT,
+      valid_from INTEGER,
+      valid_until INTEGER,
+      max_uses INTEGER NOT NULL DEFAULT 0,
+      used_count INTEGER NOT NULL DEFAULT 0,
+      validation_mode TEXT NOT NULL DEFAULT 'local',
+      status TEXT NOT NULL DEFAULT 'active',
+      created_at INTEGER NOT NULL,
+      revoked_at INTEGER
+    )
+  `);
+  await db.run(sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS person_credentials_payload_uq
+      ON person_credentials (site_id, kind, payload)
+  `);
+  await db.run(sql`
+    CREATE INDEX IF NOT EXISTS person_credentials_user_idx
+      ON person_credentials (site_id, dahua_user_id)
+  `);
+  // Backfill: los pases de visita ya existentes son credenciales QR (hoy cargadas en el CardNo
+  // del lector). El userId espeja `v_${passId.slice(-8)}` de residents.ts.
+  await db.run(sql`
+    INSERT OR IGNORE INTO person_credentials (
+      id, site_id, dahua_user_id, kind, payload, label,
+      valid_from, valid_until, max_uses, used_count, validation_mode, status, created_at
+    )
+    SELECT
+      'cred_vp_' || vp.id,
+      vp.site_id,
+      'v_' || substr(vp.id, -8),
+      'qr',
+      COALESCE(vp.dahua_card_no, vp.token),
+      vp.guest_name,
+      vp.valid_from,
+      vp.valid_until,
+      0,
+      0,
+      'local',
+      CASE WHEN vp.status = 'active' THEN 'active' ELSE 'revoked' END,
+      vp.created_at
+    FROM visit_passes vp
+    WHERE COALESCE(vp.dahua_card_no, vp.token) IS NOT NULL
+  `);
   await db.run(sql`
     CREATE TABLE IF NOT EXISTS credential_device_sync (
       id TEXT PRIMARY KEY,

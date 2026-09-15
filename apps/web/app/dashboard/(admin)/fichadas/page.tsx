@@ -23,6 +23,7 @@ import {
   QrCode,
   KeyRound,
   FileText,
+  Radio,
   Calendar,
   Building2,
   ShieldCheck,
@@ -36,7 +37,7 @@ type NormalizedAttendance = {
   personName: string;
   personId: string;
   direction: "in" | "out";
-  method: "facial" | "card" | "fingerprint" | "qr" | "manual" | "password" | "other";
+  method: "facial" | "card" | "fingerprint" | "qr" | "manual" | "password" | "remote" | "combined" | "other";
   device: string;
   authorized: boolean;
   notes?: string;
@@ -210,7 +211,10 @@ export default function FichadasPage() {
       case "qr":
         return <QrCode className="w-3.5 h-3.5 text-cyan-500" />;
       case "password":
+      case "combined":
         return <KeyRound className="w-3.5 h-3.5 text-amber-500" />;
+      case "remote":
+        return <Radio className="w-3.5 h-3.5 text-purple-500" />;
       case "manual":
         return <FileText className="w-3.5 h-3.5 text-purple-500" />;
       default:
@@ -230,10 +234,14 @@ export default function FichadasPage() {
         return "Código QR";
       case "password":
         return "Clave PIN";
+      case "combined":
+        return "Tarjeta + clave";
+      case "remote":
+        return "Apertura remota";
       case "manual":
         return "Manual";
       default:
-        return "Biométrico";
+        return "Otro";
     }
   }
 

@@ -274,7 +274,7 @@ export function LiveFacialAlertToast({ alert, onDismiss, onOpenRelay }: Props) {
               <div style={{ marginTop: 4, fontSize: 12, color: "#475569", lineHeight: 1.35 }}>
                 {shown.deviceName}
                 <span style={{ opacity: 0.55 }}> · </span>
-                {shown.method === "facial" ? "Rostro" : shown.method}
+                {shown.method}
               </div>
               {!isApproved ? (
                 <div style={{ marginTop: 6, fontSize: 12, fontWeight: 700, color: isDark ? "#fda4af" : "#be123c", lineHeight: 1.35 }}>

@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import type { AuthUser } from "./auth.js";
 
 export type RealtimeEvent = {
   id: string;
@@ -35,11 +36,16 @@ function sseEncode(event: string, data: string, id?: string): Uint8Array {
   return new TextEncoder().encode(lines.join("\n"));
 }
 
-export const eventStreamRoutes = new Hono();
+type Env = { Variables: { user: AuthUser } };
+
+export const eventStreamRoutes = new Hono<Env>();
 
 eventStreamRoutes.get("/events/stream", (c) => {
-  const typeFilter = c.req.query("type") || undefined;
-  const tenantFilter = c.req.query("tenantId") || undefined;
+  const user = c.get("user");
+  const typeFilterRaw = c.req.query("type") || undefined;
+  const typeFilter = typeFilterRaw ? new Set(typeFilterRaw.split(",").map((t) => t.trim()).filter(Boolean)) : null;
+  const tenantFilter =
+    user.role === "platform_admin" ? c.req.query("tenantId") || undefined : user.tenantId || undefined;
 
   let keepAlive: ReturnType<typeof setInterval> | null = null;
   let onEvent: SSEListener | null = null;
@@ -70,12 +76,10 @@ eventStreamRoutes.get("/events/stream", (c) => {
         }
       };
 
-      safeEnqueue(
-        sseEncode("connected", JSON.stringify({ ok: true, timestamp: Date.now() })),
-      );
+      safeEnqueue(sseEncode("connected", JSON.stringify({ ok: true, timestamp: Date.now() })));
 
       onEvent = (ev) => {
-        if (typeFilter && ev.type !== typeFilter) return;
+        if (typeFilter && !typeFilter.has(ev.type)) return;
         if (tenantFilter && ev.tenantId && ev.tenantId !== tenantFilter) return;
         safeEnqueue(sseEncode("access_event", JSON.stringify(ev), String(ev.id)));
       };
