@@ -1,10 +1,12 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { api, withTenant } from "@/lib/api";
 import { useDash } from "@/components/DashboardProvider";
-import { ModuleGate, PageHeader } from "@/components/PageHeader";
+import { ModuleGate, PageHeader, SectionTabs } from "@/components/PageHeader";
 import { VisitorCheckinModal } from "@/components/VisitorCheckinModal";
+import { AltaDniPanel } from "@/components/AltaDniPanel";
 import { useEscapeKey } from "@/hooks/useEscapeKey";
 import {
   UserPlus,
@@ -94,8 +96,12 @@ function formatStay(inAt: string | number | null, outAt: string | number | null)
   return m ? `${h} h ${m} min` : `${h} h`;
 }
 
-export default function VisitasPage() {
-  const { tenantId, can } = useDash();
+function VisitasInner() {
+  const { tenantId, can, enabled } = useDash();
+  const params = useSearchParams();
+  const router = useRouter();
+  const showDni = enabled("dni_enroll") && can("access.dni_enroll");
+  const tab = showDni && params.get("tab") === "dni" ? "dni" : "visitas";
   const [records, setRecords] = useState<VisitRecordRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -210,9 +216,14 @@ export default function VisitasPage() {
     <ModuleGate module="visitors">
       <div className="space-y-6">
         <PageHeader
-          title="Control y Registro de Visitas"
-          subtitle="Acreditación integral de visitantes, vehículos, pólizas de seguro automotor en Argentina y licencias de conducir."
+          title={tab === "dni" ? "Alta por DNI" : "Visitas"}
+          subtitle={
+            tab === "dni"
+              ? "Pegá el QR o PDF417 del DNI argentino en portería. Opcional: enrollar CardNo = DNI en el ASI."
+              : "Acreditación de visitantes, vehículos, pólizas y licencias."
+          }
           actions={
+            tab === "visitas" ? (
             <div className="flex items-center gap-2">
               <button
                 type="button"
@@ -235,8 +246,31 @@ export default function VisitasPage() {
                 </button>
               )}
             </div>
+            ) : undefined
           }
         />
+
+        {showDni ? (
+          <SectionTabs
+            tabs={[
+              { id: "visitas", label: "Visitas" },
+              { id: "dni", label: "Alta DNI" },
+            ]}
+            value={tab}
+            onChange={(id) => {
+              const next = new URLSearchParams(params.toString());
+              if (id === "visitas") next.delete("tab");
+              else next.set("tab", id);
+              const qs = next.toString();
+              router.replace(qs ? `/dashboard/visitas?${qs}` : "/dashboard/visitas");
+            }}
+          />
+        ) : null}
+
+        {tab === "dni" ? (
+          <AltaDniPanel />
+        ) : (
+        <>
 
         {/* Notificaciones */}
         {msg && (
@@ -695,7 +729,17 @@ export default function VisitasPage() {
             setTimeout(() => setMsg(null), 5000);
           }}
         />
+        </>
+        )}
       </div>
     </ModuleGate>
+  );
+}
+
+export default function VisitasPage() {
+  return (
+    <Suspense fallback={<p className="text-sm text-muted">Cargando visitas…</p>}>
+      <VisitasInner />
+    </Suspense>
   );
 }

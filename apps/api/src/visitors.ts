@@ -18,6 +18,9 @@ import { fireActuator } from "./actuatorExec.js";
 import { laneCodeOf } from "./accessPoints.js";
 import type { AuthUser } from "./auth.js";
 import { denyUnlessCapability } from "./grants.js";
+import { tenantFeatureEnabled } from "./features.js";
+import { enrollPersonOnSiteDevicesWait } from "./dahuaSite.js";
+import { ASI_USER_TYPES, toAsiCardNo } from "@accesopro/catalog";
 
 function tsMs(v: Date | number | null | undefined) {
   if (v == null) return null;
@@ -434,6 +437,9 @@ export type VisitorCheckinPayload = {
   };
   openRelay?: boolean;
   actuatorId?: string;
+  /** qr = pase AccesoPro. face = enrolar foto al ASI (webcam portería). */
+  accessMethod?: "qr" | "face";
+  photoBase64?: string;
 };
 
 /** Endpoint transaccional de Check-in en varios pasos */
@@ -456,6 +462,12 @@ visitorsApi.post("/visitors/checkin", async (c) => {
   const siteId = scoped.site.id;
   const now = new Date();
   const dniClean = normalizeDni(body.identity.dniNumber);
+  const accessMethod = body.accessMethod === "face" ? "face" : "qr";
+  const photo = typeof body.photoBase64 === "string" ? body.photoBase64.replace(/^data:image\/\w+;base64,/, "").trim() : "";
+
+  if (accessMethod === "face" && photo.length < 80) {
+    return c.json({ error: "Para validar por cara hace falta la captura de la webcam" }, 400);
+  }
 
   // 1. Resolver o Crear Persona en `visitor_identities`
   let person = await db
@@ -621,6 +633,27 @@ visitorsApi.post("/visitors/checkin", async (c) => {
     }
   }
 
+  let dahuaSynced = false;
+  if (accessMethod === "face" && (await tenantFeatureEnabled(tenantId, "dahua.face"))) {
+    const until = new Date(now.getTime() + 24 * 60 * 60 * 1000);
+    const dahuaUserId = `v_${visitId.slice(-8)}`;
+    try {
+      const results = await enrollPersonOnSiteDevicesWait(siteId, {
+        userId: dahuaUserId,
+        name: `${person!.firstName} ${person!.lastName}`.trim(),
+        cardNo: toAsiCardNo(dniClean.padStart(8, "0")),
+        photoBase64: photo,
+        userType: ASI_USER_TYPES.guest,
+        useTime: 4,
+        validDateStart: now.toISOString().slice(0, 19).replace("T", " "),
+        validDateEnd: until.toISOString().slice(0, 19).replace("T", " "),
+      });
+      dahuaSynced = results.some((r) => r.ok);
+    } catch {
+      /* el check-in local no depende del lector */
+    }
+  }
+
   // 5. Registrar evento en auditoría
   await db.insert(events).values({
     id: nid(),
@@ -637,6 +670,8 @@ visitorsApi.post("/visitors/checkin", async (c) => {
       authorizedBy: body.destination.authorizedBy,
       propertyId: body.destination.propertyId,
       isVehicular: body.isVehicular,
+      accessMethod,
+      dahuaSynced,
       timestamp: now.toISOString(),
       sentido: "in",
       laneCode: 1,
@@ -652,7 +687,11 @@ visitorsApi.post("/visitors/checkin", async (c) => {
     vehicleId,
     insuranceId,
     licenseId,
-    message: "Ingreso de visita registrado exitosamente.",
+    accessMethod,
+    dahuaSynced,
+    message: dahuaSynced
+      ? "Ingreso registrado. La cara quedó enrolada en el lector."
+      : "Ingreso de visita registrado exitosamente.",
   });
 });
 

@@ -440,7 +440,7 @@ export const FEATURE_PACK_CATALOG: FeaturePackDef[] = [
     name: "Evidencia",
     summary: "Copiar al barrio eventos y fotos del lector (más retenible que el SD del equipo).",
     capabilityKey: "dahua.evidence",
-    href: "/dashboard/dahua/evidencia",
+    href: "/dashboard/dahua/eventos?tab=fotos",
     defaultOn: false,
     sortOrder: 70,
   },
@@ -756,4 +756,21 @@ export function isAccessPointSector(v: string): v is AccessPointSector {
 export function isAccessPointSentido(v: string): v is AccessPointSentido {
   return ACCESS_POINT_SENTIDOS.some((s) => s.key === v);
 }
+
+export {
+  NAV_CATALOG,
+  navLeafVisible,
+  navPathMatches,
+  navLeafHrefs,
+  visibleNavGroups,
+  defaultNavHref,
+  opsNavTiles,
+  bestNavHref,
+  type NavIconKey,
+  type NavLeaf,
+  type NavGroup,
+  type NavCaps,
+  type VisibleNavGroup,
+  type OpsNavTile,
+} from "./nav";
 

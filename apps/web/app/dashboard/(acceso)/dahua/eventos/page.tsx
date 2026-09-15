@@ -1,9 +1,10 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, Suspense } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { api, apiUrl, withTenant } from "@/lib/api";
 import { useDash } from "@/components/DashboardProvider";
-import { FeatureGate, PageHeader } from "@/components/PageHeader";
+import { FeatureGate, PageHeader, SectionTabs } from "@/components/PageHeader";
 import {
   ScanFace,
   CreditCard,
@@ -28,6 +29,7 @@ import {
 import { asiMethodKey, asiMethodLabel } from "@accesopro/catalog";
 import { eventPhotoUrl } from "@/components/ops/parseFacialEvent";
 import { EventPhoto } from "@/components/ops/EventPhoto";
+import { EvidenciaGallery } from "@/components/EvidenciaGallery";
 import { useEscapeKey } from "@/hooks/useEscapeKey";
 
 type EventRow = {
@@ -69,8 +71,49 @@ const METHOD_BADGE_ICONS: Record<string, typeof ScanFace> = {
   fingerprint: Fingerprint,
 };
 
-export default function DahuaEventosPage() {
-  const { tenantId, can } = useDash();
+function eventHeadline(p: Record<string, unknown>, isApproved: boolean) {
+  const method = asiMethodKey(p.methodCode ?? p.Method, p.method);
+  const qr = String(p.qrPayload ?? p.QRCode ?? p.QRCodeEx ?? "").trim();
+  const err = Number(p.ErrorCode ?? p.asiErrorCode ?? 0);
+  if (qr || method === "qr" || err === 96) {
+    return isApproved || p.passthroughGranted ? "Pase válido (QR)" : "QR rechazado";
+  }
+  if (method === "remote") return "Apertura remota";
+  if (method === "facial") return isApproved ? "Pase válido (rostro)" : "Extraño (rostro)";
+  if (method === "card") return isApproved ? "Pase válido (tarjeta)" : "Tarjeta no válida";
+  if (method === "fingerprint") return isApproved ? "Pase válido (huella)" : "Huella no válida";
+  if (method === "password") return isApproved ? "Pase válido (PIN)" : "PIN rechazado";
+  return isApproved ? "Pase válido" : "Acceso denegado";
+}
+
+function laneLabel(p: Record<string, unknown>) {
+  const code = Number(p.laneCode ?? p.lane_code);
+  if (code === 2 || p.sentido === "out") return "Salida";
+  if (code === 1 || p.sentido === "in") return "Ingreso";
+  return "—";
+}
+
+function personDisplay(p: Record<string, unknown>, isApproved: boolean) {
+  const id = String(p.userId ?? p.UserID ?? p.cardNo ?? p.CardNo ?? p.qrPayload ?? p.QRCode ?? "").trim();
+  const raw = String(p.personName ?? p.CardName ?? p.userName ?? "").trim();
+  const bogus =
+    !raw ||
+    raw === "Rostro no identificado" ||
+    raw === "Rostro no reconocido" ||
+    raw === "Usuario ASI" ||
+    raw === "Usuario Facial";
+  const qr = String(p.qrPayload ?? p.QRCode ?? "").trim();
+  if (bogus && qr) return { name: "Visita / QR", id: qr };
+  if (bogus) return { name: isApproved ? "Usuario ASI" : "No identificado", id: id || "—" };
+  return { name: raw, id: id || "—" };
+}
+
+function EventosInner() {
+  const { tenantId, can, featureOn } = useDash();
+  const params = useSearchParams();
+  const router = useRouter();
+  const showFotos = featureOn("dahua.evidence") && can("dahua.evidence");
+  const tab = showFotos && params.get("tab") === "fotos" ? "fotos" : "lista";
   const [events, setEvents] = useState<EventRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -205,7 +248,9 @@ export default function DahuaEventosPage() {
       const dev = String(p.deviceName || "").toLowerCase();
       const term = search.toLowerCase();
 
-      const matchesSearch = !term || name.includes(term) || card.includes(term) || dev.includes(term);
+      const qr = String(p.qrPayload || p.QRCode || "").toLowerCase();
+      const matchesSearch =
+        !term || name.includes(term) || card.includes(term) || dev.includes(term) || qr.includes(term);
 
       const isApproved = p.approved === true || String(p.status ?? p.Status ?? "0") === "1";
       const matchesStatus =
@@ -256,9 +301,10 @@ export default function DahuaEventosPage() {
     <FeatureGate feature="dahua.events" capability="dahua.events" orModule="dahua_access">
       <div className="space-y-6">
         <PageHeader
-          title="Historial de Eventos Dahua"
-          subtitle="Registro cronológico y fotográfico de accesos faciales, tarjetas RFID y aperturas del predio."
+          title="Eventos"
+          subtitle="Pase válido, extraño, QR y apertura remota. Punto, sentido IN/OUT y foto del evento."
           actions={
+            tab === "lista" ? (
             <div className="flex items-center gap-2">
               <button
                 type="button"
@@ -280,8 +326,31 @@ export default function DahuaEventosPage() {
                 </button>
               )}
             </div>
+            ) : undefined
           }
         />
+
+        {showFotos ? (
+          <SectionTabs
+            tabs={[
+              { id: "lista", label: "Lista" },
+              { id: "fotos", label: "Fotos" },
+            ]}
+            value={tab}
+            onChange={(id) => {
+              const next = new URLSearchParams(params.toString());
+              if (id === "lista") next.delete("tab");
+              else next.set("tab", id);
+              const qs = next.toString();
+              router.replace(qs ? `/dashboard/dahua/eventos?${qs}` : "/dashboard/dahua/eventos");
+            }}
+          />
+        ) : null}
+
+        {tab === "fotos" ? (
+          <EvidenciaGallery />
+        ) : (
+        <>
 
         {/* Notificaciones */}
         {msg && (
@@ -375,10 +444,12 @@ export default function DahuaEventosPage() {
               <thead className="border-b border-slate-200 dark:border-slate-800 bg-slate-50/75 dark:bg-slate-800/40 text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
                 <tr>
                   <th className="px-4 py-3 text-center w-16">Captura</th>
-                  <th className="px-4 py-3">Fecha y Hora</th>
-                  <th className="px-4 py-3">Equipo Lector</th>
-                  <th className="px-4 py-3">Persona / DNI</th>
-                  <th className="px-4 py-3">Método</th>
+                  <th className="px-4 py-3">Evento</th>
+                  <th className="px-4 py-3">Hora</th>
+                  <th className="px-4 py-3">Punto</th>
+                  <th className="px-4 py-3">Sentido</th>
+                  <th className="px-4 py-3">Persona</th>
+                  <th className="px-4 py-3">ID</th>
                   <th className="px-4 py-3">Resultado</th>
                   <th className="px-4 py-3 text-right">Detalle</th>
                 </tr>
@@ -386,7 +457,7 @@ export default function DahuaEventosPage() {
               <tbody className="divide-y divide-slate-200 dark:divide-slate-800">
                 {filteredEvents.length === 0 ? (
                   <tr>
-                    <td colSpan={7} className="px-4 py-12 text-center text-slate-400 dark:text-slate-500">
+                    <td colSpan={9} className="px-4 py-12 text-center text-slate-400 dark:text-slate-500">
                       <ScanFace className="mx-auto h-8 w-8 opacity-40 mb-2" />
                       <p className="text-sm font-semibold text-slate-700 dark:text-slate-300">
                         {events.length === 0 ? "No hay registros de acceso" : "Ningún evento coincide con el filtro"}
@@ -400,11 +471,12 @@ export default function DahuaEventosPage() {
                   filteredEvents.map((e) => {
                     const p = e.payload || {};
                     const isApproved = p.approved === true || String(p.status ?? p.Status ?? "0") === "1";
-                    const personName = String(
-                      p.personName || p.CardName || p.userName || p.UserID || (isApproved ? "Usuario ASI" : "Rostro no reconocido")
-                    );
-                    const cardNo = String(p.cardNo || p.CardNo || p.UserID || "—");
-                    const devName = String(p.deviceName || "Lector Facial ASI");
+                    const { name: personName, id: personId } = personDisplay(p, isApproved);
+                    const headline = eventHeadline(p, isApproved);
+                    const lane = laneLabel(p);
+                    const cardNo = personId;
+                    const devName = String(p.deviceName || "Lector Facial");
+                    const pointKind = String(p.laneSector || "Puerta");
                     const photoStored = p.photoStored === true;
                     const createdMs =
                       typeof e.createdAt === "number"
@@ -454,6 +526,10 @@ export default function DahuaEventosPage() {
 
                         {/* Fecha y Hora */}
                         <td className="px-4 py-3 whitespace-nowrap">
+                          <p className="font-semibold text-slate-900 dark:text-white">{headline}</p>
+                          <div className="mt-0.5">{getMethodBadge(String(p.method ?? ""), String(p.methodCode ?? p.Method ?? ""))}</div>
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap">
                           <p className="font-mono text-xs font-bold text-slate-800 dark:text-slate-100">
                             {rawDate.toLocaleTimeString("es-AR", {
                               hour: "2-digit",
@@ -470,17 +546,32 @@ export default function DahuaEventosPage() {
                           </p>
                         </td>
 
-                        {/* Lector */}
+                        {/* Punto */}
                         <td className="px-4 py-3 whitespace-nowrap">
                           <p className="font-bold text-slate-800 dark:text-slate-200">{devName}</p>
-                          <p className="text-[10px] text-slate-500 dark:text-slate-400">Puerta Principal</p>
+                          <p className="text-[10px] text-slate-500 dark:text-slate-400">{pointKind}</p>
+                        </td>
+                        <td className="px-4 py-3 whitespace-nowrap">
+                          <span
+                            className={`inline-flex px-2 py-0.5 rounded-md text-[11px] font-bold border ${
+                              lane === "Salida"
+                                ? "bg-amber-50 text-amber-800 border-amber-200 dark:bg-amber-950/40 dark:text-amber-300 dark:border-amber-800/60"
+                                : lane === "Ingreso"
+                                  ? "bg-sky-50 text-sky-800 border-sky-200 dark:bg-sky-950/40 dark:text-sky-300 dark:border-sky-800/60"
+                                  : "bg-slate-50 text-slate-600 border-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700"
+                            }`}
+                          >
+                            {lane === "—" ? "Sin carril" : lane}
+                          </span>
                         </td>
 
-                        {/* Persona / DNI */}
+                        {/* Persona */}
                         <td className="px-4 py-3">
                           <p className="font-bold text-slate-900 dark:text-white leading-tight">{personName}</p>
-                          <p className="font-mono text-[10.5px] text-slate-500 dark:text-slate-400">
-                            {cardNo !== "—" ? `ID: ${cardNo}` : "Sin ID asignado"}
+                        </td>
+                        <td className="px-4 py-3">
+                          <p className="font-mono text-[10.5px] text-slate-600 dark:text-slate-300">
+                            {cardNo !== "—" ? cardNo : "—"}
                           </p>
                         </td>
 
@@ -729,7 +820,17 @@ export default function DahuaEventosPage() {
             </div>
           </div>
         )}
+        </>
+        )}
       </div>
     </FeatureGate>
+  );
+}
+
+export default function DahuaEventosPage() {
+  return (
+    <Suspense fallback={<p className="text-sm text-muted">Cargando eventos…</p>}>
+      <EventosInner />
+    </Suspense>
   );
 }

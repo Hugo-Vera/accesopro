@@ -22,6 +22,8 @@ import {
 import { type Actuator, type RelaySlot } from "@/components/ops/relayPresets";
 import { ACTUATOR_POLL_MS, useOpsEvents } from "@/components/ops/useOpsEvents";
 import { mergeLaneActuatorIds, resolveOpenActuatorId } from "@/components/ops/resolveOpenRelay";
+import { VisitorCheckinModal } from "@/components/VisitorCheckinModal";
+import { useToast } from "@/components/Toast";
 
 const OpsPlanMap = dynamic(
   () => import("@/components/ops/OpsPlanMap").then((m) => m.OpsPlanMap),
@@ -104,6 +106,8 @@ export function HomeDashboard() {
     label: string;
     action: "open" | "close";
   } | null>(null);
+  const [checkinOpen, setCheckinOpen] = useState(false);
+  const toast = useToast();
 
   const showLivePage = featureOn("dahua.live") && can("dahua.live");
   const showEvents = featureOn("dahua.events") && can("dahua.events");
@@ -119,13 +123,7 @@ export function HomeDashboard() {
     onAlert: (alert) => setFacialAlert(alert),
   });
 
-  const menuTiles = useOpsMenuTiles({
-    can,
-    enabled,
-    featureOn,
-    showDevices,
-    showEvents,
-  });
+  const menuTiles = useOpsMenuTiles();
 
   const manualActs = acts.filter((a) => a.triggerManual !== false);
   const topology = useMemo(
@@ -323,6 +321,7 @@ export function HomeDashboard() {
         userName={user?.name ?? null}
         platesToday={status.platesToday}
         logout={logout}
+        onRegisterVisit={showOwnerAuth ? () => setCheckinOpen(true) : undefined}
       />
 
       {error ? <p className="px-1 text-[12px] text-danger">{error}</p> : null}
@@ -412,6 +411,18 @@ export function HomeDashboard() {
           if (pendingDanger) void fire(pendingDanger.id, pendingDanger.action);
         }}
       />
+
+      {tenantId && showOwnerAuth ? (
+        <VisitorCheckinModal
+          tenantId={tenantId}
+          isOpen={checkinOpen}
+          onClose={() => setCheckinOpen(false)}
+          onSuccess={() => {
+            setCheckinOpen(false);
+            toast.success("Visita registrada", "El ingreso quedó acreditado en portería.");
+          }}
+        />
+      ) : null}
     </div>
   );
 }

@@ -1,145 +1,69 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { usePathname } from "next/navigation";
+import { ChevronDown } from "lucide-react";
 import { useDash } from "@/components/DashboardProvider";
+import {
+  bestNavHref,
+  visibleNavGroups,
+  type NavCaps,
+  type NavLeaf,
+  type VisibleNavGroup,
+} from "@accesopro/catalog";
 
-type Item = {
-  href: string;
-  label: string;
-  module?: string;
-  feature?: string;
-  capability?: string;
-  adminOnly?: boolean;
-};
-type Section = { title: string; items: Item[] };
-
-const SECTIONS: Section[] = [
-  {
-    title: "Panel",
-    items: [
-      { href: "/dashboard", label: "Inicio", capability: "ops.dashboard" },
-      { href: "/dashboard/plano", label: "Plano", capability: "ops.plano" },
-      { href: "/dashboard/puntos-acceso", label: "Puntos de acceso", module: "actuators", capability: "core.config", adminOnly: true },
-    ],
-  },
-  {
-    title: "Acceso",
-    items: [
-      {
-        href: "/dashboard/dahua",
-        label: "Equipos",
-        module: "dahua_access",
-        feature: "dahua.devices",
-        capability: "access.dahua",
-      },
-      {
-        href: "/dashboard/dahua/eventos",
-        label: "Eventos",
-        module: "dahua_access",
-        feature: "dahua.events",
-        capability: "dahua.events",
-      },
-      {
-        href: "/dashboard/dahua/personas",
-        label: "Personas",
-        module: "dahua_access",
-        feature: "dahua.persons",
-        capability: "dahua.persons",
-      },
-      {
-        href: "/dashboard/dahua/qr",
-        label: "QR del lector",
-        module: "dahua_access",
-        feature: "dahua.qr",
-        capability: "dahua.qr",
-      },
-      {
-        href: "/dashboard/dahua/periodos",
-        label: "Periodos",
-        module: "dahua_access",
-        feature: "dahua.schedules",
-        capability: "dahua.schedules",
-      },
-      {
-        href: "/dashboard/dahua/departamentos",
-        label: "Departamentos",
-        module: "dahua_access",
-        feature: "dahua.persons",
-        capability: "dahua.persons",
-      },
-      {
-        href: "/dashboard/dahua/evidencia",
-        label: "Evidencia",
-        module: "dahua_access",
-        feature: "dahua.evidence",
-        capability: "dahua.evidence",
-      },
-      {
-        href: "/dashboard/dahua/live",
-        label: "Live lector",
-        module: "dahua_access",
-        feature: "dahua.live",
-        capability: "dahua.live",
-      },
-      { href: "/dashboard/actuadores", label: "Actuadores", module: "actuators", capability: "ops.relay" },
-      { href: "/dashboard/alpr", label: "Detecciones ALPR", module: "alpr", capability: "access.alpr" },
-      { href: "/dashboard/visitas", label: "Visitas", module: "visitors", capability: "access.visitors.manage" },
-      { href: "/dashboard/alta-dni", label: "Alta DNI", module: "dni_enroll", capability: "access.dni_enroll" },
-      { href: "/portal", label: "App Propietario (Portal)", module: "visitors" },
-    ],
-  },
-  {
-    title: "Administración",
-    items: [
-      { href: "/dashboard/propiedades", label: "Propiedades", module: "visitors", capability: "access.owners.invite" },
-      { href: "/dashboard/fichadas", label: "Fichadas", module: "attendance", capability: "access.attendance" },
-      { href: "/dashboard/panico", label: "Pánico", module: "panic", capability: "ops.alarms" },
-      { href: "/dashboard/fuego", label: "Fuego", module: "fire", capability: "ops.alarms" },
-      { href: "/dashboard/usuarios", label: "Usuarios y permisos", capability: "core.users.read", adminOnly: true },
-      { href: "/dashboard/modulos", label: "Configuración", capability: "core.config", adminOnly: true },
-      { href: "/dashboard/diagnostico", label: "Diagnóstico", capability: "ops.dashboard", adminOnly: true },
-    ],
-  },
-];
-
-function pathMatchesHref(path: string, href: string) {
-  if (href === "/dashboard") return path === "/dashboard";
-  return path === href || path.startsWith(`${href}/`);
+function itemClass(active: boolean) {
+  return `rounded-md px-2.5 py-2 text-[13px] transition-colors ${
+    active
+      ? "border-l-2 border-blue-600 bg-blue-50 text-blue-700 font-semibold dark:border-accent dark:bg-accent/10 dark:text-[var(--ap-text)]"
+      : "border-l-2 border-transparent text-slate-600 hover:bg-slate-100 hover:text-slate-900 font-medium dark:text-muted dark:hover:bg-panel2/60 dark:hover:text-[var(--ap-text-dim)]"
+  }`;
 }
 
-/** Una sola fila activa: la coincidencia más larga (evita Equipos + Eventos juntos). */
-function bestActiveHref(path: string, hrefs: string[]) {
-  let best: string | null = null;
-  for (const href of hrefs) {
-    if (!pathMatchesHref(path, href)) continue;
-    if (!best || href.length > best.length) best = href;
-  }
-  return best;
+function groupContainsHref(items: NavLeaf[], href: string) {
+  return items.some((item) => item.href === href);
 }
 
 export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
   const [pendingHref, setPendingHref] = useState<string | null>(null);
+  const [openIds, setOpenIds] = useState<string[]>([]);
   const { user, tenantName, isPlatform, isAdmin, status, logout, enabled, featureOn, can } = useDash();
+
+  const caps: NavCaps = useMemo(
+    () => ({
+      enabled,
+      featureOn,
+      can,
+      isAdmin: isAdmin || isPlatform,
+    }),
+    [enabled, featureOn, can, isAdmin, isPlatform],
+  );
+
+  const groups = useMemo(() => visibleNavGroups(caps), [caps]);
+  const activeHref = bestNavHref(pendingHref ?? pathname, caps);
 
   useEffect(() => {
     setPendingHref(null);
   }, [pathname]);
 
-  const visibleHrefs = SECTIONS.flatMap((section) =>
-    section.items
-      .filter(
-        (item) =>
-          (!item.adminOnly || isAdmin || isPlatform) &&
-          (!item.module || enabled(item.module)) &&
-          (!item.feature || featureOn(item.feature)) &&
-          (!item.capability || can(item.capability)),
-      )
-      .map((item) => item.href),
-  );
-  const activeHref = bestActiveHref(pendingHref ?? pathname, visibleHrefs);
+  useEffect(() => {
+    if (!activeHref) return;
+    const hit = groups.find(({ items }) => groupContainsHref(items, activeHref));
+    if (hit && hit.items.length > 1) {
+      setOpenIds((prev) => (prev.includes(hit.group.id) ? prev : [...prev, hit.group.id]));
+    }
+  }, [activeHref, groups]);
+
+  function go(href: string) {
+    setPendingHref(href);
+    onNavigate?.();
+  }
+
+  function toggleGroup(id: string) {
+    setOpenIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  }
 
   return (
     <aside className="flex h-full w-[248px] shrink-0 flex-col border-r border-slate-200 dark:border-line bg-white dark:bg-[var(--ap-ink)] transition-colors">
@@ -150,53 +74,29 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
         <p className="mt-2 truncate text-[12px] text-slate-500 dark:text-muted">{tenantName ?? "Panel"}</p>
       </div>
 
-      <nav className="flex flex-1 flex-col gap-5 overflow-auto px-3 py-4">
-        {SECTIONS.map((section) => {
-          const items = section.items.filter(
-            (item) =>
-              (!item.adminOnly || isAdmin || isPlatform) &&
-              (!item.module || enabled(item.module)) &&
-              (!item.feature || featureOn(item.feature)) &&
-              (!item.capability || can(item.capability)),
-          );
-          if (!items.length) return null;
-          return (
-            <div key={section.title}>
-              <p className="px-2 pb-1.5 text-[10px] font-semibold uppercase tracking-[0.14em] text-slate-400 dark:text-muted/80">
-                {section.title}
-              </p>
-              <div className="flex flex-col gap-0.5">
-                {items.map((item) => {
-                  const active = item.href === activeHref;
-                  return (
-                    <Link
-                      key={item.href}
-                      href={item.href}
-                      prefetch={false}
-                      onClick={() => {
-                        setPendingHref(item.href);
-                        onNavigate?.();
-                      }}
-                      className={`rounded-md px-2.5 py-2 text-[13px] transition-colors ${
-                        active
-                          ? "border-l-2 border-blue-600 bg-blue-50 text-blue-700 font-semibold dark:border-accent dark:bg-accent/10 dark:text-[var(--ap-text)]"
-                          : "border-l-2 border-transparent text-slate-600 hover:bg-slate-100 hover:text-slate-900 font-medium dark:text-muted dark:hover:bg-panel2/60 dark:hover:text-[var(--ap-text-dim)]"
-                      }`}
-                    >
-                      {item.label}
-                    </Link>
-                  );
-                })}
-              </div>
-            </div>
-          );
-        })}
+      <nav className="flex flex-1 flex-col gap-1 overflow-auto px-3 py-4">
+        {groups.map((entry) => (
+          <NavGroupBlock
+            key={entry.group.id}
+            entry={entry}
+            activeHref={activeHref}
+            open={openIds.includes(entry.group.id)}
+            onToggle={() => toggleGroup(entry.group.id)}
+            onGo={go}
+          />
+        ))}
       </nav>
 
       <div className="border-t border-slate-200 dark:border-line px-4 py-4 bg-slate-50/50 dark:bg-transparent transition-colors">
         <p className="text-[11px] text-slate-500 dark:text-muted">
           Dahua{" "}
-          <span className={status.agentOnline ? "font-semibold text-emerald-600 dark:text-ok" : "font-semibold text-rose-600 dark:text-danger"}>
+          <span
+            className={
+              status.agentOnline
+                ? "font-semibold text-emerald-600 dark:text-ok"
+                : "font-semibold text-rose-600 dark:text-danger"
+            }
+          >
             {status.agentOnline ? "en línea" : "offline"}
           </span>
         </p>
@@ -210,5 +110,66 @@ export function Sidebar({ onNavigate }: { onNavigate?: () => void }) {
         </button>
       </div>
     </aside>
+  );
+}
+
+function NavGroupBlock({
+  entry,
+  activeHref,
+  open,
+  onToggle,
+  onGo,
+}: {
+  entry: VisibleNavGroup;
+  activeHref: string | null;
+  open: boolean;
+  onToggle: () => void;
+  onGo: (href: string) => void;
+}) {
+  const { group, items } = entry;
+  if (items.length === 1) {
+    const item = items[0];
+    const active = item.href === activeHref;
+    return (
+      <Link href={item.href} prefetch={false} onClick={() => onGo(item.href)} className={itemClass(active)}>
+        {item.label}
+      </Link>
+    );
+  }
+
+  const groupActive = groupContainsHref(items, activeHref ?? "");
+  return (
+    <div>
+      <button
+        type="button"
+        onClick={onToggle}
+        className={`flex w-full items-center justify-between rounded-md px-2.5 py-2 text-[11px] font-semibold uppercase tracking-[0.12em] transition-colors ${
+          groupActive
+            ? "text-blue-700 dark:text-[var(--ap-accent-bright)]"
+            : "text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:text-muted/80 dark:hover:bg-panel2/60 dark:hover:text-[var(--ap-text-dim)]"
+        }`}
+      >
+        <span>{group.label}</span>
+        <ChevronDown className={`h-3.5 w-3.5 transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+      {open ? (
+        <div className="mb-1 ml-1 flex flex-col gap-0.5 border-l border-slate-200 pl-1 dark:border-line">
+          {items.map((item) => {
+            const active = item.href === activeHref;
+            return (
+              <Link
+                key={item.id}
+                href={item.href}
+                prefetch={false}
+                onClick={() => onGo(item.href)}
+                className={itemClass(active)}
+              >
+                {item.label}
+              </Link>
+            );
+          })}
+        </div>
+      ) : null}
+    </div>
   );
 }

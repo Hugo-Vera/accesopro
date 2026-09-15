@@ -3,7 +3,7 @@
 import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useTheme } from "@/components/ThemeProvider";
-import { Sun, Moon } from "lucide-react";
+import { Sun, Moon, UserPlus } from "lucide-react";
 import { IconList, IconSearch, IconUser } from "@/components/DashboardIcons";
 
 function ConsoleClock() {
@@ -32,6 +32,7 @@ type Props = {
   userName: string | null;
   platesToday: number;
   logout: () => void;
+  onRegisterVisit?: () => void;
 };
 
 export function OpsTopbar({
@@ -44,6 +45,7 @@ export function OpsTopbar({
   userName,
   platesToday,
   logout,
+  onRegisterVisit,
 }: Props) {
   const { theme, toggleTheme } = useTheme();
   const router = useRouter();
@@ -105,6 +107,18 @@ export function OpsTopbar({
       </div>
 
       <div className="flex flex-wrap items-center gap-2">
+        {onRegisterVisit ? (
+          <button
+            type="button"
+            onClick={onRegisterVisit}
+            className="inline-flex items-center gap-1.5 rounded-md border border-blue-600 bg-blue-600 px-3 py-1 text-[11px] font-bold text-white shadow-sm transition-colors hover:bg-blue-700"
+            title="Registrar visita sin salir de portería"
+          >
+            <UserPlus className="h-3.5 w-3.5" />
+            <span>Registrar visita</span>
+          </button>
+        ) : null}
+
         <form onSubmit={onSearch} className="ops-search hidden items-center gap-1.5 sm:flex">
           <IconSearch className="h-3.5 w-3.5 text-slate-500 dark:text-[#1a9fbf]" />
           <input

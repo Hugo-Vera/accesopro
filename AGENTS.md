@@ -42,6 +42,8 @@ Cada pack tiene dashboard + capability. Regla completa:
 
 `plan ∩ módulo ∩ feature pack ∩ grant del usuario`
 
+El menú staff (sidebar y grilla de Inicio) sale de `NAV_CATALOG` en `packages/catalog`: Inicio, Predio, Portería, Personas, Instalación, Seguridad, Sistema. Alta DNI, evidencia y departamentos son pestañas, no ítems sueltos. El portal del vecino (`/portal`) no está en el menú operativo.
+
 API: `GET/PATCH /api/tenants/:id/features`. UI: Configuración → Módulos (bloque «Funciones del equipo»).
 
 ## Arquitectura

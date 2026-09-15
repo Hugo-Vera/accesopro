@@ -58,6 +58,7 @@ Orden práctico portería (live/toast/cableado): **`docs/PLAN_PORTERIA.md`**.
 | P2.8 | Fichadas / asistencia | Stub |
 | P2.9 | Plano croquis usable (pines cableados) | Stub / limitado |
 | P2.10 | Pack `dahua.qr` vs QR visita | No confundir; documentar + UX clara |
+| P2.11 | Alta visita + SMTP (plantillas visita / propietario) | Check-in DNI; invite por WhatsApp. Campos DSS y mail: `docs/PENDING.md` |
 
 ### P3 — Hardening / ops
 

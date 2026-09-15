@@ -3,6 +3,8 @@
 import { useState, useEffect } from "react";
 import { api, withTenant } from "@/lib/api";
 import { useEscapeKey } from "@/hooks/useEscapeKey";
+import { useDash } from "@/components/DashboardProvider";
+import { VisitFaceCapture } from "@/components/ops/VisitFaceCapture";
 import {
   IdCard,
   Home,
@@ -23,6 +25,8 @@ import {
   KeyRound,
   FileCheck,
   FileWarning,
+  QrCode,
+  ScanFace,
 } from "lucide-react";
 
 export const ARGENTINA_INSURANCE_COMPANIES = [
@@ -69,8 +73,10 @@ type Props = {
 
 export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Props) {
   useEscapeKey(onClose, isOpen);
+  const { featureOn, can } = useDash();
+  const faceOn = featureOn("dahua.face") && can("dahua.face");
 
-  // Pasos: 1 = DNI, 2 = Destino, 3 = Modalidad (Vehicular o Peatonal), 4 = Vehículo & Seguro, 5 = Licencia, 6 = Resumen
+  // Pasos: 1 DNI, 2 Destino, 3 Modalidad, 4 Vehículo, 5 Licencia, 6 Resumen, 7 Acceso (QR / cara)
   const [step, setStep] = useState<number>(1);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -127,6 +133,9 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
   // Paso 6: Resumen y Apertura
   const [openRelay, setOpenRelay] = useState(true);
   const [actuatorId, setActuatorId] = useState("");
+  const [accessMethod, setAccessMethod] = useState<"qr" | "face">("qr");
+  const [faceB64, setFaceB64] = useState<string | null>(null);
+  const [facePreview, setFacePreview] = useState<string | null>(null);
 
   // Cargar propiedades y actuadores al abrir
   useEffect(() => {
@@ -153,6 +162,15 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
       })
       .catch(() => {});
   }, [isOpen, tenantId]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setStep(1);
+    setError(null);
+    setAccessMethod("qr");
+    setFaceB64(null);
+    setFacePreview(null);
+  }, [isOpen]);
 
   // Búsqueda automática de DNI al tipear 7 u 8 dígitos
   const handleDniBlurOrSearch = async () => {
@@ -279,6 +297,9 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
       if (!isVehicular) return true;
       return licenseValidUntil;
     }
+    if (step === 7 && accessMethod === "face") {
+      return Boolean(faceB64);
+    }
     return true;
   };
 
@@ -289,10 +310,9 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
       return;
     }
     if (step === 3 && !isVehicular) {
-      // Salto directo a resumen si es ingreso peatonal
       setStep(6);
     } else {
-      setStep((prev) => Math.min(prev + 1, 6));
+      setStep((prev) => Math.min(prev + 1, 7));
     }
   };
 
@@ -307,6 +327,10 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
 
   // Envío final del registro consolidado
   const handleSubmitCheckin = async () => {
+    if (accessMethod === "face" && !faceB64) {
+      setError("Capturá el rostro con la webcam para enrolar la cara.");
+      return;
+    }
     setLoading(true);
     setError(null);
 
@@ -358,6 +382,8 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
         : undefined,
       openRelay,
       actuatorId: openRelay ? actuatorId : undefined,
+      accessMethod,
+      photoBase64: accessMethod === "face" ? faceB64 || undefined : undefined,
     };
 
     try {
@@ -387,7 +413,7 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm animate-in fade-in">
-      <div className="relative w-full max-w-2xl rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 shadow-2xl transition-all">
+      <div className="relative w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 shadow-2xl transition-all">
         {/* Cabecera del Modal */}
         <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-4">
           <div className="flex items-center gap-2.5">
@@ -434,15 +460,18 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
                 </span>
               </>
             )}
-            <span className={step === 6 ? "text-emerald-600 dark:text-emerald-400 font-extrabold" : ""}>
+            <span className={step >= 6 ? "text-blue-600 dark:text-blue-400 font-extrabold" : ""}>
               {isVehicular ? "6." : "4."} Confirmar
+            </span>
+            <span className={step === 7 ? "text-emerald-600 dark:text-emerald-400 font-extrabold" : ""}>
+              {isVehicular ? "7." : "5."} Acceso
             </span>
           </div>
           <div className="mt-2 h-1.5 w-full rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
             <div
               className="h-full bg-blue-600 dark:bg-blue-500 transition-all duration-300"
               style={{
-                width: isVehicular ? `${(step / 6) * 100}%` : `${(step === 6 ? 4 : step) / 4 * 100}%`,
+                width: isVehicular ? `${(step / 7) * 100}%` : `${((step === 6 ? 4 : step === 7 ? 5 : step) / 5) * 100}%`,
               }}
             />
           </div>
@@ -1071,8 +1100,62 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
                   </div>
                 )}
               </div>
+            </div>
+          )}
 
-              {/* Opción de Accionamiento de Barrera */}
+          {step === 7 && (
+            <div className="space-y-4 animate-in fade-in">
+              <span className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
+                Cómo va a validar el ingreso
+              </span>
+              <p className="text-[12px] text-slate-500 dark:text-slate-400">
+                Con QR abre ahora o el pase queda para el lector. Con cara, capturá el rostro en la webcam de portería para enrolarlo en el ASI.
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setAccessMethod("qr")}
+                  className={`rounded-xl border p-3 text-left transition-colors ${
+                    accessMethod === "qr"
+                      ? "border-blue-500 bg-blue-50 dark:border-blue-400 dark:bg-blue-950/40"
+                      : "border-slate-200 bg-white hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900"
+                  }`}
+                >
+                  <QrCode className="mb-1 h-5 w-5 text-blue-600 dark:text-blue-400" />
+                  <p className="text-xs font-bold text-slate-900 dark:text-white">Código QR</p>
+                  <p className="text-[10px] text-slate-500">Pase AccesoPro. No hace falta foto.</p>
+                </button>
+                <button
+                  type="button"
+                  disabled={!faceOn}
+                  onClick={() => faceOn && setAccessMethod("face")}
+                  className={`rounded-xl border p-3 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
+                    accessMethod === "face"
+                      ? "border-blue-500 bg-blue-50 dark:border-blue-400 dark:bg-blue-950/40"
+                      : "border-slate-200 bg-white hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900"
+                  }`}
+                >
+                  <ScanFace className="mb-1 h-5 w-5 text-blue-600 dark:text-blue-400" />
+                  <p className="text-xs font-bold text-slate-900 dark:text-white">Cara (webcam)</p>
+                  <p className="text-[10px] text-slate-500">
+                    {faceOn ? "Enrolar ahora para pasar por el lector." : "Activá el pack facial en Módulos."}
+                  </p>
+                </button>
+              </div>
+              {accessMethod === "face" ? (
+                <VisitFaceCapture
+                  preview={facePreview}
+                  onCapture={(b64, url) => {
+                    setFaceB64(b64);
+                    setFacePreview(url);
+                  }}
+                  onClear={() => {
+                    setFaceB64(null);
+                    setFacePreview(null);
+                  }}
+                />
+              ) : null}
+
               {actuators.length > 0 && (
                 <div className="rounded-xl border border-emerald-200 dark:border-emerald-900/60 bg-emerald-50/40 dark:bg-emerald-950/20 p-3 flex items-center justify-between">
                   <label className="flex items-center gap-2.5 cursor-pointer">
@@ -1084,14 +1167,11 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
                     />
                     <div>
                       <p className="text-xs font-bold text-slate-900 dark:text-white">
-                        Abrir barrera / portón de acceso al confirmar
+                        Abrir barrera al confirmar
                       </p>
-                      <p className="text-[10.5px] text-slate-500">
-                        Acciona el relé de entrada de forma automática.
-                      </p>
+                      <p className="text-[10.5px] text-slate-500">Pulso de entrada ahora. La cara queda para el próximo pase.</p>
                     </div>
                   </label>
-
                   {openRelay && (
                     <select
                       value={actuatorId}
@@ -1122,24 +1202,24 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
             {step === 1 ? "Cancelar" : <><ArrowLeft className="h-4 w-4" /> Anterior</>}
           </button>
 
-          {step < 6 ? (
+          {step < 7 ? (
             <button
               type="button"
               onClick={handleNext}
               className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 px-5 py-2 text-xs font-bold text-white shadow-sm transition-colors"
             >
-              <span>Siguiente</span>
+              <span>{step === 6 ? "Elegir acceso" : "Siguiente"}</span>
               <ArrowRight className="h-4 w-4" />
             </button>
           ) : (
             <button
               type="button"
               onClick={handleSubmitCheckin}
-              disabled={loading}
+              disabled={loading || (accessMethod === "face" && !faceB64)}
               className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 px-6 py-2 text-xs font-bold text-white shadow-md transition-colors disabled:opacity-50"
             >
               <CheckCircle2 className="h-4 w-4" />
-              <span>{loading ? "Registrando..." : "Registrar Ingreso y Finalizar"}</span>
+              <span>{loading ? "Registrando..." : "Registrar ingreso"}</span>
             </button>
           )}
         </div>

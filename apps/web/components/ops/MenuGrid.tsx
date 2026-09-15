@@ -4,28 +4,27 @@ import type { ReactNode } from "react";
 import Link from "next/link";
 import { useMemo } from "react";
 import {
-  IconIdCard,
+  IconMap,
   IconUserCheck,
-  IconCar,
+  IconUsers,
   IconServer,
   IconSiren,
-  IconMap,
-  IconGate,
-  IconBuilding,
-  IconQr,
-  IconFolder,
-  IconFingerprint,
   IconSettings,
+  IconClipboard,
 } from "@/components/DashboardIcons";
+import { opsNavTiles, type NavCaps, type NavIconKey } from "@accesopro/catalog";
+import { useDash } from "@/components/DashboardProvider";
 
 const ICON = "h-5 w-5 text-slate-600 dark:text-[#94a3b8]";
 
-type Caps = {
-  can: (key: string) => boolean;
-  enabled: (key: string) => boolean;
-  featureOn: (key: string) => boolean;
-  showDevices: boolean;
-  showEvents: boolean;
+const NAV_ICONS: Record<NavIconKey, ReactNode> = {
+  home: <IconClipboard className={ICON} />,
+  map: <IconMap className={ICON} />,
+  ops: <IconUserCheck className={ICON} />,
+  people: <IconUsers className={ICON} />,
+  install: <IconServer className={ICON} />,
+  security: <IconSiren className={ICON} />,
+  system: <IconSettings className={ICON} />,
 };
 
 export type MenuTile = {
@@ -36,103 +35,28 @@ export type MenuTile = {
   show: boolean;
 };
 
-export function useOpsMenuTiles({ can, enabled, featureOn, showDevices, showEvents }: Caps): MenuTile[] {
+export function useOpsMenuTiles(): MenuTile[] {
+  const { can, enabled, featureOn, isAdmin, isPlatform } = useDash();
+  const caps: NavCaps = useMemo(
+    () => ({
+      can,
+      enabled,
+      featureOn,
+      isAdmin: isAdmin || isPlatform,
+    }),
+    [can, enabled, featureOn, isAdmin, isPlatform],
+  );
+
   return useMemo(
     () =>
-      [
-        {
-          key: "mapa",
-          label: "Mapa Predio",
-          href: "/dashboard/plano",
-          icon: <IconMap className={ICON} />,
-          show: can("ops.plano"),
-        },
-        {
-          key: "colaboradores",
-          label: "Colaboradores",
-          href: "/dashboard/usuarios",
-          icon: <IconIdCard className={ICON} />,
-          show: can("core.users.read"),
-        },
-        {
-          key: "visitantes",
-          label: "Visitantes",
-          href: "/dashboard/visitas",
-          icon: <IconUserCheck className={ICON} />,
-          show: enabled("visitors") && can("access.visitors.manage"),
-        },
-        {
-          key: "vehiculos",
-          label: "Vehículos",
-          href: "/dashboard/alpr",
-          icon: <IconCar className={ICON} />,
-          show: enabled("alpr") && can("access.alpr"),
-        },
-        {
-          key: "dispositivos",
-          label: "Dispositivos",
-          href: "/dashboard/dahua",
-          icon: <IconServer className={ICON} />,
-          show: showDevices,
-        },
-        {
-          key: "alarma",
-          label: "Central Alarma",
-          href: "/dashboard/panico",
-          icon: <IconSiren className={ICON} />,
-          show: enabled("panic") && can("ops.alarms"),
-        },
-        {
-          key: "accesos",
-          label: "Hist. Acceso",
-          href: "/dashboard/dahua/eventos",
-          icon: <IconGate className={ICON} />,
-          show: showEvents,
-        },
-        {
-          key: "unidades",
-          label: "Lista Unidades",
-          href: "/dashboard/propiedades",
-          icon: <IconBuilding className={ICON} />,
-          show: enabled("visitors") && can("access.visitors.manage"),
-        },
-        {
-          key: "invitados",
-          label: "Invitados QR",
-          href: "/dashboard/dahua/qr",
-          icon: <IconQr className={ICON} />,
-          show: featureOn("dahua.qr") && can("dahua.qr"),
-        },
-        {
-          key: "archivos",
-          label: "Evidencia",
-          href: "/dashboard/dahua/evidencia",
-          icon: <IconFolder className={ICON} />,
-          show: featureOn("dahua.evidence") && can("dahua.evidence"),
-        },
-        {
-          key: "asistencia",
-          label: "Fichadas",
-          href: "/dashboard/fichadas",
-          icon: <IconFingerprint className={ICON} />,
-          show: enabled("attendance") && can("access.attendance"),
-        },
-        {
-          key: "puntos",
-          label: "Puntos acceso",
-          href: "/dashboard/puntos-acceso",
-          icon: <IconGate className={ICON} />,
-          show: can("core.config") && enabled("actuators"),
-        },
-        {
-          key: "config",
-          label: "Configuración",
-          href: "/dashboard/modulos",
-          icon: <IconSettings className={ICON} />,
-          show: can("core.config"),
-        },
-      ].filter((t) => t.show),
-    [can, enabled, featureOn, showDevices, showEvents],
+      opsNavTiles(caps).map((tile) => ({
+        key: tile.id,
+        label: tile.label,
+        href: tile.href,
+        icon: NAV_ICONS[tile.icon],
+        show: true,
+      })),
+    [caps],
   );
 }
 

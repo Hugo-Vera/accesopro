@@ -9,7 +9,7 @@ Fuente de verdad: `packages/catalog/src/index.ts` (`MODULE_CATALOG` + `PLAN_CATA
 | Acceso Dahua | `dahua_access` | actuators | `/dashboard/dahua/*` | `agent.ts`, `apps/agent` | Packs: equipos, eventos, abrir, personas, facial, huella, tarjeta, PIN, QR, periodos, evidencia, live, intercom, puerta, alarma |
 | Chapas ALPR | `alpr` | actuators | `/dashboard/alpr` | `hardware.ts` (`/alpr/live`, `/plates`), `agent.ts` | Eventos `plate` + lista blanca/negra |
 | Visitas | `visitors` | actuators | `/dashboard/visitas`, `/portal` | `visitors.ts`, `visitPass.ts`, `residents.ts` | QR portal + check-in portería |
-| Alta DNI | `dni_enroll` | visitors | `/dashboard/alta-dni` | `dniEnroll.ts` | PDF417/QR DNI en portería |
+| Alta DNI | `dni_enroll` | visitors | `/dashboard/visitas?tab=dni` | `dniEnroll.ts` | PDF417/QR DNI en portería (pestaña de Visitas) |
 | Pánico | `panic` | — | `/dashboard/panico`, SOS portal | `alarms.ts` | Cola SOS |
 | Fuego | `fire` | — | `/dashboard/fuego` | `alarms.ts` | Contacto panel, no certificado |
 | Fichadas | `attendance` | dahua_access | `/dashboard/fichadas` | `attendance.ts` | Eventos Dahua + fichada manual |
@@ -21,7 +21,7 @@ Fuente de verdad: `packages/catalog/src/index.ts` (`MODULE_CATALOG` + `PLAN_CATA
 | Equipos | `dahua.devices` | `access.dahua` | on | `/dashboard/dahua` |
 | Eventos y foto | `dahua.events` | `dahua.events` | on | `/dashboard/dahua/eventos` |
 | Abrir puerta | `dahua.open` | `dahua.open` | on | (botones openDoor) |
-| Personas | `dahua.persons` | `dahua.persons` | on | `/dashboard/dahua/personas` (padrón) |
+| Personas | `dahua.persons` | `dahua.persons` | on | `/dashboard/dahua/personas` (pestaña Sectores) |
 | Facial | `dahua.face` | `dahua.face` | on | Foto portal + enroll ASI |
 | Huella | `dahua.fingerprint` | `dahua.fingerprint` | off | DoorParam ASI |
 | Tarjeta | `dahua.card` | `dahua.card` | off | DoorParam ASI |
@@ -30,7 +30,7 @@ Fuente de verdad: `packages/catalog/src/index.ts` (`MODULE_CATALOG` + `PLAN_CATA
 | Periodos | `dahua.schedules` | `dahua.schedules` | off | `/dashboard/dahua/periodos` |
 | Parámetros de puerta | `dahua.door` | `dahua.door` | on | Equipos (instalador) |
 | Alarma lector | `dahua.alarm` | `dahua.alarm` | off | Eventos |
-| Evidencia | `dahua.evidence` | `dahua.evidence` | off | `/dashboard/dahua/evidencia` |
+| Evidencia | `dahua.evidence` | `dahua.evidence` | off | `/dashboard/dahua/eventos?tab=fotos` |
 | Live | `dahua.live` | `dahua.live` | off | `/dashboard/dahua/live` |
 | Intercom | `dahua.intercom` | `dahua.intercom` | off | AccesoPhone; `docs/INTERCOM.md` |
 
