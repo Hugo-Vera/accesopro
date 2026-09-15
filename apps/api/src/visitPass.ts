@@ -11,8 +11,7 @@ export function qrSecret() {
 }
 
 export function makeVisitToken(propertyId: string, passId: string) {
-  const sig = createHmac("sha256", qrSecret()).update(`${propertyId}:${passId}`).digest("hex").slice(0, 16);
-  return `${passId}.${sig}`;
+  return createHmac("sha256", qrSecret()).update(`${propertyId}:${passId}`).digest("hex").slice(0, 16).toUpperCase();
 }
 
 export function parseVisitQrPayload(raw: string): string | null {

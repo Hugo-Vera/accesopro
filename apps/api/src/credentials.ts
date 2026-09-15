@@ -7,7 +7,7 @@ import { nid, scopedSiteWithModule } from "./scope.js";
 import { denyUnlessCapability } from "./grants.js";
 import { assertFeature } from "./features.js";
 import { enrollPersonOnSiteDevicesWait, removeCardOnSiteDevicesWait, syncStatusForUser } from "./dahuaSite.js";
-import { ASI_USER_TYPES } from "@accesopro/catalog";
+import { ASI_USER_TYPES, isAsiCardNo, normalizeAsiCardNo, randomAsiCardNo } from "@accesopro/catalog";
 
 type Env = { Variables: { user: AuthUser } };
 
@@ -72,6 +72,17 @@ export async function upsertCredential(input: {
   if (input.kind === "qr" && qrPayloadBytes(payload) > QR_PAYLOAD_MAX_BYTES) {
     throw new Error(`El QR no puede pasar de ${QR_PAYLOAD_MAX_BYTES} bytes: el lector no lo compara`);
   }
+  const stored =
+    input.kind === "card" || (input.kind === "qr" && (input.validationMode ?? "local") === "local")
+      ? normalizeAsiCardNo(payload)
+      : payload;
+  if (input.kind === "card" || ((input.validationMode ?? "local") === "local" && input.kind === "qr")) {
+    if (!isAsiCardNo(stored)) {
+      throw new Error(
+        "El lector solo acepta QR/tarjeta hexadecimal (0-9 A-F, largo par, 4 a 32). Un texto como un nombre lo marca código QR inválido.",
+      );
+    }
+  }
   const existing = await db
     .select()
     .from(personCredentials)
@@ -79,7 +90,7 @@ export async function upsertCredential(input: {
       and(
         eq(personCredentials.siteId, input.siteId),
         eq(personCredentials.kind, input.kind),
-        eq(personCredentials.payload, payload),
+        eq(personCredentials.payload, stored),
       ),
     )
     .get();
@@ -87,7 +98,7 @@ export async function upsertCredential(input: {
     siteId: input.siteId,
     dahuaUserId: input.dahuaUserId,
     kind: input.kind,
-    payload,
+    payload: stored,
     label: input.label ?? null,
     validFrom: input.validFrom ?? null,
     validUntil: input.validUntil ?? null,
@@ -144,7 +155,10 @@ async function replicaCredentialToDevices(
       name: cred.label || cred.dahuaUserId,
       cardNo,
       password: cred.kind === "pin" ? cred.payload : pinRow?.payload || undefined,
-      userType: cred.kind === "qr" && cred.dahuaUserId.startsWith("v_") ? ASI_USER_TYPES.guest : ASI_USER_TYPES.general,
+      userType:
+        cred.dahuaUserId.startsWith("v_") || (cred.kind === "qr" && (cred.maxUses ?? 0) > 0)
+          ? ASI_USER_TYPES.guest
+          : ASI_USER_TYPES.general,
       useTime: cred.kind === "pin" ? 0 : cred.maxUses ?? 0,
     },
     cred.validFrom || cred.validUntil
@@ -225,8 +239,13 @@ credentialsApi.post("/credentials", async (c) => {
   const blocked = await assertFeature(scoped.tenantId, KIND_FEATURE[kind]);
   if (blocked) return c.json({ error: blocked }, 403);
   const userId = String(body.userId || "").trim();
-  const payload = String(body.payload || "").trim();
-  if (!userId || !payload) return c.json({ error: "Faltan userId y credencial" }, 400);
+  const validationMode = body.validationMode === "passthrough" ? "passthrough" : "local";
+  let payload = String(body.payload || "").trim();
+  if (!userId) return c.json({ error: "Falta userId" }, 400);
+  if (!payload && kind === "qr" && validationMode === "local") {
+    payload = randomAsiCardNo();
+  }
+  if (!payload) return c.json({ error: "Faltan userId y credencial" }, 400);
   const until = body.validUntil ? new Date(body.validUntil) : null;
   try {
     const row = await upsertCredential({
@@ -237,10 +256,11 @@ credentialsApi.post("/credentials", async (c) => {
       label: body.label?.trim() || null,
       validUntil: until && !Number.isNaN(until.getTime()) ? until : null,
       maxUses: Number(body.maxUses ?? 0),
-      validationMode: body.validationMode === "passthrough" ? "passthrough" : "local",
+      validationMode,
     });
     let deviceSync: Awaited<ReturnType<typeof replicaCredentialToDevices>> | undefined;
-    if (kind === "card" || kind === "qr" || kind === "pin") {
+    const replicaLocal = kind === "card" || kind === "pin" || (kind === "qr" && validationMode === "local");
+    if (replicaLocal) {
       deviceSync = await replicaCredentialToDevices(scoped.site.id, row);
     }
     return c.json({ ok: true, credential: row, deviceSync });

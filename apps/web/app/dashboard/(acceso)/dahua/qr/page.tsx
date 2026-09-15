@@ -228,8 +228,10 @@ export default function DahuaQrPage() {
                 <span>Mapeo Técnico</span>
               </div>
               <p>
-                QR y tarjeta son credenciales distintas. En modo local el lector compara el string del QR
-                (máximo 128 bytes, a 3-5 cm de la lente) contra su copia. El pass-through
+                QR y tarjeta son credenciales distintas. En modo local el ASI guarda ambos en
+                <span className="font-mono"> AccessControlCard.CardNo</span>, que es hexadecimal
+                (0-9 A-F, largo par). Un texto como un nombre el lector lo marca código QR inválido.
+                El pass-through
                 (<span className="font-mono">QRCode.TransmissionEnable</span>) es la excepción: AccesoPro
                 decide revocación instantánea, permanencia o autorización en el momento.
               </p>
@@ -263,7 +265,8 @@ export default function DahuaQrPage() {
                     <Key className="w-4 h-4 text-slate-400 absolute right-3 top-2.5" />
                   </div>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
-                    El string que el lector va a comparar. No es el número de una tarjeta.
+                    En modo local el string tiene que ser hexadecimal (0-9 A-F), como B2FC3764.
+                    Un nombre lo marca código QR inválido.
                   </p>
                 </div>
 

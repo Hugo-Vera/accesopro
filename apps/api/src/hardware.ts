@@ -13,6 +13,7 @@ import { parseDeviceLaneSector, parseDeviceSentido, syncDeviceLaneWiring } from 
 import { denyUnlessCapability } from "./grants.js";
 import { tenantFeatureEnabled, assertFeature } from "./features.js";
 import { clearSiteEventPhotos, readEventPhoto } from "./eventPhotos.js";
+import { toAsiCardNo } from "@accesopro/catalog";
 
 export { fireActuator } from "./actuatorExec.js";
 
@@ -962,7 +963,7 @@ hardware.post("/dahua/:id/persons", async (c) => {
   const name = body.name?.trim();
   if (!name) return c.json({ error: "Falta el nombre" }, 400);
   const userId = (body.userId?.trim() || `u${Date.now().toString().slice(-8)}`).slice(0, 16);
-  const cardNo = (body.cardNo?.trim() || userId).slice(0, 20);
+  const cardNo = toAsiCardNo((body.cardNo?.trim() || userId).slice(0, 32));
   const cmd = await enqueue(scoped.site.id, "dahua_person_enroll", {
     deviceId: id,
     userId,

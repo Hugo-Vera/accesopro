@@ -6,6 +6,7 @@ import { api, apiUrl, withTenant } from "@/lib/api";
 import { useDash } from "@/components/DashboardProvider";
 import { useToast } from "@/components/Toast";
 import { useTheme } from "@/components/ThemeProvider";
+import { isAsiCardNo, normalizeAsiCardNo, randomAsiCardNo } from "@accesopro/catalog";
 import { useEscapeKey } from "@/hooks/useEscapeKey";
 import { DahuaDateTimePicker } from "@/components/DahuaDateTimePicker";
 import {
@@ -41,6 +42,14 @@ import {
 } from "lucide-react";
 
 type IconProps = SVGProps<SVGSVGElement>;
+
+type DeviceSyncRow = { ok?: boolean; error?: string; name?: string; deviceId?: string };
+
+function replicaError(deviceSync?: DeviceSyncRow[]) {
+  const fail = (deviceSync || []).filter((s) => s.ok === false);
+  if (!fail.length) return null;
+  return fail.map((s) => s.error || s.name || "el lector rechazó la credencial").join(" · ");
+}
 
 /** Credencial del padrón maestro de AccesoPro. Tarjeta, QR y PIN son cosas distintas. */
 type PersonCredential = {
@@ -400,7 +409,7 @@ function CreatePersonModal({
 
     try {
       const uid = userId.trim() || `U${Date.now().toString().slice(-7)}`;
-      const cardNo = uid;
+      const cardNo = isAsiCardNo(uid) ? normalizeAsiCardNo(uid) : randomAsiCardNo();
       const formattedName = lotNumber.trim()
         ? `${name.trim()} (${lotNumber.trim()})`
         : name.trim();
@@ -526,7 +535,7 @@ function CreatePersonModal({
                     placeholder="Ej. 34567890"
                     className="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#0b0f17] px-3.5 py-2 text-sm font-mono text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-600 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                   />
-                  <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">Se usará como UserId y payload para el código QR.</p>
+                  <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">Identificador en el lector (UserID). El QR se emite aparte, en hexadecimal.</p>
                 </div>
 
                 <div>
@@ -1130,28 +1139,42 @@ function EditPersonModal({
   };
 
   const persistCard = async (cardCode: string) => {
-    if (cards.includes(cardCode) || cardCreds.some((c) => c.payload === cardCode)) {
-      toast.info("Tarjeta existente", `La tarjeta ${cardCode} ya está en la lista.`);
+    const card = normalizeAsiCardNo(cardCode);
+    if (!isAsiCardNo(card)) {
+      toast.error(
+        "Número inválido",
+        "El lector solo acepta tarjeta hexadecimal (0-9 A-F, largo par, 4 a 32).",
+      );
+      return;
+    }
+    if (cards.includes(card) || cardCreds.some((c) => c.payload === card)) {
+      toast.info("Tarjeta existente", `La tarjeta ${card} ya está en la lista.`);
       return;
     }
     if (cardPackOn) {
       try {
-        await api(t("/api/credentials"), {
+        const created = await api<{ deviceSync?: DeviceSyncRow[] }>(t("/api/credentials"), {
           method: "POST",
           body: JSON.stringify({
             userId: person.userId,
             kind: "card",
-            payload: cardCode,
+            payload: card,
             label: name.trim() || person.name,
           }),
         });
+        const replica = replicaError(created.deviceSync);
+        if (replica) {
+          toast.error("Tarjeta guardada, el lector la rechazó", replica);
+          await loadCredentials();
+          return;
+        }
       } catch (err) {
         toast.error("Error al guardar la tarjeta", err instanceof Error ? err.message : "No se pudo replicar al lector");
         return;
       }
     }
-    setCards((prev) => [...prev, cardCode]);
-    toast.success("Tarjeta vinculada", `Tarjeta ${cardCode} guardada en el padrón maestro.`);
+    setCards((prev) => [...prev, card]);
+    toast.success("Tarjeta vinculada", `Tarjeta ${card} guardada en el padrón maestro.`);
     await loadCredentials();
   };
 
@@ -1191,30 +1214,48 @@ function EditPersonModal({
   };
 
   const handleAddQr = async () => {
-    // El lector coteja el string tal cual: sin prefijos y por debajo de 128 bytes.
-    const payload = (newQrInput.trim() || `QR${Date.now().toString(36).toUpperCase()}`).trim();
+    const typed = newQrInput.trim();
+    const local = newQrMode === "local";
+    let payload = typed;
+    let label = name.trim() || person.name;
+    if (local) {
+      if (!typed) {
+        payload = randomAsiCardNo();
+      } else if (!isAsiCardNo(typed)) {
+        label = typed;
+        payload = randomAsiCardNo();
+      } else {
+        payload = normalizeAsiCardNo(typed);
+      }
+    }
     setQrBusy(true);
     setQrError(null);
     try {
-      await api(t("/api/credentials"), {
+      const created = await api<{ credential?: PersonCredential; deviceSync?: DeviceSyncRow[] }>(t("/api/credentials"), {
         method: "POST",
         body: JSON.stringify({
           userId: person.userId,
           kind: "qr",
           payload,
-          label: name.trim() || person.name,
+          label,
           validUntil: newQrUntil ? new Date(newQrUntil).getTime() : null,
           maxUses: newQrUses,
           validationMode: newQrMode,
         }),
       });
+      const stored = created.credential?.payload || payload;
       await loadCredentials();
       setShowAddQrModal(false);
       setNewQrInput("");
       setNewQrUntil("");
       setNewQrUses(0);
       setNewQrMode("local");
-      toast.success("QR emitido", `Código ${payload} guardado en el padrón maestro.`);
+      const replica = replicaError(created.deviceSync);
+      if (replica) {
+        toast.error("QR guardado, el lector lo rechazó", replica);
+      } else {
+        toast.success("QR emitido", `Código ${stored} replicado al lector. Presentalo a 3-5 cm de la lente.`);
+      }
     } catch (err) {
       const msg = err instanceof Error ? err.message : "No se pudo emitir el QR";
       setQrError(msg);
@@ -1689,8 +1730,8 @@ function EditPersonModal({
                   {openSections.qr && (
                     <div className="p-4 bg-white dark:bg-[#111827] space-y-3">
                       <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                        El QR es una credencial aparte de la tarjeta: el lector lo compara contra su
-                        propia copia. Máximo 128 bytes y se lee a 3-5 cm de la lente.
+                        El QR es una credencial aparte de la tarjeta. En modo local el lector solo
+                        compara hexadecimal (0-9 A-F). Presentarlo a 3-5 cm de la lente.
                       </p>
                       <div className="flex flex-wrap gap-2.5">
                         {qrCreds.map((cred) => (
@@ -1705,6 +1746,11 @@ function EditPersonModal({
                               <QrCode className="w-4 h-4 text-cyan-600 dark:text-cyan-400" />
                             )}
                             <div className="min-w-0">
+                              {cred.label ? (
+                                <p className="text-[10px] font-semibold text-slate-600 dark:text-slate-300 truncate">
+                                  {cred.label}
+                                </p>
+                              ) : null}
                               <p className="font-mono text-xs font-bold text-slate-800 dark:text-slate-200 truncate">
                                 {cred.payload}
                               </p>
@@ -2016,11 +2062,12 @@ function EditPersonModal({
                   type="text"
                   value={newQrInput}
                   onChange={(e) => setNewQrInput(e.target.value)}
-                  placeholder="Se genera solo si lo dejás vacío"
+                  placeholder="Vacío = se genera hexadecimal"
                   className="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#0b0f17] px-3.5 py-2 text-sm font-mono text-slate-900 dark:text-white focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500"
                 />
                 <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                  El lector compara exactamente este texto. Sin prefijos y hasta 128 bytes.
+                  El ASI compara CardNo hexadecimal (0-9 A-F, largo par). Un nombre como etiqueta
+                  queda en AccesoPro; el código impreso es hex. Vacío genera uno solo.
                 </p>
               </div>
 

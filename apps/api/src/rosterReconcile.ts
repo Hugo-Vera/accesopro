@@ -124,7 +124,9 @@ async function expectedRoster(siteId: string) {
       name: cred.label || cred.dahuaUserId,
       cardNo: cred.payload,
       password: pin?.payload,
-      userType: cred.dahuaUserId.startsWith("v_") ? ASI_USER_TYPES.guest : ASI_USER_TYPES.general,
+      userType: cred.dahuaUserId.startsWith("v_") || ((cred.maxUses ?? 0) > 0 && cred.kind === "qr")
+        ? ASI_USER_TYPES.guest
+        : ASI_USER_TYPES.general,
       useTime: cred.maxUses ?? 0,
       win:
         cred.validFrom || cred.validUntil

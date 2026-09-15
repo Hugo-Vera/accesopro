@@ -618,6 +618,34 @@ export const METHOD_CODE_ROWS: AsiMethodDef[] = [
 /** Código de `Method` con el que este firmware reporta el QR. `null` hasta medirlo en el equipo. */
 export const ASI_QR_METHOD_CODE: number | null = null;
 
+/**
+ * El ASI guarda QR y tarjeta en `AccessControlCard.CardNo`. Ese campo es hexadecimal
+ * (0-9A-F, largo par, 4 a 32). Un texto tipo "Hugo" el lector lo marca "código QR inválido"
+ * y el CGI responde Bad Request.
+ */
+export function isAsiCardNo(value: string) {
+  const s = value.trim();
+  return /^[0-9A-Fa-f]{4,32}$/.test(s) && s.length % 2 === 0;
+}
+
+export function normalizeAsiCardNo(value: string) {
+  return value.trim().toUpperCase();
+}
+
+/** CardNo aleatorio válido para el ASI (8 bytes → 16 hex). */
+export function randomAsiCardNo(byteLen = 8) {
+  const n = Math.max(2, Math.min(16, byteLen));
+  const bytes = new Uint8Array(n);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("").toUpperCase();
+}
+
+/** Si el valor ya es hex válido lo deja; si no, genera uno. No usar para un QR que el usuario escribió a propósito. */
+export function toAsiCardNo(value: string) {
+  const n = normalizeAsiCardNo(value);
+  return isAsiCardNo(n) ? n : randomAsiCardNo();
+}
+
 /* —— UserType / CardType del padrón del ASI —— */
 
 /**
