@@ -399,6 +399,21 @@ export async function ensureSchema() {
     )
   `);
   await db.run(sql`
+    CREATE TABLE IF NOT EXISTS person_insurances (
+      id TEXT PRIMARY KEY,
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      person_id TEXT NOT NULL REFERENCES visitor_identities(id),
+      kind TEXT NOT NULL DEFAULT 'life',
+      company TEXT,
+      policy_number TEXT,
+      valid_until INTEGER NOT NULL,
+      document_path TEXT,
+      document_mime TEXT,
+      source TEXT NOT NULL DEFAULT 'upload',
+      created_at INTEGER NOT NULL
+    )
+  `);
+  await db.run(sql`
     CREATE TABLE IF NOT EXISTS vehicles (
       id TEXT PRIMARY KEY,
       tenant_id TEXT NOT NULL REFERENCES tenants(id),
@@ -449,6 +464,7 @@ export async function ensureSchema() {
       person_id TEXT NOT NULL REFERENCES visitor_identities(id),
       vehicle_id TEXT REFERENCES vehicles(id),
       insurance_id TEXT REFERENCES vehicle_insurances(id),
+      person_insurance_id TEXT,
       license_id TEXT REFERENCES driver_licenses(id),
       visit_type TEXT NOT NULL DEFAULT 'social',
       status TEXT NOT NULL DEFAULT 'in_site',
@@ -461,6 +477,7 @@ export async function ensureSchema() {
       created_at INTEGER NOT NULL
     )
   `);
+  await addColumn("visit_records", "person_insurance_id", "TEXT");
 
   await backfillAccessPointsFromLegacy();
   await backfillDeviceLaneFields(addedSentido, addedLaneSector);

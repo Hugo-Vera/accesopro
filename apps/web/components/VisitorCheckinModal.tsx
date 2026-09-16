@@ -5,6 +5,9 @@ import { api, withTenant } from "@/lib/api";
 import { useEscapeKey } from "@/hooks/useEscapeKey";
 import { useDash } from "@/components/DashboardProvider";
 import { VisitFaceCapture } from "@/components/ops/VisitFaceCapture";
+import { DniScanPanel } from "@/components/DniScanPanel";
+import { parseDniScan } from "@/lib/parseDni";
+import { DocumentScanPanel, type AcceptedDoc, visitorDocUrl } from "@/components/ops/DocumentScanPanel";
 import {
   IdCard,
   Home,
@@ -16,7 +19,6 @@ import {
   ArrowRight,
   ArrowLeft,
   X,
-  ScanLine,
   Search,
   UserCheck,
   Building2,
@@ -27,7 +29,50 @@ import {
   FileWarning,
   QrCode,
   ScanFace,
+  ClipboardList,
+  Shield,
 } from "lucide-react";
+
+type VisitKind = "social" | "service" | "contractor" | "delivery";
+
+const VISIT_PRACTICE: Record<
+  VisitKind,
+  { title: string; items: { text: string; ask: boolean }[] }
+> = {
+  social: {
+    title: "Visita social / familiar",
+    items: [
+      { text: "DNI del visitante", ask: true },
+      { text: "Quién autoriza en el lote", ask: true },
+      { text: "Si entra en auto: seguro automotor y licencia (pasos siguientes)", ask: false },
+    ],
+  },
+  service: {
+    title: "Servicio / técnico",
+    items: [
+      { text: "DNI y quién autoriza", ask: true },
+      { text: "Seguro de vida o ART vigente", ask: true },
+      { text: "Constancia (webcam o archivo de WhatsApp)", ask: true },
+      { text: "Si entra en auto: seguro del vehículo y licencia", ask: false },
+    ],
+  },
+  contractor: {
+    title: "Obra / contratista",
+    items: [
+      { text: "DNI y quién autoriza", ask: true },
+      { text: "ART o seguro de vida vigente", ask: true },
+      { text: "Constancia adjunta (escaneo o archivo)", ask: true },
+      { text: "Anotar herramientas / vehículo en observaciones", ask: false },
+    ],
+  },
+  delivery: {
+    title: "Delivery / paquete",
+    items: [
+      { text: "DNI y destinatario que autoriza", ask: true },
+      { text: "Si el auto entra al predio: seguro automotor (paso siguiente)", ask: false },
+    ],
+  },
+};
 
 export const ARGENTINA_INSURANCE_COMPANIES = [
   "Federación Patronal",
@@ -72,7 +117,14 @@ type Props = {
 };
 
 export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Props) {
-  useEscapeKey(onClose, isOpen);
+  const [docOverlay, setDocOverlay] = useState(false);
+  useEscapeKey(() => {
+    if (docOverlay) {
+      setDocOverlay(false);
+      return;
+    }
+    onClose();
+  }, isOpen);
   const { featureOn, can } = useDash();
   const faceOn = featureOn("dahua.face") && can("dahua.face");
 
@@ -97,13 +149,16 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
   const [rawPdf417, setRawPdf417] = useState("");
   const [isDniSearching, setIsDniSearching] = useState(false);
   const [dniFound, setDniFound] = useState(false);
-  const [showPdf417Input, setShowPdf417Input] = useState(false);
 
   // Paso 2: Destino y Autorización
   const [propertyId, setPropertyId] = useState("");
   const [authorizedBy, setAuthorizedBy] = useState("");
-  const [visitType, setVisitType] = useState<"social" | "service" | "contractor" | "delivery">("social");
+  const [visitType, setVisitType] = useState<VisitKind>("social");
   const [notes, setNotes] = useState("");
+  const [lifeValidUntil, setLifeValidUntil] = useState("");
+  const [lifeCompany, setLifeCompany] = useState("");
+  const [lifeDoc, setLifeDoc] = useState<AcceptedDoc | null>(null);
+  const [askLife, setAskLife] = useState(false);
 
   // Paso 3: Modalidad
   const [isVehicular, setIsVehicular] = useState<boolean>(true);
@@ -170,24 +225,40 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
     setAccessMethod("qr");
     setFaceB64(null);
     setFacePreview(null);
+    setLifeValidUntil("");
+    setLifeCompany("");
+    setLifeDoc(null);
+    setAskLife(false);
+    setDocOverlay(false);
   }, [isOpen]);
 
   // Búsqueda automática de DNI al tipear 7 u 8 dígitos
-  const handleDniBlurOrSearch = async () => {
-    const cleanDni = dniNumber.replace(/\D/g, "");
+  const handleDniBlurOrSearch = async (overrideDni?: string) => {
+    const cleanDni = (overrideDni ?? dniNumber).replace(/\D/g, "");
     if (cleanDni.length < 7) return;
 
     setIsDniSearching(true);
     try {
-      const res = await api<{ found: boolean; identity?: any; license?: any }>(
-        withTenant(`/api/visitors/search-identity?dni=${cleanDni}`, tenantId)
-      );
+      const res = await api<{
+        found: boolean;
+        identity?: any;
+        license?: any;
+        personInsurance?: {
+          id: string;
+          company?: string | null;
+          validUntil: string | number;
+          documentMime?: string | null;
+          hasDocument?: boolean;
+        } | null;
+      }>(withTenant(`/api/visitors/search-identity?dni=${cleanDni}`, tenantId));
       if (res.found && res.identity) {
-        setLastName(res.identity.lastName || "");
-        setFirstName(res.identity.firstName || "");
-        setGender(res.identity.gender || "M");
-        setBirthDate(res.identity.birthDate || "");
-        setTramiteNumber(res.identity.tramiteNumber || "");
+        if (!overrideDni) {
+          setLastName(res.identity.lastName || "");
+          setFirstName(res.identity.firstName || "");
+          setGender(res.identity.gender || "M");
+          setBirthDate(res.identity.birthDate || "");
+          setTramiteNumber(res.identity.tramiteNumber || "");
+        }
         setPhone(res.identity.phone || "");
         setAddress(res.identity.address || "");
         setDniFound(true);
@@ -200,6 +271,34 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
             setLicenseValidUntil(new Date(res.license.validUntil).toISOString().split("T")[0]);
           }
         }
+
+        if (res.personInsurance) {
+          if (res.personInsurance.validUntil) {
+            setLifeValidUntil(new Date(res.personInsurance.validUntil).toISOString().split("T")[0]);
+          }
+          setLifeCompany(res.personInsurance.company || "");
+          if (res.personInsurance.hasDocument) {
+            try {
+              const docRes = await fetch(visitorDocUrl(tenantId, res.personInsurance.id), { credentials: "include" });
+              if (docRes.ok) {
+                const blob = await docRes.blob();
+                const previewUrl = URL.createObjectURL(blob);
+                const mime = blob.type || res.personInsurance.documentMime || "image/jpeg";
+                setLifeDoc({
+                  base64: null,
+                  mime,
+                  source: "upload",
+                  bytes: blob.size,
+                  cropped: false,
+                  previewUrl,
+                  reuseId: res.personInsurance.id,
+                });
+              }
+            } catch {
+              /* se puede escanear de nuevo */
+            }
+          }
+        }
       } else {
         setDniFound(false);
       }
@@ -210,36 +309,17 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
     }
   };
 
-  // Parsear código de barras PDF417 de DNI argentino
   const handleParsePdf417 = (raw: string) => {
-    setRawPdf417(raw);
-    const parts = raw.split("@");
-    if (parts.length >= 8) {
-      // Formato Renaper típico: N° Trámite @ Apellido @ Nombre @ Sexo @ DNI @ Ejemplar @ F.Nac @ F.Emisión
-      const parsedTramite = parts[0]?.trim();
-      const parsedLastName = parts[1]?.trim();
-      const parsedFirstName = parts[2]?.trim();
-      const parsedGender = parts[3]?.trim().toUpperCase();
-      const parsedDni = parts[4]?.trim().replace(/\D/g, "");
-      const parsedBirth = parts[6]?.trim();
-
-      if (parsedDni) setDniNumber(parsedDni);
-      if (parsedTramite) setTramiteNumber(parsedTramite);
-      if (parsedLastName) setLastName(parsedLastName);
-      if (parsedFirstName) setFirstName(parsedFirstName);
-      if (parsedGender) setGender(parsedGender);
-      if (parsedBirth) {
-        // Puede venir DD/MM/AAAA o AAAA-MM-DD
-        if (parsedBirth.includes("/")) {
-          const [d, m, y] = parsedBirth.split("/");
-          if (d && m && y) setBirthDate(`${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`);
-        } else {
-          setBirthDate(parsedBirth);
-        }
-      }
-      setDniFound(true);
-      setShowPdf417Input(false);
-    }
+    const parsed = parseDniScan(raw);
+    if (!parsed) return;
+    setRawPdf417(parsed.raw);
+    if (parsed.dni) setDniNumber(parsed.dni);
+    if (parsed.tramite) setTramiteNumber(parsed.tramite);
+    if (parsed.lastName) setLastName(parsed.lastName);
+    if (parsed.firstName) setFirstName(parsed.firstName);
+    if (parsed.gender) setGender(parsed.gender);
+    if (parsed.birthDate) setBirthDate(parsed.birthDate);
+    if (parsed.dni) void handleDniBlurOrSearch(parsed.dni);
   };
 
   // Búsqueda de Vehículo por Patente
@@ -283,7 +363,11 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
       return dniNumber.trim().length >= 7 && lastName.trim() && firstName.trim();
     }
     if (step === 2) {
-      return propertyId && authorizedBy.trim();
+      const needsLife = visitType === "service" || visitType === "contractor";
+      if (needsLife) {
+        return Boolean(propertyId && authorizedBy.trim() && lifeValidUntil && lifeDoc);
+      }
+      return Boolean(propertyId && authorizedBy.trim());
     }
     if (step === 3) {
       return true;
@@ -384,6 +468,18 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
       actuatorId: openRelay ? actuatorId : undefined,
       accessMethod,
       photoBase64: accessMethod === "face" ? faceB64 || undefined : undefined,
+      personInsurance:
+        lifeValidUntil && lifeDoc && (lifeDoc.base64 || lifeDoc.reuseId)
+          ? {
+              reuseId: lifeDoc.base64 ? undefined : lifeDoc.reuseId,
+              kind: "life" as const,
+              company: lifeCompany.trim() || undefined,
+              validUntil: lifeValidUntil,
+              documentBase64: lifeDoc.base64 || undefined,
+              documentMime: lifeDoc.mime,
+              source: lifeDoc.source,
+            }
+          : undefined,
     };
 
     try {
@@ -494,34 +590,9 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
                 <span className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
                   Datos Filiatorios (DNI Argentino)
                 </span>
-                <button
-                  type="button"
-                  onClick={() => setShowPdf417Input(!showPdf417Input)}
-                  className="inline-flex items-center gap-1 text-[11px] font-bold text-blue-600 dark:text-blue-400 hover:underline"
-                >
-                  <ScanLine className="h-3.5 w-3.5" />
-                  <span>{showPdf417Input ? "Ocultar lector" : "Escanear código PDF417"}</span>
-                </button>
               </div>
 
-              {/* Entrada rápida PDF417 */}
-              {showPdf417Input && (
-                <div className="rounded-xl border border-blue-200 dark:border-blue-900/60 bg-blue-50/50 dark:bg-blue-950/20 p-3">
-                  <label className="block text-[11px] font-bold text-blue-900 dark:text-blue-300 mb-1">
-                    Pistola de código de barras o pegar cadena PDF417:
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="Pegá aquí la lectura cruda del código de barras del DNI..."
-                    value={rawPdf417}
-                    onChange={(e) => handleParsePdf417(e.target.value)}
-                    className="w-full rounded-lg border border-blue-300 dark:border-blue-800 bg-white dark:bg-slate-950 px-3 py-1.5 text-xs text-slate-900 dark:text-white"
-                  />
-                  <p className="mt-1 text-[10px] text-blue-700 dark:text-blue-400">
-                    Autocompleta de inmediato Apellido, Nombre, DNI, Trámite y Nacimiento.
-                  </p>
-                </div>
-              )}
+              <DniScanPanel active={isOpen && step === 1} onScan={handleParsePdf417} />
 
               <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                 <div>
@@ -534,7 +605,7 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
                       placeholder="Ej. 34567890"
                       value={dniNumber}
                       onChange={(e) => setDniNumber(e.target.value)}
-                      onBlur={handleDniBlurOrSearch}
+                      onBlur={() => void handleDniBlurOrSearch()}
                       className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs font-mono font-bold text-slate-900 shadow-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
                     />
                     {isDniSearching && (
@@ -698,7 +769,7 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
                     <button
                       key={t.key}
                       type="button"
-                      onClick={() => setVisitType(t.key as any)}
+                      onClick={() => setVisitType(t.key as VisitKind)}
                       className={`py-2 px-3 rounded-xl border text-xs font-bold transition-all ${
                         visitType === t.key
                           ? "border-blue-600 bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 dark:border-blue-700"
@@ -710,6 +781,84 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
                   ))}
                 </div>
               </div>
+
+              <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-3 dark:border-slate-700 dark:bg-slate-800/40">
+                <div className="mb-2 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300">
+                  <ClipboardList className="h-3.5 w-3.5" />
+                  Buena práctica · {VISIT_PRACTICE[visitType].title}
+                </div>
+                <ul className="space-y-1">
+                  {VISIT_PRACTICE[visitType].items.map((item) => (
+                    <li key={item.text} className="flex items-start gap-2 text-[11px] text-slate-600 dark:text-slate-300">
+                      <span
+                        className={`mt-0.5 inline-block h-1.5 w-1.5 shrink-0 rounded-full ${
+                          item.ask ? "bg-blue-600" : "bg-slate-400"
+                        }`}
+                      />
+                      <span>
+                        {item.text}
+                        {item.ask ? <span className="font-semibold text-slate-800 dark:text-slate-100"> · pedir</span> : null}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+
+              {(visitType === "service" || visitType === "contractor" || askLife || lifeDoc) && (
+                <div className="rounded-xl border border-amber-200 bg-amber-50/50 p-3 dark:border-amber-900/50 dark:bg-amber-950/20">
+                  <div className="mb-2 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-amber-900 dark:text-amber-300">
+                    <Shield className="h-3.5 w-3.5" />
+                    Seguro de vida / ART
+                    {visitType === "service" || visitType === "contractor" ? " *" : ""}
+                  </div>
+                  <div className="mb-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div>
+                      <label className="mb-1 block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                        Vigencia (vencimiento) *
+                      </label>
+                      <input
+                        type="date"
+                        value={lifeValidUntil}
+                        onChange={(e) => setLifeValidUntil(e.target.value)}
+                        className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs font-bold text-slate-900 shadow-xs dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+                      />
+                    </div>
+                    <div>
+                      <label className="mb-1 block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                        Compañía (opcional)
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="Ej. Sancor, Provincia ART"
+                        value={lifeCompany}
+                        onChange={(e) => setLifeCompany(e.target.value)}
+                        className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs text-slate-900 shadow-xs dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+                      />
+                    </div>
+                  </div>
+                  <DocumentScanPanel
+                    tenantId={tenantId}
+                    value={lifeDoc}
+                    overlayOpen={docOverlay}
+                    onOverlayChange={setDocOverlay}
+                    onAccept={setLifeDoc}
+                    onClear={() => setLifeDoc(null)}
+                  />
+                  {lifeValidUntil && new Date(lifeValidUntil).getTime() < Date.now() ? (
+                    <p className="mt-2 text-[11px] font-semibold text-rose-600">La vigencia está vencida. Pedí una constancia actual.</p>
+                  ) : null}
+                </div>
+              )}
+
+              {visitType !== "service" && visitType !== "contractor" && !askLife && !lifeDoc ? (
+                <button
+                  type="button"
+                  onClick={() => setAskLife(true)}
+                  className="text-[11px] font-bold text-blue-600 hover:underline dark:text-blue-400"
+                >
+                  Adjuntar seguro de vida (opcional)
+                </button>
+              ) : null}
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
@@ -1066,6 +1215,20 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
                     {visitType.toUpperCase()}
                   </span>
                 </div>
+
+                {lifeDoc && lifeValidUntil ? (
+                  <div className="py-2.5 flex items-center justify-between">
+                    <div>
+                      <p className="text-[10px] font-bold text-slate-500 uppercase">Seguro de vida / ART</p>
+                      <p className="font-bold text-slate-800 dark:text-slate-200">
+                        {lifeCompany || "Constancia adjunta"} · vence {lifeValidUntil}
+                      </p>
+                    </div>
+                    <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-600 dark:text-emerald-400">
+                      <ShieldCheck className="h-4 w-4" /> {Math.max(1, Math.round(lifeDoc.bytes / 1024))} KB
+                    </span>
+                  </div>
+                ) : null}
 
                 {/* Fila Vehicular si aplica */}
                 {isVehicular && (

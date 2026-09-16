@@ -480,6 +480,26 @@ export const visitorIdentities = sqliteTable("visitor_identities", {
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
 });
 
+/** Seguro de vida / ART de la persona (técnicos y obra). Constancia en disco. */
+export const personInsurances = sqliteTable("person_insurances", {
+  id: text("id").primaryKey(),
+  tenantId: text("tenant_id")
+    .notNull()
+    .references(() => tenants.id),
+  personId: text("person_id")
+    .notNull()
+    .references(() => visitorIdentities.id),
+  /** life = seguro de vida; art = ART */
+  kind: text("kind").notNull().default("life"),
+  company: text("company"),
+  policyNumber: text("policy_number"),
+  validUntil: integer("valid_until", { mode: "timestamp_ms" }).notNull(),
+  documentPath: text("document_path"),
+  documentMime: text("document_mime"),
+  source: text("source").notNull().default("upload"),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+});
+
 /** Parque automotor identificado por patente única */
 export const vehicles = sqliteTable("vehicles", {
   id: text("id").primaryKey(),
@@ -549,6 +569,7 @@ export const visitRecords = sqliteTable("visit_records", {
     .references(() => visitorIdentities.id),
   vehicleId: text("vehicle_id").references(() => vehicles.id),
   insuranceId: text("insurance_id").references(() => vehicleInsurances.id),
+  personInsuranceId: text("person_insurance_id").references(() => personInsurances.id),
   licenseId: text("license_id").references(() => driverLicenses.id),
   visitType: text("visit_type").notNull().default("social"),
   status: text("status").notNull().default("in_site"),

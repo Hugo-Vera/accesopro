@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useState } from "react";
 import { IdCard } from "lucide-react";
 import { api, withTenant } from "@/lib/api";
 import { useDash } from "@/components/DashboardProvider";
+import { DniScanPanel } from "@/components/DniScanPanel";
 
 type RecordRow = {
   id: string;
@@ -59,6 +60,7 @@ export function AltaDniPanel() {
         onSubmit={onSubmit}
         className="mb-6 max-w-xl space-y-3 rounded-xl border border-slate-200 bg-white p-4 dark:border-slate-700 dark:bg-slate-900"
       >
+        <DniScanPanel onScan={setRaw} />
         <label className="block text-sm">
           <span className="mb-1 block text-slate-500">Lectura DNI</span>
           <textarea

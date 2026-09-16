@@ -111,7 +111,7 @@ Visita: ingreso en carril 1 (`visit_passes.scanned_in_at`) y egreso en carril 2 
 | `visit_passes` | QR de visita: `token`, vigencia, `scanned_in_at` / `scanned_out_at` |
 | `visitor_identities` | Persona filiatoria DNI (PDF417), lista negra |
 | `vehicles` | Parque automotor por patente |
-| `vehicle_insurances` | Póliza (Ley 24.449 / SSN) |
+| `person_insurances` | Seguro de vida / ART de la persona + constancia en disco |
 | `driver_licenses` | Licencia de conducir asociada a `visitor_identities` |
 | `visit_records` | Visita transaccional: persona + lote + auto + seguro + licencia |
 

@@ -8,9 +8,18 @@ const basePath = (process.env.NEXT_PUBLIC_BASE_PATH ?? "").replace(/\/$/, "");
 
 const nextConfig: NextConfig = {
   ...(basePath ? { basePath } : {}),
-  transpilePackages: ["@accesopro/catalog"],
+  transpilePackages: ["@accesopro/catalog", "@zxing/library"],
   output: "standalone",
   outputFileTracingRoot: path.join(path.dirname(fileURLToPath(import.meta.url)), "../.."),
+  webpack: (config) => {
+    const rootModules = path.join(path.dirname(fileURLToPath(import.meta.url)), "../../node_modules");
+    config.resolve.modules = [...(config.resolve.modules || ["node_modules"]), rootModules];
+    config.resolve.alias = {
+      ...(config.resolve.alias || {}),
+      "@zxing/library": path.join(rootModules, "@zxing/library"),
+    };
+    return config;
+  },
   // Mismo origen (:3000) → API local. Así ZeroTier/LAN no dependen de localhost en el cliente.
   // fallback = solo si no hay page/route local (SSE y live MJPEG tienen route propia)
   async rewrites() {

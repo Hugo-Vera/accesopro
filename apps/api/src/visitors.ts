@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import { db } from "./db/client.js";
 import {
   driverLicenses,
+  personInsurances,
   properties,
   vehicleInsurances,
   vehicles,
@@ -21,6 +22,8 @@ import { denyUnlessCapability } from "./grants.js";
 import { tenantFeatureEnabled } from "./features.js";
 import { enrollPersonOnSiteDevicesWait } from "./dahuaSite.js";
 import { ASI_USER_TYPES, toAsiCardNo } from "@accesopro/catalog";
+import { processDocumentImage } from "./documentScan.js";
+import { mimeOfPath, readVisitorDoc, saveVisitorDoc } from "./visitorDocs.js";
 
 function tsMs(v: Date | number | null | undefined) {
   if (v == null) return null;
@@ -75,13 +78,81 @@ visitorsApi.get("/visitors/insurances/companies", (c) => {
   return c.json({ companies: ARGENTINA_INSURANCE_COMPANIES });
 });
 
+/** Recorte de bordes + JPEG liviano en el mismo server de AccesoPro. */
+visitorsApi.post("/visitors/document-scan", async (c) => {
+  const denied = await denyUnlessCapability(c.get("user"), "access.visitors.manage");
+  if (denied) return denied;
+  const scoped = await scopedSiteWithModule(c, "visitors");
+  if ("error" in scoped) return scoped.error;
+
+  const body = await c.req.json<{
+    imageBase64?: string;
+    box?: { x: number; y: number; w: number; h: number };
+  }>();
+  const raw = String(body.imageBase64 || "").replace(/^data:[\w/+.-]+;base64,/, "").trim();
+  if (raw.length < 80) return c.json({ error: "No llegó la foto del documento" }, 400);
+  let buf: Buffer;
+  try {
+    buf = Buffer.from(raw, "base64");
+  } catch {
+    return c.json({ error: "La foto no se pudo decodificar" }, 400);
+  }
+  if (buf.length < 80) return c.json({ error: "La foto está vacía" }, 400);
+
+  const hint =
+    body.box &&
+    Number.isFinite(body.box.x) &&
+    Number.isFinite(body.box.y) &&
+    Number.isFinite(body.box.w) &&
+    Number.isFinite(body.box.h)
+      ? { x: body.box.x, y: body.box.y, w: body.box.w, h: body.box.h }
+      : null;
+
+  try {
+    const out = await processDocumentImage(buf, hint);
+    return c.json({
+      ok: true,
+      cropped: out.cropped,
+      rotated: out.rotated,
+      width: out.width,
+      height: out.height,
+      bytes: out.jpeg.length,
+      mime: "image/jpeg",
+      imageBase64: out.jpeg.toString("base64"),
+    });
+  } catch (err) {
+    return c.json({ error: err instanceof Error ? err.message : "No se pudo procesar el documento" }, 400);
+  }
+});
+
+visitorsApi.get("/visitors/documents/:id", async (c) => {
+  const denied = await denyUnlessCapability(c.get("user"), "access.visitors.manage");
+  if (denied) return denied;
+  const scoped = await scopedSiteWithModule(c, "visitors");
+  if ("error" in scoped) return scoped.error;
+
+  const row = await db
+    .select()
+    .from(personInsurances)
+    .where(and(eq(personInsurances.id, c.req.param("id")), eq(personInsurances.tenantId, scoped.site.tenantId)))
+    .get();
+  if (!row?.documentPath) return c.json({ error: "No hay constancia" }, 404);
+  const buf = readVisitorDoc(row.documentPath);
+  if (!buf) return c.json({ error: "Archivo no encontrado" }, 404);
+  const mime = row.documentMime || mimeOfPath(row.documentPath);
+  return c.body(new Uint8Array(buf), 200, {
+    "Content-Type": mime,
+    "Cache-Control": "private, max-age=120",
+  });
+});
+
 /** Búsqueda de identidad por DNI argentino */
 visitorsApi.get("/visitors/search-identity", async (c) => {
   const scoped = await scopedSiteWithModule(c, "visitors");
   if ("error" in scoped) return scoped.error;
 
   const dni = normalizeDni(c.req.query("dni") ?? "");
-  if (!dni) return c.json({ found: false, identity: null, license: null });
+  if (!dni) return c.json({ found: false, identity: null, license: null, personInsurance: null });
 
   const identity = await db
     .select()
@@ -94,7 +165,7 @@ visitorsApi.get("/visitors/search-identity", async (c) => {
     )
     .get();
 
-  if (!identity) return c.json({ found: false, identity: null, license: null });
+  if (!identity) return c.json({ found: false, identity: null, license: null, personInsurance: null });
 
   // Buscar licencia asociada más reciente
   const license = await db
@@ -110,10 +181,30 @@ visitorsApi.get("/visitors/search-identity", async (c) => {
     .limit(1)
     .get();
 
+  const personInsurance = await db
+    .select()
+    .from(personInsurances)
+    .where(
+      and(eq(personInsurances.tenantId, scoped.site.tenantId), eq(personInsurances.personId, identity.id))
+    )
+    .orderBy(desc(personInsurances.validUntil))
+    .limit(1)
+    .get();
+
   return c.json({
     found: true,
     identity,
     license: license ?? null,
+    personInsurance: personInsurance
+      ? {
+          id: personInsurance.id,
+          kind: personInsurance.kind,
+          company: personInsurance.company,
+          validUntil: personInsurance.validUntil,
+          documentMime: personInsurance.documentMime,
+          hasDocument: Boolean(personInsurance.documentPath),
+        }
+      : null,
   });
 });
 
@@ -440,6 +531,16 @@ export type VisitorCheckinPayload = {
   /** qr = pase AccesoPro. face = enrolar foto al ASI (webcam portería). */
   accessMethod?: "qr" | "face";
   photoBase64?: string;
+  /** Seguro de vida / ART de la persona (no el del auto). */
+  personInsurance?: {
+    reuseId?: string;
+    kind?: "life" | "art";
+    company?: string;
+    validUntil: number | string;
+    documentBase64?: string;
+    documentMime?: string;
+    source?: "scan" | "upload";
+  };
 };
 
 /** Endpoint transaccional de Check-in en varios pasos */
@@ -527,6 +628,7 @@ visitorsApi.post("/visitors/checkin", async (c) => {
   let vehicleId: string | null = null;
   let insuranceId: string | null = null;
   let licenseId: string | null = null;
+  let personInsuranceId: string | null = null;
 
   if (body.isVehicular && body.vehicle?.plate) {
     const plateClean = normalizePlate(body.vehicle.plate);
@@ -599,6 +701,69 @@ visitorsApi.post("/visitors/checkin", async (c) => {
     }
   }
 
+  if (body.personInsurance?.validUntil && person) {
+    const validUntilDate = new Date(body.personInsurance.validUntil);
+    const reuseId = body.personInsurance.reuseId?.trim();
+    if (reuseId && !body.personInsurance.documentBase64) {
+      const existing = await db
+        .select()
+        .from(personInsurances)
+        .where(
+          and(
+            eq(personInsurances.id, reuseId),
+            eq(personInsurances.tenantId, tenantId),
+            eq(personInsurances.personId, person.id)
+          )
+        )
+        .get();
+      if (existing) {
+        await db
+          .update(personInsurances)
+          .set({
+            validUntil: validUntilDate,
+            company: body.personInsurance.company?.trim() || existing.company,
+          })
+          .where(eq(personInsurances.id, existing.id));
+        personInsuranceId = existing.id;
+      }
+    } else if (body.personInsurance.documentBase64) {
+      const mime = body.personInsurance.documentMime === "application/pdf" ? "application/pdf" : "image/jpeg";
+      const raw = body.personInsurance.documentBase64.replace(/^data:[\w/+.-]+;base64,/, "").trim();
+      let buf: Buffer;
+      try {
+        buf = Buffer.from(raw, "base64");
+      } catch {
+        return c.json({ error: "La constancia del seguro no se pudo leer" }, 400);
+      }
+      if (buf.length < 80 || buf.length > 4 * 1024 * 1024) {
+        return c.json({ error: "La constancia del seguro está vacía o pesa de más (máx. 4 MB)" }, 400);
+      }
+      if (mime !== "application/pdf") {
+        try {
+          const processed = await processDocumentImage(buf);
+          buf = processed.jpeg;
+        } catch {
+          /* se guarda igual recortada a mano */
+        }
+      }
+      personInsuranceId = nid();
+      const path = saveVisitorDoc(siteId, personInsuranceId, mime, buf);
+      await db.insert(personInsurances).values({
+        id: personInsuranceId,
+        tenantId,
+        personId: person.id,
+        kind: body.personInsurance.kind === "art" ? "art" : "life",
+        company: body.personInsurance.company?.trim() || null,
+        policyNumber: null,
+        validUntil: validUntilDate,
+        documentPath: path,
+        documentMime: mime === "application/pdf" ? "application/pdf" : "image/jpeg",
+        source: body.personInsurance.source === "scan" ? "scan" : "upload",
+        createdAt: now,
+      });
+    }
+  }
+
   // 3. Crear el registro consolidado de visita
   const visitId = nid();
   const passToken = `VIS-${dniClean}-${Math.floor(1000 + Math.random() * 9000)}`;
@@ -611,6 +776,7 @@ visitorsApi.post("/visitors/checkin", async (c) => {
     personId: person!.id,
     vehicleId,
     insuranceId,
+    personInsuranceId,
     licenseId,
     visitType: body.destination.visitType || "social",
     status: "in_site",
@@ -667,6 +833,7 @@ visitorsApi.post("/visitors/checkin", async (c) => {
       dni: dniClean,
       plate: body.vehicle?.plate || null,
       insuranceCompany: body.insurance?.company || null,
+      personInsuranceUntil: body.personInsurance?.validUntil || null,
       authorizedBy: body.destination.authorizedBy,
       propertyId: body.destination.propertyId,
       isVehicular: body.isVehicular,
