@@ -9,6 +9,7 @@ import { matchesSentido, sentidoOf } from "./engineBridge.js";
 import { broadcastRealtimeEvent } from "./eventStream.js";
 import { looksLikeJpeg, saveEventPhoto } from "./eventPhotos.js";
 import { markVisitStayByCard } from "./visitPass.js";
+import { findVisitPassByCard, holdVisitQr } from "./visitHold.js";
 import { findCredentialByPayload, incrementCredentialUse } from "./credentials.js";
 import { asiMethodKey } from "@accesopro/catalog";
 
@@ -215,6 +216,8 @@ agentRoutes.post("/events", async (c) => {
     const cardCred = !qrCred && card ? await findCredentialByPayload(siteId, card, "card") : null;
     const matchedCred = qrCred ?? cardCred;
     let failed = failedStatus || errorCode === 96;
+    const visitPass = await findVisitPassByCard(siteId, qrString || card);
+    const isVisitQr = Boolean(visitPass) || Boolean(matchedCred?.dahuaUserId?.startsWith("v_"));
 
     if (matchedCred && matchedCred.status === "active") {
       payload.accessKind = payload.accessKind || (qrString || qrCred ? "qr" : "card");
@@ -238,8 +241,26 @@ agentRoutes.post("/events", async (c) => {
       if (lane.accessPointId) payload.accessPointId = lane.accessPointId;
     }
 
-    // QR en ASI-6214S: el lector pita, manda ErrorCode 96 y no abre. AccesoPro decide y manda openDoor.
-    if (
+    // QR en ASI-6214S: el lector pita, manda ErrorCode 96 y no abre. AccesoPro decide.
+    // Visitas/proveedores: el QR solo identifica; abre el guardia. Propietarios: openDoor.
+    if (isVisitQr && site) {
+      const sentido = eventSentido || "in";
+      const hold = await holdVisitQr({
+        siteId,
+        tenantId: site.tenantId,
+        cardRaw: qrString || card,
+        sentido,
+        deviceId: deviceId || null,
+        at: eventDate,
+      });
+      payload.accessKind = "visita";
+      payload.visitHold = true;
+      payload.visitPassId = hold.passId;
+      payload.approvalId = hold.approvalId;
+      payload.holdReason = hold.reason;
+      payload.approved = false;
+      failed = true;
+    } else if (
       failed &&
       matchedCred &&
       matchedCred.status === "active" &&
@@ -282,7 +303,7 @@ agentRoutes.post("/events", async (c) => {
     // Evitamos bucle infinito: si ya es una apertura remota (Method 4), no disparamos actuadores.
     // Además, el terminal Dahua ya acciona su propio relé localmente al reconocer la cara;
     // solo se disparan actuadores vinculados distintos (barreras auxiliares u otros relés).
-    if (!failed && !isRemoteUnlock && !payload.passthroughGranted && site) {
+    if (!failed && !isRemoteUnlock && !payload.passthroughGranted && site && !isVisitQr) {
       try {
         const targets = await actuatorsForDahuaDevice(siteId, deviceId);
         for (const a of targets) {
@@ -294,7 +315,7 @@ agentRoutes.post("/events", async (c) => {
       }
     }
 
-    if (!failed && !isRemoteUnlock && eventSentido) {
+    if (!failed && !isRemoteUnlock && eventSentido && !isVisitQr) {
       try {
         const stay = await markVisitStayByCard(siteId, card, eventSentido, eventDate);
         if (stay) {

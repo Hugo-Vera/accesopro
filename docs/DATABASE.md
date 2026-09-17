@@ -108,7 +108,9 @@ Visita: ingreso en carril 1 (`visit_passes.scanned_in_at`) y egreso en carril 2 
 | `dahua_period_slots` | Huella de horario → índice `AccessTimeSchedule` por ASI |
 | `credential_device_sync` | Enroll OK/error por lector (ingreso/salida) |
 | `visit_authorizations` | Autorización temporal (empleada, proveedor) |
-| `visit_passes` | QR de visita: `token`, vigencia, `scanned_in_at` / `scanned_out_at` |
+| `visit_passes` | QR de visita: vigencia, modalidad (`peatonal`/`plataforma`/`vehiculo`), estado de aprobación |
+| `visit_companions` | Acompañantes del mismo QR |
+| `guard_approvals` | Cola del guardia: entrada/salida, baúl, aprobar/denegar |
 | `visitor_identities` | Persona filiatoria DNI (PDF417), lista negra |
 | `vehicles` | Parque automotor por patente |
 | `person_insurances` | Seguro de vida / ART de la persona + constancia en disco |
@@ -119,7 +121,7 @@ Visita: ingreso en carril 1 (`visit_passes.scanned_in_at`) y egreso en carril 2 
 |-------|----------------|
 | `properties` | `lot_number`, `label`, `address`, `map_lat`, `map_lng`, `lot_polygon` |
 | `owner_profiles` | `user_id` único, `dni`, `photo_base64`, `dahua_user_id`, `dahua_synced` |
-| `visit_passes` | `token` único, `valid_from`/`valid_until`, `status`, `dahua_card_no` |
+| `visit_passes` | `token`, `arrival_mode`, `status` (preauthorized/awaiting_entry/in_site/awaiting_exit/completed), `dahua_card_no` |
 | `visitor_identities` | `dni_number`, `tramite_number`, `last_name`, `first_name`, `raw_pdf417`, `blacklisted` |
 | `visit_records` | `visit_type` (default `social`), `status` (default `in_site`), `pass_token`, IN/OUT |
 
@@ -154,12 +156,13 @@ La API **no** lee todavía Postgres/MySQL: `client.ts` abre libsql. El SQL deja 
 
 ---
 
-## QR de visita
+## QR de visita (control estricto)
 
-1. Vecino genera pase → `visit_passes.token`
-2. Payload QR: `ACCESOPRO:V1:{token}`
-3. Check-in portería o lector → `POST /api/visit-passes/scan`
-4. API valida, marca IN/OUT, dispara actuador con trigger **QR**
+1. Vecino (o portería walk-up) genera pase → `visit_passes.token`
+2. Payload QR: token crudo (legacy `ACCESOPRO:V1:{token}`)
+3. El lector identifica (Error 96) y **no abre**. AccesoPro crea `guard_approvals`.
+4. El guardia aprueba o deniega en dashboard o app Android → recién ahí `openDoor`.
+5. Propietarios / familia / servicios permanentes siguen abriendo solos.
 
 ## Demo (seed)
 

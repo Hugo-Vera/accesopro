@@ -21,6 +21,7 @@ import { isUnlockMethodPack, syncAsiUnlockMethods } from "./dahuaUnlock.js";
 import { db } from "./db/client.js";
 import { properties, ownerProfiles, sites, tenantModules, tenants, users, visitPasses, events } from "./db/schema.js";
 import { scanVisitPass, parseVisitQrPayload } from "./visitPass.js";
+import { isOpenVisitStatus } from "./visitHold.js";
 import { accessPointsApi } from "./accessPoints.js";
 import { planApi } from "./plan.js";
 import { hardware } from "./hardware.js";
@@ -105,7 +106,7 @@ app.post("/auth/login", async (c) => {
     mustChangePassword: Boolean(row.mustChangePassword),
   };
   const capabilities = await resolveCapabilities(authUser);
-  return c.json({ user: { ...authUser, capabilities } });
+  return c.json({ token, user: { ...authUser, capabilities } });
 });
 
 app.get("/auth/invite/:token", async (c) => {
@@ -200,7 +201,7 @@ app.get("/api/visit-passes/verify/:token", async (c) => {
   const property = await db.select().from(properties).where(eq(properties.id, pass.propertyId)).get();
   const now = Date.now();
   const valid =
-    pass.status === "active" && now >= pass.validFrom.getTime() && now <= pass.validUntil.getTime();
+    isOpenVisitStatus(pass.status) && now >= new Date(pass.validFrom).getTime() && now <= new Date(pass.validUntil).getTime();
   return c.json({
     valid,
     status: pass.status,

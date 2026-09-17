@@ -95,6 +95,23 @@ type Pass = {
   qrPayload?: string;
 };
 
+const OPEN_PASS = new Set(["active", "preauthorized", "awaiting_entry", "in_site", "awaiting_exit"]);
+
+function isOpenPass(status: string) {
+  return OPEN_PASS.has(status);
+}
+
+function passStatusLabel(status: string) {
+  if (status === "preauthorized" || status === "active") return "Autorizado";
+  if (status === "awaiting_entry") return "Esperando entrada";
+  if (status === "in_site") return "En predio";
+  if (status === "awaiting_exit") return "Esperando salida";
+  if (status === "completed") return "Completado";
+  if (status === "denied") return "Denegado";
+  if (status === "expired") return "Vencido";
+  return "Revocado";
+}
+
 type PortalFeatures = {
   face: boolean;
   qr: boolean;
@@ -422,9 +439,9 @@ export function OwnerPortal() {
                   {services.length}
                 </span>
               )}
-              {t.key === "visitas" && passes.filter((p) => p.status === "active").length > 0 && (
+              {t.key === "visitas" && passes.filter((p) => isOpenPass(p.status)).length > 0 && (
                 <span className={`rounded-full px-1.5 py-0.2 text-[10px] ${active ? "bg-white/25 text-white" : "bg-emerald-100 dark:bg-emerald-950 text-emerald-800 dark:text-emerald-300 font-bold"}`}>
-                  {passes.filter((p) => p.status === "active").length}
+                  {passes.filter((p) => isOpenPass(p.status)).length}
                 </span>
               )}
             </button>
@@ -820,7 +837,7 @@ export function OwnerPortal() {
                 Pases de Visitas & Invitaciones QR
               </h2>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                Generá pases que se sincronizan de inmediato con el terminal Dahua ASI de la entrada
+                Autorizá visitas con QR. Tu invitado no entra hasta que portería apruebe.
               </p>
             </div>
             <button
@@ -833,14 +850,14 @@ export function OwnerPortal() {
             </button>
           </div>
 
-          {passes.filter((p) => p.status === "active").length === 0 ? (
+          {passes.filter((p) => isOpenPass(p.status)).length === 0 ? (
             <div className="rounded-2xl border-2 border-dashed border-slate-200 p-10 text-center dark:border-slate-800">
               <QrCode className="mx-auto h-10 w-10 text-slate-400 dark:text-slate-600 mb-2" />
               <p className="text-sm font-bold text-slate-700 dark:text-slate-300">
-                No tenés visitas activas generadas
+                No tenés visitas autorizadas
               </p>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                Creá una invitación con QR para compartir por WhatsApp. Tu invitado solo acerca el celular a la cámara del ASI y entra sin demoras.
+                Creá una invitación con QR para compartir por WhatsApp. Tu invitado no entra hasta que portería apruebe.
               </p>
               <button
                 type="button"
@@ -854,9 +871,9 @@ export function OwnerPortal() {
           ) : (
             <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
               {passes
-                .filter((p) => p.status === "active")
+                .filter((p) => isOpenPass(p.status))
                 .map((p) => {
-                  const shareText = `Hola ${p.guestName}! Te comparto tu código QR de acceso para ingresar a Barrio Las Acacias (Lote ${property.lotNumber}). Validez: ${fmtDate(p.validFrom)} hasta ${fmtDate(p.validUntil)}. Al llegar, mostralo frente a la cámara del lector, a 3-5 cm de la lente.`;
+                  const shareText = `Hola ${p.guestName}! Te comparto tu código QR para ingresar a Barrio Las Acacias (Lote ${property.lotNumber}). Validez: ${fmtDate(p.validFrom)} hasta ${fmtDate(p.validUntil)}. Al llegar, mostralo al lector de portería: el QR identifica, no abre solo. Portería aprueba la entrada (y la salida).`;
                   const waUrl = `https://wa.me/?text=${encodeURIComponent(shareText)}`;
 
                   return (
@@ -866,9 +883,9 @@ export function OwnerPortal() {
                     >
                       <div className="flex items-start justify-between gap-3">
                         <div>
-                          <span className="inline-flex items-center gap-1 rounded-full bg-emerald-100 px-2.5 py-0.5 text-[10px] font-extrabold text-emerald-800 dark:bg-emerald-950/80 dark:text-emerald-300 uppercase">
-                            <CheckCircle2 className="h-3 w-3 text-emerald-600" />
-                            Pase Activo · Dahua ASI OK
+                          <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-0.5 text-[10px] font-extrabold text-amber-800 dark:bg-amber-950/80 dark:text-amber-300 uppercase">
+                            <CheckCircle2 className="h-3 w-3 text-amber-600" />
+                            {passStatusLabel(p.status)} · espera portería
                           </span>
                           <h3 className="mt-1 text-base font-bold text-slate-900 dark:text-white">
                             {p.guestName}
@@ -996,18 +1013,14 @@ export function OwnerPortal() {
                         <td className="px-4 py-3">
                           <span
                             className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${
-                              p.status === "active"
-                                ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300"
+                              isOpenPass(p.status)
+                                ? "bg-amber-100 text-amber-800 dark:bg-amber-950/70 dark:text-amber-300"
                                 : p.status === "completed"
                                 ? "bg-blue-100 text-blue-800 dark:bg-blue-950/70 dark:text-blue-300"
                                 : "bg-rose-100 text-rose-800 dark:bg-rose-950/70 dark:text-rose-300"
                             }`}
                           >
-                            {p.status === "active"
-                              ? "Activo"
-                              : p.status === "completed"
-                              ? "Completado"
-                              : "Revocado"}
+                            {passStatusLabel(p.status)}
                           </span>
                         </td>
                         <td className="px-4 py-3 font-mono text-[11px] text-slate-500">
@@ -1386,7 +1399,7 @@ export function OwnerPortal() {
       {/* MODAL 3: AUTORIZAR VISITA & QR SINCRONIZADO DAHUA */}
       {showVisitModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900">
+          <div className="w-full max-w-md max-h-[90vh] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900">
             <div className="flex items-center justify-between border-b border-slate-100 pb-3 dark:border-slate-800">
               <div className="flex items-center gap-2">
                 <QrCode className="h-5 w-5 text-blue-600 dark:text-blue-400" />
@@ -1409,9 +1422,24 @@ export function OwnerPortal() {
                 const fd = new FormData(e.currentTarget);
                 const guestName = String(fd.get("guestName") || "").trim();
                 const guestDni = String(fd.get("guestDni") || "").trim();
+                const arrivalMode = String(fd.get("arrivalMode") || "peatonal");
+                const visitKind = String(fd.get("visitKind") || "social");
                 const patente = String(fd.get("patente") || "").trim();
                 const validFrom = String(fd.get("validFrom") || "").trim();
                 const validUntil = String(fd.get("validUntil") || "").trim();
+                const twentyFourHours = fd.get("twentyFourHours") === "on";
+                const completeness = fd.get("completeness") === "full" ? "full" : "basic";
+                const notes = String(fd.get("notes") || "").trim();
+                const companions: { name: string; dni: string }[] = [];
+                const names = fd.getAll("companionName");
+                const dnis = fd.getAll("companionDni");
+                names.forEach((n, i) => {
+                  const name = String(n || "").trim();
+                  if (name) companions.push({ name, dni: String(dnis[i] || "").trim() });
+                });
+                const insuranceCompany = String(fd.get("insuranceCompany") || "").trim();
+                const policyNumber = String(fd.get("policyNumber") || "").trim();
+                const insuranceValidUntil = String(fd.get("insuranceValidUntil") || "").trim();
 
                 try {
                   await api("/api/residents/me/visit-passes", {
@@ -1419,11 +1447,21 @@ export function OwnerPortal() {
                     body: JSON.stringify({
                       guestName,
                       guestDni,
-                      patente,
+                      patente: arrivalMode === "vehiculo" ? patente : undefined,
+                      arrivalMode,
+                      visitKind,
+                      completeness,
+                      notes: notes || undefined,
+                      twentyFourHours,
                       validFrom: validFrom || new Date().toISOString(),
                       validUntil:
                         validUntil ||
-                        new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString(),
+                        new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+                      companions,
+                      insurance:
+                        completeness === "full" && arrivalMode === "vehiculo" && insuranceCompany && policyNumber
+                          ? { company: insuranceCompany, policyNumber, validUntil: insuranceValidUntil }
+                          : undefined,
                     }),
                   });
                   setShowVisitModal(false);
@@ -1435,6 +1473,16 @@ export function OwnerPortal() {
               }}
               className="mt-4 space-y-4"
             >
+              <div className="grid grid-cols-2 gap-2">
+                <label className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs dark:border-slate-700">
+                  <input type="radio" name="completeness" value="basic" defaultChecked />
+                  Datos básicos
+                </label>
+                <label className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs dark:border-slate-700">
+                  <input type="radio" name="completeness" value="full" />
+                  Datos completos
+                </label>
+              </div>
               <div>
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
                   Nombre del Visitante *
@@ -1447,64 +1495,110 @@ export function OwnerPortal() {
                   className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-blue-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                 />
               </div>
-
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
-                    DNI Visitante
+                    DNI Visitante *
                   </label>
                   <input
                     type="text"
                     name="guestDni"
+                    required
                     placeholder="Ej: 30123456"
                     className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-blue-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
-                    Patente (Si ingresa en auto)
-                  </label>
-                  <input
-                    type="text"
-                    name="patente"
-                    placeholder="Ej: AF123ZZ"
-                    className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-mono text-slate-900 uppercase focus:border-blue-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                  />
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">Categoría</label>
+                  <select
+                    name="visitKind"
+                    className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                  >
+                    <option value="social">Social / familiar</option>
+                    <option value="service">Servicio / técnico</option>
+                    <option value="contractor">Obra / contratista</option>
+                    <option value="delivery">Delivery / paquete</option>
+                  </select>
                 </div>
               </div>
-
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Cómo llega</label>
+                <div className="grid grid-cols-3 gap-2 text-[11px]">
+                  <label className="rounded-lg border border-slate-200 px-2 py-2 dark:border-slate-700">
+                    <input type="radio" name="arrivalMode" value="peatonal" defaultChecked className="mr-1" />
+                    A pie
+                  </label>
+                  <label className="rounded-lg border border-slate-200 px-2 py-2 dark:border-slate-700">
+                    <input type="radio" name="arrivalMode" value="plataforma" className="mr-1" />
+                    Traslado por plataforma
+                  </label>
+                  <label className="rounded-lg border border-slate-200 px-2 py-2 dark:border-slate-700">
+                    <input type="radio" name="arrivalMode" value="vehiculo" className="mr-1" />
+                    Vehículo propio
+                  </label>
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  Patente (si entra con auto)
+                </label>
+                <input
+                  type="text"
+                  name="patente"
+                  placeholder="Ej: AF123ZZ"
+                  className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-mono uppercase dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                />
+              </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
-                    Válido Desde
-                  </label>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">Válido desde</label>
                   <input
                     type="datetime-local"
                     name="validFrom"
                     defaultValue={new Date().toISOString().slice(0, 16)}
-                    className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                    className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
-                    Válido Hasta
-                  </label>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">Válido hasta</label>
                   <input
                     type="datetime-local"
                     name="validUntil"
                     defaultValue={new Date(Date.now() + 24 * 3600 * 1000).toISOString().slice(0, 16)}
-                    className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                    className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                   />
                 </div>
               </div>
-
+              <label className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300">
+                <input type="checkbox" name="twentyFourHours" defaultChecked />
+                24 horas de validez
+              </label>
+              <div className="grid grid-cols-3 gap-2">
+                <input name="insuranceCompany" placeholder="Compañía (opcional)" className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-[11px] dark:border-slate-700 dark:bg-slate-800" />
+                <input name="policyNumber" placeholder="Póliza" className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-[11px] dark:border-slate-700 dark:bg-slate-800" />
+                <input type="date" name="insuranceValidUntil" className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-[11px] dark:border-slate-700 dark:bg-slate-800" />
+              </div>
+              <div>
+                <p className="text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Acompañantes (mismo QR)</p>
+                <div className="grid grid-cols-2 gap-2">
+                  <input name="companionName" placeholder="Nombre" className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs dark:border-slate-700 dark:bg-slate-800" />
+                  <input name="companionDni" placeholder="DNI" className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs dark:border-slate-700 dark:bg-slate-800" />
+                  <input name="companionName" placeholder="Nombre" className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs dark:border-slate-700 dark:bg-slate-800" />
+                  <input name="companionDni" placeholder="DNI" className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs dark:border-slate-700 dark:bg-slate-800" />
+                </div>
+              </div>
+              <textarea
+                name="notes"
+                rows={2}
+                placeholder="Notas para portería (opcional)"
+                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-800"
+              />
               <div className="rounded-xl border border-blue-200 bg-blue-50/70 p-3 text-xs text-blue-900 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-300">
-                <p className="font-semibold">Sincronización Automática con Dahua ASI:</p>
+                <p className="font-semibold">Tu invitado no entra hasta que portería apruebe.</p>
                 <p className="mt-0.5 text-[11px] opacity-80">
-                  Al confirmar, el código QR se habilita en el lector de portería. Tu invitado podrá escanearlo directo desde su celular.
+                  El QR identifica; no abre solo. Cara y QR permanente son del propietario. El guardia aprueba entrada y salida (baúl si entra con vehículo).
                 </p>
               </div>
-
               <div className="mt-6 flex justify-end gap-2 border-t border-slate-100 pt-3 dark:border-slate-800">
                 <button
                   type="button"
@@ -1517,7 +1611,7 @@ export function OwnerPortal() {
                   type="submit"
                   className="rounded-xl bg-blue-600 px-4 py-2 text-xs font-bold text-white hover:bg-blue-700 dark:bg-blue-500 transition-colors shadow-sm"
                 >
-                  Generar Pase y Sincronizar
+                  Generar pase QR
                 </button>
               </div>
             </form>

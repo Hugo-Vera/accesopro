@@ -432,7 +432,18 @@ export const visitPasses = sqliteTable("visit_passes", {
   validUntil: integer("valid_until", { mode: "timestamp_ms" }).notNull(),
   horaDesde: text("hora_desde"),
   horaHasta: text("hora_hasta"),
-  status: text("status").notNull().default("active"),
+  /** preauthorized | awaiting_entry | in_site | awaiting_exit | completed | denied | expired | revoked | active (legacy) */
+  status: text("status").notNull().default("preauthorized"),
+  /** peatonal | plataforma | vehiculo */
+  arrivalMode: text("arrival_mode").notNull().default("peatonal"),
+  /** social | service | contractor | delivery */
+  visitKind: text("visit_kind").notNull().default("social"),
+  /** basic | full */
+  completeness: text("completeness").notNull().default("basic"),
+  vehicleId: text("vehicle_id").references(() => vehicles.id),
+  insuranceId: text("insurance_id").references(() => vehicleInsurances.id),
+  visitRecordId: text("visit_record_id"),
+  notes: text("notes"),
   dahuaSynced: integer("dahua_synced", { mode: "boolean" }).notNull().default(false),
   dahuaCardNo: text("dahua_card_no"),
   scannedInAt: integer("scanned_in_at", { mode: "timestamp_ms" }),
@@ -441,6 +452,38 @@ export const visitPasses = sqliteTable("visit_passes", {
     .notNull()
     .references(() => users.id),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+});
+
+export const visitCompanions = sqliteTable("visit_companions", {
+  id: text("id").primaryKey(),
+  passId: text("pass_id")
+    .notNull()
+    .references(() => visitPasses.id),
+  name: text("name").notNull(),
+  dni: text("dni"),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+});
+
+export const guardApprovals = sqliteTable("guard_approvals", {
+  id: text("id").primaryKey(),
+  siteId: text("site_id")
+    .notNull()
+    .references(() => sites.id),
+  passId: text("pass_id")
+    .notNull()
+    .references(() => visitPasses.id),
+  /** in | out */
+  sentido: text("sentido").notNull(),
+  /** ok | expired | incomplete */
+  reason: text("reason").notNull().default("ok"),
+  /** pending | approved | denied */
+  status: text("status").notNull().default("pending"),
+  trunkChecked: integer("trunk_checked", { mode: "boolean" }).notNull().default(false),
+  comment: text("comment"),
+  guardUserId: text("guard_user_id").references(() => users.id),
+  deviceId: text("device_id"),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  decidedAt: integer("decided_at", { mode: "timestamp_ms" }),
 });
 
 export const departments = sqliteTable("departments", {

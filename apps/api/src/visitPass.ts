@@ -1,10 +1,7 @@
 import { createHmac } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { db } from "./db/client.js";
-import { events, properties, visitPasses, visitRecords } from "./db/schema.js";
-import { fireActuator } from "./actuatorExec.js";
-import { actuatorsForSentido } from "./accessPoints.js";
-import { nid } from "./scope.js";
+import { visitPasses, visitRecords } from "./db/schema.js";
 
 export function qrSecret() {
   return process.env.JWT_SECRET ?? "accesopro-dev";
@@ -33,14 +30,7 @@ function dwellMs(inAt: Date | number | null | undefined, outAt: Date | number | 
   return b - a;
 }
 
-function laneCodeOf(sentido: "in" | "out"): 1 | 2 {
-  return sentido === "out" ? 2 : 1;
-}
-
-/**
- * Marca ingreso (carril 1) o egreso (carril 2) de una visita por CardNo/token del ASI.
- * No abre relés: el lector ya pulsó su chapa. Propietarios no matchean pases de visita.
- */
+/** Marca IN/OUT si el QR ya fue aprobado. No abre relés. */
 export async function markVisitStayByCard(
   siteId: string,
   cardRaw: string,
@@ -91,83 +81,34 @@ export async function markVisitStayByCard(
   return { passId: pass.id, guestName: pass.guestName, dwellMs: dwellMs(inAt, outAt) };
 }
 
-function withinTimeWindow(horaDesde: string | null, horaHasta: string | null, now: Date) {
-  if (!horaDesde || !horaHasta) return true;
-  const [h1, m1] = horaDesde.split(":").map(Number);
-  const [h2, m2] = horaHasta.split(":").map(Number);
-  const mins = now.getHours() * 60 + now.getMinutes();
-  const from = h1 * 60 + m1;
-  const to = h2 * 60 + m2;
-  return mins >= from && mins <= to;
-}
-
 export async function scanVisitPass(
-  site: { id: string; lastSeenAt: Date | number | null },
+  site: { id: string; tenantId?: string | null; lastSeenAt: Date | number | null },
   token: string,
   sentido: "in" | "out",
 ) {
-  const pass = await db.select().from(visitPasses).where(eq(visitPasses.token, token)).get();
-  if (!pass) return { ok: false, error: "QR no encontrado" };
-  if (pass.siteId !== site.id) return { ok: false, error: "QR de otro sitio" };
-  if (pass.status !== "active") return { ok: false, error: "QR revocado o usado" };
-
-  const now = new Date();
-  if (now < pass.validFrom) return { ok: false, error: "QR todavía no vigente" };
-  if (now > pass.validUntil) return { ok: false, error: "QR vencido" };
-  if (!withinTimeWindow(pass.horaDesde, pass.horaHasta, now)) {
-    return { ok: false, error: "Fuera del horario permitido" };
-  }
-
-  if (sentido === "in") {
-    if (!pass.scannedInAt) {
-      await db.update(visitPasses).set({ scannedInAt: now }).where(eq(visitPasses.id, pass.id));
-    }
-  } else {
-    await db
-      .update(visitPasses)
-      .set({
-        scannedOutAt: now,
-        status: pass.scannedInAt ? "completed" : pass.status,
-      })
-      .where(eq(visitPasses.id, pass.id));
-  }
-
-  const property = await db.select().from(properties).where(eq(properties.id, pass.propertyId)).get();
-  const fired: string[] = [];
-  const targets = await actuatorsForSentido(site.id, sentido);
-  for (const a of targets) {
-    const r = await fireActuator(site, a.id, "open");
-    if (r.ok) fired.push(a.name);
-  }
-
-  await db.insert(events).values({
-    id: nid(),
+  const { holdVisitQr } = await import("./visitHold.js");
+  const hold = await holdVisitQr({
     siteId: site.id,
-    type: "visit_scan",
+    tenantId: site.tenantId,
+    cardRaw: token,
     sentido,
-    laneCode: laneCodeOf(sentido),
-    payload: JSON.stringify({
-      sentido,
-      laneCode: laneCodeOf(sentido),
-      token,
-      guestName: pass.guestName,
-      lotNumber: property?.lotNumber,
-      patente: pass.patente,
-      actuatorsFired: fired,
-      accessKind: "visita",
-      dwellMs: dwellMs(sentido === "in" ? now : pass.scannedInAt, sentido === "out" ? now : pass.scannedOutAt),
-    }),
-    createdAt: now,
   });
-
+  if (!hold.held) return { ok: false, error: "QR no encontrado" };
+  if (hold.reason === "closed") return { ok: false, error: "QR revocado o denegado" };
   return {
     ok: true,
+    held: true,
     valid: true,
-    guestName: pass.guestName,
-    lotNumber: property?.lotNumber,
-    patente: pass.patente,
+    guestName: hold.guestName,
+    approvalId: hold.approvalId,
+    passId: hold.passId,
+    reason: hold.reason,
     sentido,
-    actuatorsFired: fired,
+    actuatorsFired: [] as string[],
     accessKind: "visita",
+    message:
+      hold.reason === "expired"
+        ? "El pase está vencido. El guardia tiene que autorizar o denegar."
+        : "Identificado. Esperá la aprobación del guardia.",
   };
 }

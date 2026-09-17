@@ -3,8 +3,6 @@
 import { useState, useEffect } from "react";
 import { api, withTenant } from "@/lib/api";
 import { useEscapeKey } from "@/hooks/useEscapeKey";
-import { useDash } from "@/components/DashboardProvider";
-import { VisitFaceCapture } from "@/components/ops/VisitFaceCapture";
 import { DniScanPanel } from "@/components/DniScanPanel";
 import { parseDniScan } from "@/lib/parseDni";
 import { DocumentScanPanel, type AcceptedDoc, visitorDocUrl } from "@/components/ops/DocumentScanPanel";
@@ -28,7 +26,6 @@ import {
   FileCheck,
   FileWarning,
   QrCode,
-  ScanFace,
   ClipboardList,
   Shield,
 } from "lucide-react";
@@ -104,11 +101,6 @@ type PropertyItem = {
   label: string;
 };
 
-type ActuatorItem = {
-  id: string;
-  name: string;
-};
-
 type Props = {
   tenantId: string;
   isOpen: boolean;
@@ -125,17 +117,12 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
     }
     onClose();
   }, isOpen);
-  const { featureOn, can } = useDash();
-  const faceOn = featureOn("dahua.face") && can("dahua.face");
-
-  // Pasos: 1 DNI, 2 Destino, 3 Modalidad, 4 Vehículo, 5 Licencia, 6 Resumen, 7 Acceso (QR / cara)
+  // Pasos: 1 DNI, 2 Destino, 3 Modalidad, 4 Vehículo, 5 Licencia, 6 Resumen, 7 QR (sin cara)
   const [step, setStep] = useState<number>(1);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Datos externos (Lotes y Actuadores)
   const [properties, setProperties] = useState<PropertyItem[]>([]);
-  const [actuators, setActuators] = useState<ActuatorItem[]>([]);
 
   // Paso 1: DNI Argentino
   const [dniNumber, setDniNumber] = useState("");
@@ -161,7 +148,9 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
   const [askLife, setAskLife] = useState(false);
 
   // Paso 3: Modalidad
-  const [isVehicular, setIsVehicular] = useState<boolean>(true);
+  const [arrivalMode, setArrivalMode] = useState<"peatonal" | "plataforma" | "vehiculo">("peatonal");
+  const isVehicular = arrivalMode === "vehiculo";
+  const [companions, setCompanions] = useState<{ name: string; dni: string }[]>([{ name: "", dni: "" }]);
 
   // Paso 4: Vehículo & Seguro Automotor Argentina
   const [plate, setPlate] = useState("");
@@ -185,17 +174,8 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
   const [licenseJurisdiction, setLicenseJurisdiction] = useState("");
   const [licenseValidUntil, setLicenseValidUntil] = useState("");
 
-  // Paso 6: Resumen y Apertura
-  const [openRelay, setOpenRelay] = useState(true);
-  const [actuatorId, setActuatorId] = useState("");
-  const [accessMethod, setAccessMethod] = useState<"qr" | "face">("qr");
-  const [faceB64, setFaceB64] = useState<string | null>(null);
-  const [facePreview, setFacePreview] = useState<string | null>(null);
-
-  // Cargar propiedades y actuadores al abrir
   useEffect(() => {
     if (!isOpen || !tenantId) return;
-    // Cargar propiedades del barrio
     api<{ properties: PropertyItem[] }>(withTenant("/api/visitors/properties", tenantId))
       .then((d) => {
         setProperties(d.properties || []);
@@ -206,25 +186,12 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
       .catch((err) => {
         setError(err instanceof Error ? err.message : "No se pudieron cargar los lotes");
       });
-
-    // Cargar actuadores
-    api<{ actuators: ActuatorItem[] }>(withTenant("/api/actuators", tenantId))
-      .then((d) => {
-        setActuators(d.actuators || []);
-        if (d.actuators?.length > 0) {
-          setActuatorId(d.actuators[0].id);
-        }
-      })
-      .catch(() => {});
   }, [isOpen, tenantId]);
 
   useEffect(() => {
     if (!isOpen) return;
     setStep(1);
     setError(null);
-    setAccessMethod("qr");
-    setFaceB64(null);
-    setFacePreview(null);
     setLifeValidUntil("");
     setLifeCompany("");
     setLifeDoc(null);
@@ -381,9 +348,6 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
       if (!isVehicular) return true;
       return licenseValidUntil;
     }
-    if (step === 7 && accessMethod === "face") {
-      return Boolean(faceB64);
-    }
     return true;
   };
 
@@ -411,10 +375,6 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
 
   // Envío final del registro consolidado
   const handleSubmitCheckin = async () => {
-    if (accessMethod === "face" && !faceB64) {
-      setError("Capturá el rostro con la webcam para enrolar la cara.");
-      return;
-    }
     setLoading(true);
     setError(null);
 
@@ -439,6 +399,8 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
         notes: notes.trim() || undefined,
       },
       isVehicular,
+      arrivalMode,
+      companions: companions.filter((x) => x.name.trim()),
       vehicle: isVehicular
         ? {
             plate: plate.toUpperCase().trim(),
@@ -464,10 +426,7 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
             validUntil: licenseValidUntil,
           }
         : undefined,
-      openRelay,
-      actuatorId: openRelay ? actuatorId : undefined,
-      accessMethod,
-      photoBase64: accessMethod === "face" ? faceB64 || undefined : undefined,
+      accessMethod: "qr" as const,
       personInsurance:
         lifeValidUntil && lifeDoc && (lifeDoc.base64 || lifeDoc.reuseId)
           ? {
@@ -521,7 +480,7 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
                 Registro de Ingreso de Visita
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400">
-                Acreditación modular de identidad, vehículo, seguro y habilitación de conducir.
+                Cara = solo propietarios. Visita = QR + portería (no abre sola).
               </p>
             </div>
           </div>
@@ -862,6 +821,40 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  Acompañantes (mismo QR)
+                </label>
+                <div className="space-y-2">
+                  {companions.map((row, i) => (
+                    <div key={i} className="grid grid-cols-2 gap-2">
+                      <input
+                        value={row.name}
+                        onChange={(e) =>
+                          setCompanions((prev) => prev.map((p, j) => (j === i ? { ...p, name: e.target.value } : p)))
+                        }
+                        placeholder="Nombre"
+                        className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+                      />
+                      <input
+                        value={row.dni}
+                        onChange={(e) =>
+                          setCompanions((prev) => prev.map((p, j) => (j === i ? { ...p, dni: e.target.value } : p)))
+                        }
+                        placeholder="DNI"
+                        className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+                      />
+                    </div>
+                  ))}
+                  <button
+                    type="button"
+                    onClick={() => setCompanions((prev) => [...prev, { name: "", dni: "" }])}
+                    className="text-[11px] font-bold text-blue-600"
+                  >
+                    Agregar acompañante
+                  </button>
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   Observaciones / Notas de Portería
                 </label>
                 <textarea
@@ -887,12 +880,12 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
                 </p>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 max-w-lg mx-auto">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 max-w-3xl mx-auto">
                 <button
                   type="button"
-                  onClick={() => setIsVehicular(false)}
+                  onClick={() => setArrivalMode("peatonal")}
                   className={`p-5 rounded-2xl border-2 text-center transition-all ${
-                    !isVehicular
+                    arrivalMode === "peatonal"
                       ? "border-blue-600 bg-blue-50/70 dark:bg-blue-950/40 text-blue-900 dark:text-blue-200 shadow-md"
                       : "border-slate-200 hover:border-slate-300 dark:border-slate-800 dark:bg-slate-950/50 text-slate-700 dark:text-slate-300"
                   }`}
@@ -900,17 +893,35 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
                   <div className="grid h-12 w-12 place-items-center rounded-xl bg-blue-100 dark:bg-blue-900/60 mx-auto text-blue-600 dark:text-blue-300 mb-3">
                     <UserCheck className="h-6 w-6" />
                   </div>
-                  <p className="font-bold text-sm">Ingreso Peatonal</p>
+                  <p className="font-bold text-sm">A pie</p>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
-                    A pie, taxi o remis que no ingresa al predio. No requiere seguro ni carnet.
+                    Ingreso peatonal. No hace falta seguro de auto.
                   </p>
                 </button>
 
                 <button
                   type="button"
-                  onClick={() => setIsVehicular(true)}
+                  onClick={() => setArrivalMode("plataforma")}
                   className={`p-5 rounded-2xl border-2 text-center transition-all ${
-                    isVehicular
+                    arrivalMode === "plataforma"
+                      ? "border-blue-600 bg-blue-50/70 dark:bg-blue-950/40 text-blue-900 dark:text-blue-200 shadow-md"
+                      : "border-slate-200 hover:border-slate-300 dark:border-slate-800 dark:bg-slate-950/50 text-slate-700 dark:text-slate-300"
+                  }`}
+                >
+                  <div className="grid h-12 w-12 place-items-center rounded-xl bg-slate-100 dark:bg-slate-800 mx-auto text-slate-600 dark:text-slate-200 mb-3">
+                    <Car className="h-6 w-6" />
+                  </div>
+                  <p className="font-bold text-sm">Traslado por plataforma</p>
+                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+                    Remís o app de viaje. El auto no entra; se trata como peatonal.
+                  </p>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setArrivalMode("vehiculo")}
+                  className={`p-5 rounded-2xl border-2 text-center transition-all ${
+                    arrivalMode === "vehiculo"
                       ? "border-blue-600 bg-blue-50/70 dark:bg-blue-950/40 text-blue-900 dark:text-blue-200 shadow-md"
                       : "border-slate-200 hover:border-slate-300 dark:border-slate-800 dark:bg-slate-950/50 text-slate-700 dark:text-slate-300"
                   }`}
@@ -918,9 +929,9 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
                   <div className="grid h-12 w-12 place-items-center rounded-xl bg-indigo-100 dark:bg-indigo-900/60 mx-auto text-indigo-600 dark:text-indigo-300 mb-3">
                     <Car className="h-6 w-6" />
                   </div>
-                  <p className="font-bold text-sm">Ingreso Vehicular</p>
+                  <p className="font-bold text-sm">Vehículo propio</p>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
-                    Auto, camioneta o moto. Requiere validar patente, seguro obligatorio y licencia.
+                    Auto, camioneta o moto. Seguro obligatorio y revisión de baúl.
                   </p>
                 </button>
               </div>
@@ -1269,87 +1280,16 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
           {step === 7 && (
             <div className="space-y-4 animate-in fade-in">
               <span className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
-                Cómo va a validar el ingreso
+                Acceso de la visita
               </span>
-              <p className="text-[12px] text-slate-500 dark:text-slate-400">
-                Con QR abre ahora o el pase queda para el lector. Con cara, capturá el rostro en la webcam de portería para enrolarlo en el ASI.
+              <p className="text-[12px] text-slate-600 dark:text-slate-400">
+                Cara y QR permanente son solo del propietario: abren solos. La visita entra con este QR; el lector identifica y <span className="font-semibold">portería aprueba</span> (entrada y salida).
               </p>
-              <div className="grid grid-cols-2 gap-2">
-                <button
-                  type="button"
-                  onClick={() => setAccessMethod("qr")}
-                  className={`rounded-xl border p-3 text-left transition-colors ${
-                    accessMethod === "qr"
-                      ? "border-blue-500 bg-blue-50 dark:border-blue-400 dark:bg-blue-950/40"
-                      : "border-slate-200 bg-white hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900"
-                  }`}
-                >
-                  <QrCode className="mb-1 h-5 w-5 text-blue-600 dark:text-blue-400" />
-                  <p className="text-xs font-bold text-slate-900 dark:text-white">Código QR</p>
-                  <p className="text-[10px] text-slate-500">Pase AccesoPro. No hace falta foto.</p>
-                </button>
-                <button
-                  type="button"
-                  disabled={!faceOn}
-                  onClick={() => faceOn && setAccessMethod("face")}
-                  className={`rounded-xl border p-3 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-                    accessMethod === "face"
-                      ? "border-blue-500 bg-blue-50 dark:border-blue-400 dark:bg-blue-950/40"
-                      : "border-slate-200 bg-white hover:bg-slate-50 dark:border-slate-700 dark:bg-slate-900"
-                  }`}
-                >
-                  <ScanFace className="mb-1 h-5 w-5 text-blue-600 dark:text-blue-400" />
-                  <p className="text-xs font-bold text-slate-900 dark:text-white">Cara (webcam)</p>
-                  <p className="text-[10px] text-slate-500">
-                    {faceOn ? "Enrolar ahora para pasar por el lector." : "Activá el pack facial en Módulos."}
-                  </p>
-                </button>
+              <div className="rounded-xl border border-blue-200 bg-blue-50/70 p-3 dark:border-blue-900 dark:bg-blue-950/30">
+                <QrCode className="mb-1 h-5 w-5 text-blue-600 dark:text-blue-400" />
+                <p className="text-xs font-bold text-slate-900 dark:text-white">Código QR</p>
+                <p className="text-[10px] text-slate-500">No enrolamos la cara del invitado en el lector: si no, el ASI abriría sin el guardia.</p>
               </div>
-              {accessMethod === "face" ? (
-                <VisitFaceCapture
-                  preview={facePreview}
-                  onCapture={(b64, url) => {
-                    setFaceB64(b64);
-                    setFacePreview(url);
-                  }}
-                  onClear={() => {
-                    setFaceB64(null);
-                    setFacePreview(null);
-                  }}
-                />
-              ) : null}
-
-              {actuators.length > 0 && (
-                <div className="rounded-xl border border-emerald-200 dark:border-emerald-900/60 bg-emerald-50/40 dark:bg-emerald-950/20 p-3 flex items-center justify-between">
-                  <label className="flex items-center gap-2.5 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      checked={openRelay}
-                      onChange={(e) => setOpenRelay(e.target.checked)}
-                      className="h-4 w-4 rounded border-slate-300 text-emerald-600 focus:ring-emerald-500"
-                    />
-                    <div>
-                      <p className="text-xs font-bold text-slate-900 dark:text-white">
-                        Abrir barrera al confirmar
-                      </p>
-                      <p className="text-[10.5px] text-slate-500">Pulso de entrada ahora. La cara queda para el próximo pase.</p>
-                    </div>
-                  </label>
-                  {openRelay && (
-                    <select
-                      value={actuatorId}
-                      onChange={(e) => setActuatorId(e.target.value)}
-                      className="rounded-lg border border-slate-300 bg-white px-2.5 py-1 text-xs font-bold text-slate-800 dark:border-slate-700 dark:bg-slate-900 dark:text-white"
-                    >
-                      {actuators.map((a) => (
-                        <option key={a.id} value={a.id}>
-                          {a.name}
-                        </option>
-                      ))}
-                    </select>
-                  )}
-                </div>
-              )}
             </div>
           )}
         </div>
@@ -1371,14 +1311,14 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
               onClick={handleNext}
               className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 hover:bg-blue-700 px-5 py-2 text-xs font-bold text-white shadow-sm transition-colors"
             >
-              <span>{step === 6 ? "Elegir acceso" : "Siguiente"}</span>
+              <span>{step === 6 ? "Confirmar QR" : "Siguiente"}</span>
               <ArrowRight className="h-4 w-4" />
             </button>
           ) : (
             <button
               type="button"
               onClick={handleSubmitCheckin}
-              disabled={loading || (accessMethod === "face" && !faceB64)}
+              disabled={loading}
               className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 px-6 py-2 text-xs font-bold text-white shadow-md transition-colors disabled:opacity-50"
             >
               <CheckCircle2 className="h-4 w-4" />

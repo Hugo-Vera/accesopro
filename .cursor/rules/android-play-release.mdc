@@ -1,0 +1,13 @@
+---
+description: Android Play release AccesoPro Guardia
+globs: apps/android/**
+alwaysApply: false
+---
+
+# Android Play — AccesoPro Guardia
+
+Playbook: `docs/PLAY_ANDROID_RELEASE_PLAYBOOK.md`
+
+- No bumpear `versionCode` ni generar/subir AAB sin pedido explícito.
+- `versionCode` monótono; `targetSdk`/`compileSdk` al nivel que Play exige.
+- Release: minify + shrinkResources; conservar `mapping.txt`.

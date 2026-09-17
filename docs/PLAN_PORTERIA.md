@@ -63,15 +63,13 @@ Orden fijo al abrir desde toast / botón:
 
 **Done:** un denegado abre **esa** puerta, no otra.
 
-### 3 — QR visita cierra el circuito
+### 3 — QR visita: identifica, el guardia abre
 
-El ASI valida CardNo; AccesoPro marca el pase **sin** volver a disparar relés QR (el lector ya abrió).
+Visitas y proveedores **no** abren solos. El ASI manda Error 96; AccesoPro arma `guard_approvals`. El guardia aprueba en el dashboard o en la app Android y recién ahí hay `openDoor`. Propietarios / familia / servicios permanentes siguen el passthrough de siempre.
 
 1. CardNo enrolado = token del QR.
-2. Evento `dahua_access` en carril 1 → `scanned_in_at`; carril 2 → `scanned_out_at` + `completed`.
-3. Portal y autorizaciones muestran permanencia (solo visitas).
-
-**Done:** visita con QR/cara aparece en historial del carril y el portal marca ingreso/salida.
+2. Carril 1 → cola `awaiting_entry`; carril 2 → `awaiting_exit` (baúl si es vehículo).
+3. Campana sobre el lote en el plano de portería al precargar el pase.
 
 ### 4 — Permanencia
 
@@ -97,6 +95,7 @@ CGI vs RTSP y prueba de lector trabado: **`docs/ASI_CGI.md`**. No usar `snapshot
 
 ## Reglas que no romper
 
+- Cara / QR permanente del propietario abre solo (el ASI o AccesoPro). Visita = QR identifica; no se enrola cara de invitado. El guardia aprueba en la cola (campana del plano y Pedir salida en Visitas abren la misma ficha).
 - Módulos comerciales ≠ fila del punto de acceso.
 - Relé con nombre libre; disparo solo por cableado.
 - `fire` no es sistema contra incendio certificado.

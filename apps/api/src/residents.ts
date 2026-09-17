@@ -805,13 +805,17 @@ residents.get("/me/visit-passes", async (c) => {
     .where(eq(visitPasses.propertyId, ctx.property.id))
     .orderBy(desc(visitPasses.createdAt))
     .limit(80);
-  return c.json({
-    passes: rows.map((p) => ({
+  const { listCompanions } = await import("./visitHold.js");
+  const passes = [];
+  for (const p of rows) {
+    const companions = await listCompanions(p.id);
+    passes.push({
       ...p,
-      // El lector compara el token crudo; los QR viejos con prefijo los sigue aceptando la API.
+      companions: companions.map((x) => ({ name: x.name, dni: x.dni })),
       qrPayload: p.dahuaCardNo || p.token,
-    })),
-  });
+    });
+  }
+  return c.json({ passes });
 });
 
 residents.post("/me/visit-passes", async (c) => {
@@ -831,12 +835,29 @@ residents.post("/me/visit-passes", async (c) => {
     horaHasta?: string;
     authorizationId?: string;
     maxUses?: number;
+    arrivalMode?: string;
+    visitKind?: string;
+    completeness?: "basic" | "full";
+    notes?: string;
+    twentyFourHours?: boolean;
+    companions?: { name?: string; dni?: string }[];
+    insurance?: { company?: string; policyNumber?: string; validUntil?: string };
   }>();
   const guestName = body.guestName?.trim();
   if (!guestName) return c.json({ error: "Falta el nombre del visitante" }, 400);
+  const guestDni = body.guestDni?.replace(/\D/g, "") || "";
+  if (guestDni.length < 7) return c.json({ error: "Falta el DNI de la visita" }, 400);
+  const { isArrivalMode, replaceCompanions, attachVehicleInsurance } = await import("./visitHold.js");
+  const arrivalMode = isArrivalMode(body.arrivalMode) ? body.arrivalMode : body.patente ? "vehiculo" : "peatonal";
+  const visitKind =
+    body.visitKind === "service" || body.visitKind === "contractor" || body.visitKind === "delivery"
+      ? body.visitKind
+      : "social";
   const maxUses = Math.max(0, Math.trunc(Number(body.maxUses ?? 0) || 0));
   const validFrom = parseDateInput(body.validFrom);
-  const validUntil = parseDateInput(body.validUntil, new Date(validFrom.getTime() + 8 * 60 * 60 * 1000));
+  const validUntil = body.twentyFourHours
+    ? new Date(validFrom.getTime() + 24 * 60 * 60 * 1000)
+    : parseDateInput(body.validUntil, new Date(validFrom.getTime() + 8 * 60 * 60 * 1000));
   if (validUntil <= validFrom) return c.json({ error: "La vigencia de fin debe ser posterior al inicio" }, 400);
   const passId = nid();
   const token = makeVisitToken(ctx.property.id, passId);
@@ -851,16 +872,32 @@ residents.post("/me/visit-passes", async (c) => {
     dahuaCardNo: token,
     dahuaSynced: false,
     guestName,
-    guestDni: body.guestDni?.trim() || null,
+    guestDni,
     patente: body.patente ? normalizePlate(body.patente) : null,
     validFrom,
     validUntil,
     horaDesde: body.horaDesde?.trim() || null,
     horaHasta: body.horaHasta?.trim() || null,
-    status: "active",
+    status: "preauthorized",
+    arrivalMode,
+    visitKind,
+    completeness: body.completeness === "full" ? "full" : "basic",
+    vehicleId: null,
+    insuranceId: null,
+    visitRecordId: null,
+    notes: body.notes?.trim() || null,
     createdByUserId: c.get("user").id,
     createdAt: new Date(),
   });
+  await replaceCompanions(passId, body.companions);
+  if (arrivalMode === "vehiculo" && body.insurance) {
+    await attachVehicleInsurance(scoped.tenantId, passId, {
+      plate: body.patente,
+      company: body.insurance.company,
+      policyNumber: body.insurance.policyNumber,
+      validUntil: body.insurance.validUntil,
+    });
+  }
 
   // Padrón maestro: el pase es una credencial QR con vigencia y usos propios.
   await upsertCredential({
@@ -884,6 +921,7 @@ residents.post("/me/visit-passes", async (c) => {
       cardNo: token,
       userType: ASI_USER_TYPES.guest,
       cardType: ASI_CARD_TYPES.guest,
+      photoBase64: undefined,
       useTime: maxUses,
     },
     { fechaDesde: validFrom, fechaHasta: validUntil, horaDesde: body.horaDesde, horaHasta: body.horaHasta },

@@ -322,6 +322,49 @@ export async function ensureSchema() {
 
   await addColumn("visit_passes", "dahua_synced", "INTEGER DEFAULT 0");
   await addColumn("visit_passes", "dahua_card_no", "TEXT");
+  await addColumn("visit_passes", "arrival_mode", "TEXT NOT NULL DEFAULT 'peatonal'");
+  await addColumn("visit_passes", "visit_kind", "TEXT NOT NULL DEFAULT 'social'");
+  await addColumn("visit_passes", "completeness", "TEXT NOT NULL DEFAULT 'basic'");
+  await addColumn("visit_passes", "vehicle_id", "TEXT");
+  await addColumn("visit_passes", "insurance_id", "TEXT");
+  await addColumn("visit_passes", "visit_record_id", "TEXT");
+  await addColumn("visit_passes", "notes", "TEXT");
+  await db.run(sql`
+    CREATE TABLE IF NOT EXISTS visit_companions (
+      id TEXT PRIMARY KEY,
+      pass_id TEXT NOT NULL REFERENCES visit_passes(id),
+      name TEXT NOT NULL,
+      dni TEXT,
+      created_at INTEGER NOT NULL
+    )
+  `);
+  await db.run(sql`
+    CREATE TABLE IF NOT EXISTS guard_approvals (
+      id TEXT PRIMARY KEY,
+      site_id TEXT NOT NULL REFERENCES sites(id),
+      pass_id TEXT NOT NULL REFERENCES visit_passes(id),
+      sentido TEXT NOT NULL,
+      reason TEXT NOT NULL DEFAULT 'ok',
+      status TEXT NOT NULL DEFAULT 'pending',
+      trunk_checked INTEGER NOT NULL DEFAULT 0,
+      comment TEXT,
+      guard_user_id TEXT REFERENCES users(id),
+      device_id TEXT,
+      created_at INTEGER NOT NULL,
+      decided_at INTEGER
+    )
+  `);
+  await db.run(sql`
+    UPDATE visit_passes
+    SET status = CASE
+      WHEN status IN ('revoked', 'cancelled') THEN 'revoked'
+      WHEN status IN ('completed', 'used') OR scanned_out_at IS NOT NULL THEN 'completed'
+      WHEN scanned_in_at IS NOT NULL THEN 'in_site'
+      WHEN status IN ('preauthorized', 'awaiting_entry', 'awaiting_exit', 'denied', 'expired', 'in_site') THEN status
+      ELSE 'preauthorized'
+    END
+    WHERE status IN ('active', 'pending', 'used')
+  `);
 
   // —— Puntos de acceso + cableados (modulares; no mezclan módulos comerciales) ——
   await db.run(sql`

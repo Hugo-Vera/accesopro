@@ -22,6 +22,7 @@ import {
 import { type Actuator, type RelaySlot } from "@/components/ops/relayPresets";
 import { ACTUATOR_POLL_MS, useOpsEvents } from "@/components/ops/useOpsEvents";
 import { mergeLaneActuatorIds, resolveOpenActuatorId } from "@/components/ops/resolveOpenRelay";
+import { GuardApprovalQueue } from "@/components/ops/GuardApprovalQueue";
 import { VisitorCheckinModal } from "@/components/VisitorCheckinModal";
 import { useToast } from "@/components/Toast";
 
@@ -366,6 +367,7 @@ export function HomeDashboard() {
       </div>
 
       <OwnerAuthNotices tenantId={tenantId} enabled={showOwnerAuth} layout="strip" />
+      <GuardApprovalQueue tenantId={tenantId || ""} enabled={Boolean(tenantId) && showOwnerAuth} />
 
       <div className="ops-lanes-footer">
         <MenuGrid tiles={menuTiles} compact />
@@ -419,7 +421,7 @@ export function HomeDashboard() {
           onClose={() => setCheckinOpen(false)}
           onSuccess={() => {
             setCheckinOpen(false);
-            toast.success("Visita registrada", "El ingreso quedó acreditado en portería.");
+            toast.success("Visita identificada", "El guardia tiene que aprobar la entrada. El propietario sigue pasando solo.");
           }}
         />
       ) : null}

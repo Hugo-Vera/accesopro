@@ -16,6 +16,44 @@ import {
 import { useDash } from "@/components/DashboardProvider";
 import type { OverlayLayer } from "@/lib/kml";
 
+type AuthPin = {
+  id: string;
+  passId?: string;
+  guestName: string;
+  lot: string;
+  status: string;
+  mapLat?: string | null;
+  mapLng?: string | null;
+  lotPolygon?: string | null;
+};
+
+function pinLatLng(p: AuthPin): [number, number] | null {
+  const lat = Number(p.mapLat);
+  const lng = Number(p.mapLng);
+  if (Number.isFinite(lat) && Number.isFinite(lng)) return [lat, lng];
+  if (!p.lotPolygon) return null;
+  try {
+    const g = JSON.parse(p.lotPolygon) as { coordinates?: number[][][] };
+    const ring = g.coordinates?.[0] ?? [];
+    if (ring.length < 3) return null;
+    let slat = 0;
+    let slng = 0;
+    let n = 0;
+    for (const pt of ring) {
+      const x = Number(pt[0]);
+      const y = Number(pt[1]);
+      if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+      slng += x;
+      slat += y;
+      n++;
+    }
+    if (!n) return null;
+    return [slat / n, slng / n];
+  } catch {
+    return null;
+  }
+}
+
 type Lot = {
   id: string;
   lotNumber: string;
@@ -34,6 +72,7 @@ export function OpsPlanMap() {
   const tilesRef = useRef<import("leaflet").TileLayer | null>(null);
   const lotsRef = useRef<Lot[]>([]);
   const overlaysRef = useRef<OverlayLayer[]>([]);
+  const pinsLayerRef = useRef<import("leaflet").LayerGroup | null>(null);
   const savedViewRef = useRef<{ lat: number; lng: number; zoom: number } | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [mapStyle, setMapStyle] = useState<PlanMapStyle>(defaultPlanMapStyle);
@@ -201,6 +240,52 @@ export function OpsPlanMap() {
     tilesRef.current = makePlanTiles(L, mapStyle).addTo(map);
     tilesRef.current.bringToBack();
   }, [mapStyle, mapReady]);
+
+  useEffect(() => {
+    if (!mapReady || !tenantId) return;
+    const map = mapRef.current;
+    const L = LRef.current;
+    if (!map || !L) return;
+    if (!pinsLayerRef.current) pinsLayerRef.current = L.layerGroup().addTo(map);
+    const layer = pinsLayerRef.current;
+    let dead = false;
+    const draw = async () => {
+      try {
+        const d = await api<{ passes: AuthPin[] }>(withTenant("/api/visitors/owner-passes", tenantId));
+        if (dead) return;
+        layer.clearLayers();
+        for (const p of d.passes || []) {
+          if (p.status === "completed" || p.status === "revoked" || p.status === "denied" || p.status === "expired") continue;
+          const ll = pinLatLng(p);
+          if (!ll) continue;
+          const icon = L.divIcon({
+            className: "ops-auth-bell",
+            html: `<div style="transform:translate(-50%,-110%);display:flex;flex-direction:column;align-items:center;pointer-events:auto">
+              <div style="background:#f59e0b;color:#111;border-radius:999px;padding:4px 6px;font:700 11px/1 sans-serif;box-shadow:0 2px 8px rgba(0,0,0,.35)">!</div>
+              <div style="margin-top:2px;background:#0f172a;color:#fff;border-radius:6px;padding:2px 6px;font:700 10px/1.2 sans-serif;white-space:nowrap">${p.guestName}</div>
+            </div>`,
+            iconSize: [1, 1],
+            iconAnchor: [0, 0],
+          });
+          const marker = L.marker(ll, { icon, zIndexOffset: 800 })
+            .bindTooltip(`${p.lot} · ${p.guestName}`, { direction: "top" })
+            .addTo(layer);
+          marker.on("click", () => {
+            const passId = p.passId || (p.id.startsWith("pass:") ? p.id.slice(5) : p.id);
+            window.dispatchEvent(new CustomEvent("ap:open-visit-approval", { detail: { passId } }));
+          });
+        }
+      } catch {
+        /* poll silencioso */
+      }
+    };
+    void draw();
+    const id = window.setInterval(() => void draw(), 8000);
+    return () => {
+      dead = true;
+      window.clearInterval(id);
+    };
+  }, [mapReady, tenantId]);
 
   function changeStyle(next: PlanMapStyle) {
     setMapStyle(next);

@@ -14,6 +14,7 @@ import { enqueue, waitCommand } from "./actuatorExec.js";
 import { tenantFeatureEnabled } from "./features.js";
 import { listCredentials } from "./credentials.js";
 import { ASI_CARD_TYPES, ASI_USER_TYPES } from "@accesopro/catalog";
+import { isOpenVisitStatus } from "./visitHold.js";
 
 const PREFIXES = ["own_", "u_", "fam_", "svc_", "v_", "vis_"];
 
@@ -100,8 +101,8 @@ async function expectedRoster(siteId: string) {
     });
   }
   if (qrOn) {
-    const passes = await db.select().from(visitPasses).where(eq(visitPasses.status, "active"));
-    for (const p of passes.filter((x) => x.siteId === siteId)) {
+    const passes = await db.select().from(visitPasses);
+    for (const p of passes.filter((x) => x.siteId === siteId && isOpenVisitStatus(x.status))) {
       const uid = `v_${p.id.slice(-8)}`;
       const cred = creds.find((x) => x.dahuaUserId === uid && x.kind === "qr" && x.status === "active");
       rows.push({
@@ -168,7 +169,7 @@ export async function reconcileSiteRoster(siteId: string, onlyDeviceId?: string)
           userId: row.userId,
           name: row.name,
           cardNo: row.cardNo,
-          photoBase64: row.photoBase64 || undefined,
+          photoBase64: String(row.userId || "").startsWith("v_") ? undefined : row.photoBase64 || undefined,
           password: row.password,
           userType: row.userType ?? 0,
           cardType: row.cardType ?? 0,

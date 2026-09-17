@@ -21,3 +21,9 @@ apps/agent/.venv/
 cookie.txt
 *.tsbuildinfo
 apps/web/tsconfig.tsbuildinfo
+apps/android/.gradle/
+apps/android/build/
+apps/android/app/build/
+apps/android/local.properties
+apps/android/*.iml
+.idea/

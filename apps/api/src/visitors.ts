@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { Hono } from "hono";
 import { db } from "./db/client.js";
 import {
@@ -14,16 +14,25 @@ import {
   users,
   events,
 } from "./db/schema.js";
-import { nid, scopedSiteWithModule } from "./scope.js";
-import { fireActuator } from "./actuatorExec.js";
+import { nid, normalizePlate, scopedSiteWithModule } from "./scope.js";
 import { laneCodeOf } from "./accessPoints.js";
 import type { AuthUser } from "./auth.js";
 import { denyUnlessCapability } from "./grants.js";
-import { tenantFeatureEnabled } from "./features.js";
 import { enrollPersonOnSiteDevicesWait } from "./dahuaSite.js";
-import { ASI_USER_TYPES, toAsiCardNo } from "@accesopro/catalog";
+import { ASI_CARD_TYPES, ASI_USER_TYPES } from "@accesopro/catalog";
 import { processDocumentImage } from "./documentScan.js";
 import { mimeOfPath, readVisitorDoc, saveVisitorDoc } from "./visitorDocs.js";
+import { upsertCredential } from "./credentials.js";
+import { makeVisitToken } from "./visitPass.js";
+import {
+  attachVehicleInsurance,
+  decideGuardApproval,
+  holdVisitQr,
+  isArrivalMode,
+  listPendingApprovals,
+  replaceCompanions,
+  serializePassFicha,
+} from "./visitHold.js";
 
 function tsMs(v: Date | number | null | undefined) {
   if (v == null) return null;
@@ -67,10 +76,6 @@ export const ARGENTINA_INSURANCE_COMPANIES = [
 
 function normalizeDni(raw: string): string {
   return raw.replace(/\D/g, "").trim();
-}
-
-function normalizePlate(raw: string): string {
-  return raw.toUpperCase().replace(/[^A-Z0-9]/g, "").trim();
 }
 
 /** Catálogo de aseguradoras */
@@ -287,14 +292,21 @@ visitorsApi.get("/visitors/owner-passes", async (c) => {
         guestDni: visitPasses.guestDni,
         patente: visitPasses.patente,
         status: visitPasses.status,
+        arrivalMode: visitPasses.arrivalMode,
+        visitKind: visitPasses.visitKind,
+        completeness: visitPasses.completeness,
         validFrom: visitPasses.validFrom,
         validUntil: visitPasses.validUntil,
         createdAt: visitPasses.createdAt,
         scannedInAt: visitPasses.scannedInAt,
         scannedOutAt: visitPasses.scannedOutAt,
         dahuaSynced: visitPasses.dahuaSynced,
+        propertyId: visitPasses.propertyId,
         lotNumber: properties.lotNumber,
         propertyLabel: properties.label,
+        mapLat: properties.mapLat,
+        mapLng: properties.mapLng,
+        lotPolygon: properties.lotPolygon,
         ownerName: users.name,
       })
       .from(visitPasses)
@@ -328,6 +340,7 @@ visitorsApi.get("/visitors/owner-passes", async (c) => {
 
   type Notice = {
     id: string;
+    passId?: string;
     source: "pass" | "auth";
     guestName: string;
     guestDni: string | null;
@@ -343,35 +356,59 @@ visitorsApi.get("/visitors/owner-passes", async (c) => {
     dahuaSynced: boolean;
     lot: string;
     ownerName: string;
+    ownerPhone?: string | null;
+    ownerWhatsapp?: string | null;
+    emergencyPhone?: string | null;
     kind?: string;
+    arrivalMode?: string | null;
+    visitKind?: string | null;
+    completeness?: string | null;
+    propertyId?: string | null;
+    mapLat?: string | null;
+    mapLng?: string | null;
+    lotPolygon?: string | null;
+    missing?: string[];
+    companions?: { name: string; dni: string | null }[];
   };
 
   const ms = tsMs;
+
+  const { listCompanions, missingVisitFields, ownerContactForProperty } = await import("./visitHold.js");
 
   const notices: Notice[] = [];
 
   for (const r of passRows) {
     const until = ms(r.validUntil);
-    const revoked = r.status === "revoked" || r.status === "cancelled";
-    const expired = until != null && until < now;
-    const closed = Boolean(r.scannedOutAt) || revoked || expired || r.status === "expired" || r.status === "used";
+    const revoked = r.status === "revoked" || r.status === "cancelled" || r.status === "denied";
+    const expired = until != null && until < now || r.status === "expired";
+    const closed = Boolean(r.scannedOutAt) || revoked || expired || r.status === "completed";
+    const awaiting = r.status === "awaiting_entry" || r.status === "awaiting_exit";
+    const inSite = r.status === "in_site" || Boolean(r.scannedInAt && !r.scannedOutAt && !closed);
+    const contact = r.propertyId ? await ownerContactForProperty(r.propertyId) : null;
+    const companions = await listCompanions(r.id);
+    const missing = closed ? [] : await missingVisitFields(r.id);
     notices.push({
       id: `pass:${r.id}`,
+      passId: r.id,
       source: "pass",
       guestName: r.guestName,
       guestDni: r.guestDni,
       patente: r.patente,
       status: closed
-        ? r.scannedOutAt
+        ? r.scannedOutAt || r.status === "completed"
           ? "completed"
           : revoked
-            ? "revoked"
+            ? r.status === "denied"
+              ? "denied"
+              : "revoked"
             : expired
               ? "expired"
               : r.status
-        : r.scannedInAt
-          ? "in_site"
-          : "pending",
+        : awaiting
+          ? r.status
+          : inSite
+            ? "in_site"
+            : "pending",
       bucket: closed ? "closed" : "pending",
       validFrom: r.validFrom,
       validUntil: r.validUntil,
@@ -381,7 +418,19 @@ visitorsApi.get("/visitors/owner-passes", async (c) => {
       stayMs: stayMsOf(r.scannedInAt, r.scannedOutAt),
       dahuaSynced: Boolean(r.dahuaSynced),
       lot: r.lotNumber ? `Lote ${r.lotNumber}` : r.propertyLabel || "Propiedad",
-      ownerName: r.ownerName || "Propietario",
+      ownerName: contact?.ownerName || r.ownerName || "Propietario",
+      ownerPhone: contact?.ownerPhone ?? null,
+      ownerWhatsapp: contact?.ownerWhatsapp ?? null,
+      emergencyPhone: contact?.emergencyPhone ?? null,
+      arrivalMode: r.arrivalMode,
+      visitKind: r.visitKind,
+      completeness: r.completeness,
+      propertyId: r.propertyId,
+      mapLat: r.mapLat,
+      mapLng: r.mapLng,
+      lotPolygon: r.lotPolygon,
+      missing,
+      companions: companions.map((x) => ({ name: x.name, dni: x.dni })),
     });
   }
 
@@ -422,6 +471,109 @@ visitorsApi.get("/visitors/owner-passes", async (c) => {
     /** Compat: lista plana (pendientes primero). */
     passes: [...pending, ...closed],
   });
+});
+
+visitorsApi.get("/visitors/approvals", async (c) => {
+  const denied = await denyUnlessCapability(c.get("user"), "access.visitors.manage");
+  if (denied) return denied;
+  const scoped = await scopedSiteWithModule(c, "visitors");
+  if ("error" in scoped) return scoped.error;
+  const items = await listPendingApprovals(scoped.site.id);
+  return c.json({ items });
+});
+
+visitorsApi.get("/visitors/passes/:id", async (c) => {
+  const denied = await denyUnlessCapability(c.get("user"), "access.visitors.manage");
+  if (denied) return denied;
+  const scoped = await scopedSiteWithModule(c, "visitors");
+  if ("error" in scoped) return scoped.error;
+  const passId = c.req.param("id");
+  const pass = await db
+    .select()
+    .from(visitPasses)
+    .where(and(eq(visitPasses.id, passId), eq(visitPasses.siteId, scoped.site.id)))
+    .get();
+  if (!pass) return c.json({ error: "Pase no encontrado" }, 404);
+  const pending = (await listPendingApprovals(scoped.site.id)).find((x) => x.passId === pass.id);
+  if (pending) return c.json({ item: { ...pending, pending: true } });
+  const item = await serializePassFicha(pass.id);
+  if (!item) return c.json({ error: "Pase no encontrado" }, 404);
+  return c.json({ item: { ...item, pending: false } });
+});
+
+visitorsApi.post("/visitors/approvals/:id/decide", async (c) => {
+  const denied = await denyUnlessCapability(c.get("user"), "access.visitors.manage");
+  if (denied) return denied;
+  const scoped = await scopedSiteWithModule(c, "visitors");
+  if ("error" in scoped) return scoped.error;
+  const body = await c.req.json<{
+    decision?: "approved" | "denied";
+    comment?: string;
+    trunkChecked?: boolean;
+    insurance?: { plate?: string; company?: string; policyNumber?: string; validUntil?: string };
+    companions?: { name?: string; dni?: string }[];
+    guestDni?: string;
+    arrivalMode?: string;
+  }>();
+  const decision = body.decision === "denied" ? "denied" : body.decision === "approved" ? "approved" : null;
+  if (!decision) return c.json({ error: "Indicá aprobar o denegar" }, 400);
+
+  const approvalId = c.req.param("id");
+  const pending = (await listPendingApprovals(scoped.site.id)).find((x) => x.id === approvalId);
+  if (pending && decision === "approved") {
+    if (body.guestDni?.trim()) {
+      await db.update(visitPasses).set({ guestDni: body.guestDni.replace(/\D/g, "") }).where(eq(visitPasses.id, pending.passId));
+    }
+    if (isArrivalMode(body.arrivalMode)) {
+      await db.update(visitPasses).set({ arrivalMode: body.arrivalMode }).where(eq(visitPasses.id, pending.passId));
+    }
+    if (body.companions) await replaceCompanions(pending.passId, body.companions);
+    if (body.insurance) {
+      await attachVehicleInsurance(scoped.tenantId, pending.passId, body.insurance);
+    }
+  }
+
+  const result = await decideGuardApproval({
+    site: scoped.site,
+    approvalId,
+    guardUserId: c.get("user").id,
+    decision,
+    comment: body.comment,
+    trunkChecked: Boolean(body.trunkChecked),
+  });
+  if (!result.ok) return c.json({ error: result.error, missing: result.missing }, 400);
+  return c.json({ ok: true });
+});
+
+visitorsApi.post("/visitors/passes/:id/complete", async (c) => {
+  const denied = await denyUnlessCapability(c.get("user"), "access.visitors.manage");
+  if (denied) return denied;
+  const scoped = await scopedSiteWithModule(c, "visitors");
+  if ("error" in scoped) return scoped.error;
+  const passId = c.req.param("id");
+  const pass = await db
+    .select()
+    .from(visitPasses)
+    .where(and(eq(visitPasses.id, passId), eq(visitPasses.siteId, scoped.site.id)))
+    .get();
+  if (!pass) return c.json({ error: "Pase no encontrado" }, 404);
+  const body = await c.req.json<{
+    guestDni?: string;
+    arrivalMode?: string;
+    patente?: string;
+    notes?: string;
+    companions?: { name?: string; dni?: string }[];
+    insurance?: { plate?: string; company?: string; policyNumber?: string; validUntil?: string };
+  }>();
+  const patch: Record<string, unknown> = { completeness: "full" };
+  if (body.guestDni?.trim()) patch.guestDni = body.guestDni.replace(/\D/g, "");
+  if (isArrivalMode(body.arrivalMode)) patch.arrivalMode = body.arrivalMode;
+  if (body.patente?.trim()) patch.patente = normalizePlate(body.patente);
+  if (body.notes !== undefined) patch.notes = body.notes.trim() || null;
+  await db.update(visitPasses).set(patch as typeof visitPasses.$inferInsert).where(eq(visitPasses.id, passId));
+  if (body.companions) await replaceCompanions(passId, body.companions);
+  if (body.insurance) await attachVehicleInsurance(scoped.tenantId, passId, body.insurance);
+  return c.json({ ok: true });
 });
 
 /** Listado de registros de visitas */
@@ -526,11 +678,10 @@ export type VisitorCheckinPayload = {
     jurisdiction?: string;
     validUntil: number | string;
   };
-  openRelay?: boolean;
-  actuatorId?: string;
-  /** qr = pase AccesoPro. face = enrolar foto al ASI (webcam portería). */
-  accessMethod?: "qr" | "face";
-  photoBase64?: string;
+  arrivalMode?: "peatonal" | "plataforma" | "vehiculo";
+  companions?: { name?: string; dni?: string }[];
+  /** Visita = QR + guardia. Cara de invitado no se enrola en el ASI. */
+  accessMethod?: "qr";
   /** Seguro de vida / ART de la persona (no el del auto). */
   personInsurance?: {
     reuseId?: string;
@@ -563,12 +714,7 @@ visitorsApi.post("/visitors/checkin", async (c) => {
   const siteId = scoped.site.id;
   const now = new Date();
   const dniClean = normalizeDni(body.identity.dniNumber);
-  const accessMethod = body.accessMethod === "face" ? "face" : "qr";
-  const photo = typeof body.photoBase64 === "string" ? body.photoBase64.replace(/^data:image\/\w+;base64,/, "").trim() : "";
-
-  if (accessMethod === "face" && photo.length < 80) {
-    return c.json({ error: "Para validar por cara hace falta la captura de la webcam" }, 400);
-  }
+  const accessMethod = "qr";
 
   // 1. Resolver o Crear Persona en `visitor_identities`
   let person = await db
@@ -764,9 +910,16 @@ visitorsApi.post("/visitors/checkin", async (c) => {
     }
   }
 
-  // 3. Crear el registro consolidado de visita
+  // 3. Crear el registro consolidado + el mismo pase QR que usa el portal.
   const visitId = nid();
-  const passToken = `VIS-${dniClean}-${Math.floor(1000 + Math.random() * 9000)}`;
+  const passId = nid();
+  const token = makeVisitToken(body.destination.propertyId, passId);
+  const arrivalMode = isArrivalMode(body.arrivalMode)
+    ? body.arrivalMode
+    : body.isVehicular
+      ? "vehiculo"
+      : "peatonal";
+  const guestName = `${person!.firstName} ${person!.lastName}`.trim();
 
   await db.insert(visitRecords).values({
     id: visitId,
@@ -781,44 +934,85 @@ visitorsApi.post("/visitors/checkin", async (c) => {
     visitType: body.destination.visitType || "social",
     status: "in_site",
     authorizedBy: body.destination.authorizedBy.trim(),
-    passToken,
+    passToken: token,
     scannedInAt: now,
     notes: body.destination.notes || null,
     createdByUserId: c.get("user")?.id,
     createdAt: now,
   });
 
-  // 4. Apertura física de barrera o puerta si fue solicitada
-  if (body.openRelay) {
-    try {
-      if (body.actuatorId) {
-        await fireActuator(scoped.site, body.actuatorId, "open");
-      }
-    } catch {
-      /* Apertura no bloqueante */
-    }
-  }
+  await db.insert(visitPasses).values({
+    id: passId,
+    propertyId: body.destination.propertyId,
+    siteId,
+    authorizationId: null,
+    token,
+    guestName,
+    guestDni: dniClean,
+    patente: body.vehicle?.plate ? normalizePlate(body.vehicle.plate) : null,
+    validFrom: now,
+    validUntil: new Date(now.getTime() + 24 * 60 * 60 * 1000),
+    horaDesde: null,
+    horaHasta: null,
+    status: "preauthorized",
+    arrivalMode,
+    visitKind: body.destination.visitType === "event" ? "social" : body.destination.visitType || "social",
+    completeness: body.isVehicular ? "full" : "basic",
+    vehicleId,
+    insuranceId,
+    visitRecordId: visitId,
+    notes: body.destination.notes || null,
+    dahuaSynced: false,
+    dahuaCardNo: token,
+    scannedInAt: null,
+    scannedOutAt: null,
+    createdByUserId: c.get("user").id,
+    createdAt: now,
+  });
+  await replaceCompanions(passId, body.companions);
+
+  const dahuaUserId = `v_${passId.slice(-8)}`;
+  await upsertCredential({
+    siteId,
+    dahuaUserId,
+    kind: "qr",
+    payload: token,
+    label: guestName,
+    validFrom: now,
+    validUntil: new Date(now.getTime() + 24 * 60 * 60 * 1000),
+    maxUses: 0,
+  });
 
   let dahuaSynced = false;
-  if (accessMethod === "face" && (await tenantFeatureEnabled(tenantId, "dahua.face"))) {
-    const until = new Date(now.getTime() + 24 * 60 * 60 * 1000);
-    const dahuaUserId = `v_${visitId.slice(-8)}`;
-    try {
-      const results = await enrollPersonOnSiteDevicesWait(siteId, {
+  try {
+    const results = await enrollPersonOnSiteDevicesWait(
+      siteId,
+      {
         userId: dahuaUserId,
-        name: `${person!.firstName} ${person!.lastName}`.trim(),
-        cardNo: toAsiCardNo(dniClean.padStart(8, "0")),
-        photoBase64: photo,
+        name: guestName,
+        cardNo: token,
         userType: ASI_USER_TYPES.guest,
-        useTime: 4,
-        validDateStart: now.toISOString().slice(0, 19).replace("T", " "),
-        validDateEnd: until.toISOString().slice(0, 19).replace("T", " "),
-      });
-      dahuaSynced = results.some((r) => r.ok);
-    } catch {
-      /* el check-in local no depende del lector */
+        cardType: ASI_CARD_TYPES.guest,
+        photoBase64: undefined,
+        useTime: 0,
+      },
+      { fechaDesde: now, fechaHasta: new Date(now.getTime() + 24 * 60 * 60 * 1000) },
+    );
+    dahuaSynced = results.some((r) => r.ok);
+    if (dahuaSynced) {
+      await db.update(visitPasses).set({ dahuaSynced: true, dahuaCardNo: token }).where(eq(visitPasses.id, passId));
     }
+  } catch {
+    /* el check-in local no depende del lector */
   }
+
+  await holdVisitQr({
+    siteId,
+    tenantId,
+    cardRaw: token,
+    sentido: "in",
+    at: now,
+  });
 
   // 5. Registrar evento en auditoría
   await db.insert(events).values({
@@ -829,7 +1023,10 @@ visitorsApi.post("/visitors/checkin", async (c) => {
     laneCode: laneCodeOf("in"),
     payload: JSON.stringify({
       visitId,
-      personName: `${person!.firstName} ${person!.lastName}`,
+      passId,
+      passToken: token,
+      qrPayload: token,
+      personName: guestName,
       dni: dniClean,
       plate: body.vehicle?.plate || null,
       insuranceCompany: body.insurance?.company || null,
@@ -849,21 +1046,23 @@ visitorsApi.post("/visitors/checkin", async (c) => {
   return c.json({
     ok: true,
     visitId,
-    passToken,
+    passId,
+    passToken: token,
+    qrPayload: token,
     person,
     vehicleId,
     insuranceId,
     licenseId,
     accessMethod,
     dahuaSynced,
-    message: dahuaSynced
-      ? "Ingreso registrado. La cara quedó enrolada en el lector."
-      : "Ingreso de visita registrado exitosamente.",
+    message: "Visita identificada. El guardia tiene que aprobar la entrada.",
   });
 });
 
-/** Registro de egreso / Check-out */
+/** Pedido de egreso: no cierra solo; el guardia aprueba en la cola. */
 visitorsApi.post("/visitors/records/:id/checkout", async (c) => {
+  const denied = await denyUnlessCapability(c.get("user"), "access.visitors.manage");
+  if (denied) return denied;
   const scoped = await scopedSiteWithModule(c, "visitors");
   if ("error" in scoped) return scoped.error;
 
@@ -876,32 +1075,28 @@ visitorsApi.post("/visitors/records/:id/checkout", async (c) => {
 
   if (!record) return c.json({ error: "Registro de visita no encontrado" }, 404);
 
-  const now = new Date();
-  await db
-    .update(visitRecords)
-    .set({
-      status: "completed",
-      scannedOutAt: now,
-    })
-    .where(eq(visitRecords.id, id));
-
-  // Registrar evento de salida
-  await db.insert(events).values({
-    id: nid(),
-    siteId: scoped.site.id,
-    type: "visitor_checkout",
-    sentido: "out",
-    laneCode: laneCodeOf("out"),
-    payload: JSON.stringify({
-      visitId: id,
-      personId: record.personId,
-      timestamp: now.toISOString(),
+  let pass = record.passToken
+    ? await db.select().from(visitPasses).where(eq(visitPasses.token, record.passToken)).get()
+    : null;
+  if (!pass) {
+    const rows = await db.select().from(visitPasses).where(eq(visitPasses.siteId, scoped.site.id));
+    pass = rows.find((p) => p.visitRecordId === id) ?? null;
+  }
+  if (pass) {
+    const hold = await holdVisitQr({
+      siteId: scoped.site.id,
+      tenantId: scoped.tenantId,
+      cardRaw: pass.token,
       sentido: "out",
-      laneCode: 2,
-      dwellMs: stayMsOf(record.scannedInAt, now),
-    }),
-    createdAt: now,
-  });
+    });
+    return c.json({
+      ok: true,
+      held: true,
+      approvalId: hold.approvalId,
+      passId: hold.passId,
+      message: "Egreso pedido. El guardia tiene que aprobar la salida (baúl si hay vehículo).",
+    });
+  }
 
-  return c.json({ ok: true, checkoutTime: now.toISOString() });
+  return c.json({ error: "Este ingreso no tiene pase QR. Pedí la salida desde la cola cuando acerquen el QR." }, 400);
 });

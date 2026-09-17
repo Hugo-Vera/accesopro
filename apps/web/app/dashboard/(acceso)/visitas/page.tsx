@@ -6,6 +6,7 @@ import { api, withTenant } from "@/lib/api";
 import { useDash } from "@/components/DashboardProvider";
 import { ModuleGate, PageHeader, SectionTabs } from "@/components/PageHeader";
 import { VisitorCheckinModal } from "@/components/VisitorCheckinModal";
+import { GuardApprovalQueue } from "@/components/ops/GuardApprovalQueue";
 import { AltaDniPanel } from "@/components/AltaDniPanel";
 import { useEscapeKey } from "@/hooks/useEscapeKey";
 import {
@@ -142,17 +143,20 @@ function VisitasInner() {
     if (!tenantId) return;
     setCheckoutLoading(recordId);
     try {
-      const res = await api<{ ok: boolean }>(
+      const res = await api<{ ok: boolean; held?: boolean; passId?: string; message?: string }>(
         withTenant(`/api/visitors/records/${recordId}/checkout`, tenantId),
         { method: "POST" }
       );
       if (res.ok) {
-        setMsg("Egreso de visita registrado exitosamente.");
+        setMsg(res.message || "Egreso pedido. El guardia tiene que aprobar la salida.");
+        if (res.passId) {
+          window.dispatchEvent(new CustomEvent("ap:open-visit-approval", { detail: { passId: res.passId } }));
+        }
         loadRecords();
-        setTimeout(() => setMsg(null), 4000);
+        setTimeout(() => setMsg(null), 5000);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "No se pudo registrar el egreso");
+      setError(err instanceof Error ? err.message : "No se pudo pedir el egreso");
     } finally {
       setCheckoutLoading(null);
     }
@@ -220,7 +224,7 @@ function VisitasInner() {
           subtitle={
             tab === "dni"
               ? "Pegá el QR o PDF417 del DNI argentino en portería. Opcional: enrollar CardNo = DNI en el ASI."
-              : "Acreditación de visitantes, vehículos, pólizas y licencias."
+              : "QR identifica; portería aprueba entrada y salida. Cara y QR permanente son del propietario."
           }
           actions={
             tab === "visitas" ? (
@@ -531,7 +535,7 @@ function VisitasInner() {
                               className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-rose-200 dark:border-rose-900/60 bg-rose-50 hover:bg-rose-100 text-rose-700 dark:bg-rose-950/40 dark:hover:bg-rose-950/60 dark:text-rose-300 font-bold transition-colors disabled:opacity-50"
                             >
                               <LogOut className="h-3.5 w-3.5" />
-                              <span>{checkoutLoading === r.id ? "Egresando..." : "Egreso"}</span>
+                              <span>{checkoutLoading === r.id ? "Pidiendo..." : "Pedir salida"}</span>
                             </button>
                           )}
                         </td>
@@ -724,11 +728,12 @@ function VisitasInner() {
           isOpen={isCheckinOpen}
           onClose={() => setIsCheckinOpen(false)}
           onSuccess={() => {
-            setMsg("Ingreso de visita registrado exitosamente con toda la documentación vinculada.");
+            setMsg("Visita identificada. El guardia tiene que aprobar la entrada en la cola.");
             loadRecords();
             setTimeout(() => setMsg(null), 5000);
           }}
         />
+        <GuardApprovalQueue tenantId={tenantId || ""} enabled={Boolean(tenantId) && can("access.visitors.manage")} />
         </>
         )}
       </div>
