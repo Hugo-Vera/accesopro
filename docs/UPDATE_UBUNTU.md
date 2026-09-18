@@ -64,6 +64,7 @@ El script: `git reset --hard origin/master` → `compose build` (sitio en línea
 | `npm ci` / `ECONNRESET` a registry.npmjs.org | Red inestable durante el build | Reintenta 3 veces el build; Dockerfile reintenta `npm ci` |
 | `sudo su` + `chown $USER` deja `.git` de root | En root, `$USER` es root | Correr el curl como **hugo**; `ACCESOPRO_OWNER=hugo` en `.env` |
 | `runuser: user master does not exist` | `ACCESOPRO_OWNER` es un nombre de Windows / no hay esa cuenta en el Ubuntu | El script ignora el nombre y hace git + `chown` por UID. En `.env`: `ACCESOPRO_OWNER=` usuario Linux real (`getent passwd 1000`) |
+| Log con «p.ej. master» y `updater exit 1` | El botón corre el **script viejo de disco**; falla antes del `git pull` | No uses el botón. En consola: `curl -fsSL https://raw.githubusercontent.com/Hugo-Vera/accesopro/master/scripts/update-ubuntu.sh \| bash` |
 
 ## Variables importantes
 

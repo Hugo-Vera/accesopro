@@ -16,6 +16,7 @@ const BRANCH = process.env.ACCESOPRO_BRANCH ?? "master";
 const HOST_DIR = process.env.ACCESOPRO_HOST_DIR ?? "";
 const HOST_PATH = process.env.ACCESOPRO_HOST_PATH || "/opt/accesopro";
 const UPDATER_NAME = "accesopro-updater";
+const UPDATE_SCRIPT_URL = `https://raw.githubusercontent.com/${REPO}/${BRANCH}/scripts/update-ubuntu.sh`;
 const ALLOW =
   process.env.ACCESOPRO_ALLOW_SELF_UPDATE === "1" ||
   process.env.ACCESOPRO_ALLOW_SELF_UPDATE === "true";
@@ -206,7 +207,6 @@ async function watchDetachedUpdater() {
 async function spawnDetachedUpdater(): Promise<string> {
   await execFileAsync("docker", ["rm", "-f", UPDATER_NAME], { timeout: 15000 }).catch(() => undefined);
   const image = await resolveSelfImage();
-  const script = join(HOST_PATH, "scripts", "update-ubuntu.sh");
   const { stdout } = await execFileAsync(
     "docker",
     [
@@ -237,7 +237,8 @@ async function spawnDetachedUpdater(): Promise<string> {
       "--entrypoint",
       "bash",
       image,
-      script,
+      "-lc",
+      `set -euo pipefail; echo "    Bajando updater desde GitHub…"; curl -fsSL "${UPDATE_SCRIPT_URL}" | bash`,
     ],
     { timeout: 30000 },
   );
@@ -291,10 +292,9 @@ async function runHostUpdate() {
     appendLog("Durante el build el dashboard sigue. Al final hay un corte breve de :3000.");
     void watchDetachedUpdater();
   } catch (spawnErr) {
-    appendLog(`No se pudo soltar el updater (${spawnErr instanceof Error ? spawnErr.message : String(spawnErr)}). Fallback in-process.`);
-    const script = join(HOST_DIR, "scripts", "update-ubuntu.sh");
+    appendLog(`No se pudo soltar el updater (${spawnErr instanceof Error ? spawnErr.message : String(spawnErr)}). Fallback in-process (GitHub).`);
     try {
-      const { stdout, stderr } = await execFileAsync("bash", [script], {
+      const { stdout, stderr } = await execFileAsync("bash", ["-lc", `curl -fsSL "${UPDATE_SCRIPT_URL}" | bash`], {
         cwd: HOST_DIR,
         timeout: 20 * 60 * 1000,
         env: {
