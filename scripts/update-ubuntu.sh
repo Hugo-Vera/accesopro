@@ -44,6 +44,8 @@ load_env_key() {
   fi
 }
 load_env_key ACCESOPRO_OWNER
+load_env_key ACCESOPRO_OWNER_UID
+load_env_key ACCESOPRO_OWNER_GID
 load_env_key ACCESOPRO_BRANCH
 load_env_key ACCESOPRO_PROFILE
 BRANCH="${ACCESOPRO_BRANCH:-$BRANCH}"
@@ -65,6 +67,7 @@ on_err() {
 trap on_err ERR
 
 # Dueño del árbol en el host (self-update del API corre como root y rompe .git).
+# En el contenedor API el nombre (p.ej. master) no existe → hay que chown por UID.
 repo_owner() {
   if [[ -n "${ACCESOPRO_OWNER:-}" ]]; then
     echo "$ACCESOPRO_OWNER"
@@ -79,13 +82,40 @@ repo_owner() {
   fi
 }
 
-fix_repo_ownership() {
-  local owner
+repo_owner_ids() {
+  local owner uid gid
   owner="$(repo_owner)"
-  [[ -n "$owner" && "$owner" != "root" ]] || return 0
+  if [[ -n "${ACCESOPRO_OWNER_UID:-}" ]]; then
+    uid="$ACCESOPRO_OWNER_UID"
+    gid="${ACCESOPRO_OWNER_GID:-$uid}"
+    echo "$uid $gid ${owner:-uid}"
+    return
+  fi
+  if [[ -n "$owner" && "$owner" != "root" ]] && id -u "$owner" >/dev/null 2>&1; then
+    echo "$(id -u "$owner") $(id -g "$owner") $owner"
+    return
+  fi
+  # Fallback: dueño actual del árbol en el host (sirve dentro del contenedor).
+  if [[ -d "$INSTALL_DIR" ]]; then
+    uid="$(stat -c '%u' "$INSTALL_DIR" 2>/dev/null || true)"
+    gid="$(stat -c '%g' "$INSTALL_DIR" 2>/dev/null || true)"
+    if [[ -n "$uid" && "$uid" != "0" ]]; then
+      echo "$uid ${gid:-$uid} ${owner:-uid$uid}"
+      return
+    fi
+  fi
+}
+
+fix_repo_ownership() {
+  local ids uid gid label
+  ids="$(repo_owner_ids || true)"
+  [[ -n "$ids" ]] || return 0
+  read -r uid gid label <<<"$ids"
+  [[ -n "$uid" && "$uid" != "0" ]] || return 0
+  gid="${gid:-$uid}"
   if [[ "$(id -u)" -eq 0 ]] || [[ ! -w "$INSTALL_DIR/.git/objects" ]]; then
-    echo "    Reparando permisos git → $owner:$owner"
-    need_root chown -R "$owner:$owner" "$INSTALL_DIR"
+    echo "    Reparando permisos git → $uid:$gid ($label)"
+    need_root chown -R "$uid:$gid" "$INSTALL_DIR"
   fi
 }
 
@@ -108,8 +138,8 @@ fi
 
 echo "==> Actualizando AccesoPro en $INSTALL_DIR"
 if [[ "$(id -u)" -eq 0 ]]; then
-  echo "    Nota: estás en root. No uses sudo su + chown \$USER (eso deja .git de root)."
-  echo "    Preferí, como hugo:  sudo chown -R hugo:hugo /opt/accesopro && curl … | bash"
+  echo "    Nota: estás en root. Preferí actualizar como el usuario del host (p.ej. master),"
+  echo "    no con sudo su. El chown usa UID numérico (sirve también desde el contenedor API)."
 fi
 cd "$INSTALL_DIR"
 fix_repo_ownership

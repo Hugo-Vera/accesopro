@@ -153,6 +153,9 @@ write_env() {
 
   local real_user="${SUDO_USER:-$USER}"
   [[ "$real_user" == "root" ]] && real_user="${USER:-root}"
+  local owner_uid owner_gid
+  owner_uid="$(id -u "$real_user" 2>/dev/null || id -u)"
+  owner_gid="$(id -g "$real_user" 2>/dev/null || id -g)"
 
   cat > .env << EOF
 JWT_SECRET=${secret}
@@ -166,10 +169,12 @@ SITE_AGENT_TOKEN=${token}
 ACCESOPRO_ALLOW_SELF_UPDATE=1
 ACCESOPRO_HOST_DIR=${INSTALL_DIR}
 ACCESOPRO_OWNER=${real_user}
+ACCESOPRO_OWNER_UID=${owner_uid}
+ACCESOPRO_OWNER_GID=${owner_gid}
 ACCESOPRO_REPO=Hugo-Vera/accesopro
 ACCESOPRO_BRANCH=master
 EOF
-  ok "Creado .env (WEB_ORIGIN=http://${ip}:3000, OWNER=${real_user})"
+  ok "Creado .env (WEB_ORIGIN=http://${ip}:3000, OWNER=${real_user} uid=${owner_uid})"
 }
 
 open_firewall() {
