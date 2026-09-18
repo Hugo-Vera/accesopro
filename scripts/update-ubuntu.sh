@@ -67,18 +67,27 @@ on_err() {
 trap on_err ERR
 
 # Dueño del árbol en el host (self-update del API corre como root y rompe .git).
-# En el contenedor API el nombre (p.ej. master) no existe → hay que chown por UID.
+# ACCESOPRO_OWNER puede ser un nombre de Windows (p.ej. master) que no existe acá.
+# Chown siempre por UID; runuser solo si getent/id encuentran la cuenta.
 repo_owner() {
-  if [[ -n "${ACCESOPRO_OWNER:-}" ]]; then
+  if [[ -n "${ACCESOPRO_OWNER:-}" ]] && id -u "${ACCESOPRO_OWNER}" >/dev/null 2>&1; then
     echo "$ACCESOPRO_OWNER"
     return
   fi
-  if [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]]; then
+  if [[ -n "${SUDO_USER:-}" && "${SUDO_USER}" != "root" ]] && id -u "${SUDO_USER}" >/dev/null 2>&1; then
     echo "$SUDO_USER"
     return
   fi
   if [[ -d "$INSTALL_DIR" ]]; then
-    stat -c '%U' "$INSTALL_DIR" 2>/dev/null || true
+    local name
+    name="$(stat -c '%U' "$INSTALL_DIR" 2>/dev/null || true)"
+    if [[ -n "$name" && "$name" != "UNKNOWN" && "$name" != "root" ]] && id -u "$name" >/dev/null 2>&1; then
+      echo "$name"
+      return
+    fi
+  fi
+  if [[ -n "${ACCESOPRO_OWNER_UID:-}" && "${ACCESOPRO_OWNER_UID}" != "0" ]]; then
+    getent passwd "${ACCESOPRO_OWNER_UID}" 2>/dev/null | cut -d: -f1 || true
   fi
 }
 
@@ -138,8 +147,8 @@ fi
 
 echo "==> Actualizando AccesoPro en $INSTALL_DIR"
 if [[ "$(id -u)" -eq 0 ]]; then
-  echo "    Nota: estás en root. Preferí actualizar como el usuario del host (p.ej. master),"
-  echo "    no con sudo su. El chown usa UID numérico (sirve también desde el contenedor API)."
+  echo "    Nota: estás en root. El chown usa UID numérico; no hace falta que ACCESOPRO_OWNER exista acá."
+  echo "    Evitá sudo su (en root \$USER es root y ensucia .git)."
 fi
 cd "$INSTALL_DIR"
 fix_repo_ownership
@@ -157,11 +166,17 @@ ensure_safe_git_dir "/opt/accesopro"
 ensure_safe_git_dir "/host/accesopro"
 
 OWNER="$(repo_owner)"
+if [[ "$(id -u)" -eq 0 && -n "${ACCESOPRO_OWNER:-}" && -z "$OWNER" ]]; then
+  echo "    ACCESOPRO_OWNER=${ACCESOPRO_OWNER} no existe en este Linux; git como root + chown por UID."
+fi
 run_git() {
-  if [[ "$(id -u)" -eq 0 && -n "$OWNER" && "$OWNER" != "root" ]] && command -v runuser >/dev/null 2>&1; then
-    runuser -u "$OWNER" -- git -C "$INSTALL_DIR" "$@"
-  elif [[ "$(id -u)" -eq 0 && -n "$OWNER" && "$OWNER" != "root" ]]; then
-    su -s /bin/bash "$OWNER" -c 'git -C "$1" "${@:2}"' -- "$INSTALL_DIR" "$@"
+  # runuser/su solo si la cuenta existe en este Linux (no el nombre de Windows del .env).
+  if [[ "$(id -u)" -eq 0 && -n "$OWNER" && "$OWNER" != "root" ]] && id -u "$OWNER" >/dev/null 2>&1; then
+    if command -v runuser >/dev/null 2>&1; then
+      runuser -u "$OWNER" -- git -C "$INSTALL_DIR" "$@"
+    else
+      su -s /bin/bash "$OWNER" -c 'git -C "$1" "${@:2}"' -- "$INSTALL_DIR" "$@"
+    fi
   else
     git "$@"
   fi
