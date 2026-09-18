@@ -38,6 +38,9 @@ export async function ensureSchema() {
       password_hash TEXT NOT NULL,
       name TEXT NOT NULL,
       role TEXT NOT NULL,
+      must_change_password INTEGER NOT NULL DEFAULT 0,
+      invite_token TEXT,
+      invite_expires_at INTEGER,
       created_at INTEGER NOT NULL
     )
   `);
@@ -522,6 +525,93 @@ export async function ensureSchema() {
   `);
   await addColumn("visit_records", "person_insurance_id", "TEXT");
 
+  // Columnas de invite / reset: siempre, aunque no haya actuadores (backfill sale temprano).
+  await addColumn("users", "must_change_password", "INTEGER NOT NULL DEFAULT 0");
+  await addColumn("users", "invite_token", "TEXT");
+  await addColumn("users", "invite_expires_at", "INTEGER");
+  await addColumn("owner_profiles", "whatsapp", "TEXT");
+  await addColumn("property_family_members", "fecha_desde", "INTEGER");
+  await addColumn("property_family_members", "fecha_hasta", "INTEGER");
+  await addColumn("property_family_members", "hora_desde", "TEXT");
+  await addColumn("property_family_members", "hora_hasta", "TEXT");
+  await addColumn("property_family_members", "dias_semana", "TEXT");
+  await addColumn("property_services", "fecha_desde", "INTEGER");
+  await addColumn("property_services", "fecha_hasta", "INTEGER");
+
+  await db.run(sql`
+    CREATE TABLE IF NOT EXISTS dahua_period_slots (
+      id TEXT PRIMARY KEY,
+      device_id TEXT NOT NULL REFERENCES dahua_devices(id),
+      fingerprint TEXT NOT NULL,
+      period_index INTEGER NOT NULL,
+      created_at INTEGER NOT NULL,
+      UNIQUE (device_id, fingerprint)
+    )
+  `);
+  // Padrón maestro de credenciales: tarjeta y QR son cosas distintas, no el mismo número.
+  await db.run(sql`
+    CREATE TABLE IF NOT EXISTS person_credentials (
+      id TEXT PRIMARY KEY,
+      site_id TEXT NOT NULL REFERENCES sites(id),
+      dahua_user_id TEXT NOT NULL,
+      kind TEXT NOT NULL,
+      payload TEXT NOT NULL,
+      label TEXT,
+      valid_from INTEGER,
+      valid_until INTEGER,
+      max_uses INTEGER NOT NULL DEFAULT 0,
+      used_count INTEGER NOT NULL DEFAULT 0,
+      validation_mode TEXT NOT NULL DEFAULT 'local',
+      status TEXT NOT NULL DEFAULT 'active',
+      created_at INTEGER NOT NULL,
+      revoked_at INTEGER
+    )
+  `);
+  await db.run(sql`
+    CREATE UNIQUE INDEX IF NOT EXISTS person_credentials_payload_uq
+      ON person_credentials (site_id, kind, payload)
+  `);
+  await db.run(sql`
+    CREATE INDEX IF NOT EXISTS person_credentials_user_idx
+      ON person_credentials (site_id, dahua_user_id)
+  `);
+  // Backfill: los pases de visita ya existentes son credenciales QR (hoy cargadas en el CardNo
+  // del lector). El userId espeja `v_${passId.slice(-8)}` de residents.ts.
+  await db.run(sql`
+    INSERT OR IGNORE INTO person_credentials (
+      id, site_id, dahua_user_id, kind, payload, label,
+      valid_from, valid_until, max_uses, used_count, validation_mode, status, created_at
+    )
+    SELECT
+      'cred_vp_' || vp.id,
+      vp.site_id,
+      'v_' || substr(vp.id, -8),
+      'qr',
+      COALESCE(vp.dahua_card_no, vp.token),
+      vp.guest_name,
+      vp.valid_from,
+      vp.valid_until,
+      0,
+      0,
+      'local',
+      CASE WHEN vp.status = 'active' THEN 'active' ELSE 'revoked' END,
+      vp.created_at
+    FROM visit_passes vp
+    WHERE COALESCE(vp.dahua_card_no, vp.token) IS NOT NULL
+  `);
+  await db.run(sql`
+    CREATE TABLE IF NOT EXISTS credential_device_sync (
+      id TEXT PRIMARY KEY,
+      site_id TEXT NOT NULL REFERENCES sites(id),
+      dahua_user_id TEXT NOT NULL,
+      device_id TEXT NOT NULL REFERENCES dahua_devices(id),
+      status TEXT NOT NULL DEFAULT 'pending',
+      last_error TEXT,
+      last_synced_at INTEGER,
+      UNIQUE (dahua_user_id, device_id)
+    )
+  `);
+
   await backfillAccessPointsFromLegacy();
   await backfillDeviceLaneFields(addedSentido, addedLaneSector);
 }
@@ -674,91 +764,5 @@ async function backfillAccessPointsFromLegacy() {
       }
     }
   }
-
-  await addColumn("users", "must_change_password", "INTEGER NOT NULL DEFAULT 0");
-  await addColumn("users", "invite_token", "TEXT");
-  await addColumn("users", "invite_expires_at", "INTEGER");
-  await addColumn("owner_profiles", "whatsapp", "TEXT");
-  await addColumn("property_family_members", "fecha_desde", "INTEGER");
-  await addColumn("property_family_members", "fecha_hasta", "INTEGER");
-  await addColumn("property_family_members", "hora_desde", "TEXT");
-  await addColumn("property_family_members", "hora_hasta", "TEXT");
-  await addColumn("property_family_members", "dias_semana", "TEXT");
-  await addColumn("property_services", "fecha_desde", "INTEGER");
-  await addColumn("property_services", "fecha_hasta", "INTEGER");
-
-  await db.run(sql`
-    CREATE TABLE IF NOT EXISTS dahua_period_slots (
-      id TEXT PRIMARY KEY,
-      device_id TEXT NOT NULL REFERENCES dahua_devices(id),
-      fingerprint TEXT NOT NULL,
-      period_index INTEGER NOT NULL,
-      created_at INTEGER NOT NULL,
-      UNIQUE (device_id, fingerprint)
-    )
-  `);
-  // Padrón maestro de credenciales: tarjeta y QR son cosas distintas, no el mismo número.
-  await db.run(sql`
-    CREATE TABLE IF NOT EXISTS person_credentials (
-      id TEXT PRIMARY KEY,
-      site_id TEXT NOT NULL REFERENCES sites(id),
-      dahua_user_id TEXT NOT NULL,
-      kind TEXT NOT NULL,
-      payload TEXT NOT NULL,
-      label TEXT,
-      valid_from INTEGER,
-      valid_until INTEGER,
-      max_uses INTEGER NOT NULL DEFAULT 0,
-      used_count INTEGER NOT NULL DEFAULT 0,
-      validation_mode TEXT NOT NULL DEFAULT 'local',
-      status TEXT NOT NULL DEFAULT 'active',
-      created_at INTEGER NOT NULL,
-      revoked_at INTEGER
-    )
-  `);
-  await db.run(sql`
-    CREATE UNIQUE INDEX IF NOT EXISTS person_credentials_payload_uq
-      ON person_credentials (site_id, kind, payload)
-  `);
-  await db.run(sql`
-    CREATE INDEX IF NOT EXISTS person_credentials_user_idx
-      ON person_credentials (site_id, dahua_user_id)
-  `);
-  // Backfill: los pases de visita ya existentes son credenciales QR (hoy cargadas en el CardNo
-  // del lector). El userId espeja `v_${passId.slice(-8)}` de residents.ts.
-  await db.run(sql`
-    INSERT OR IGNORE INTO person_credentials (
-      id, site_id, dahua_user_id, kind, payload, label,
-      valid_from, valid_until, max_uses, used_count, validation_mode, status, created_at
-    )
-    SELECT
-      'cred_vp_' || vp.id,
-      vp.site_id,
-      'v_' || substr(vp.id, -8),
-      'qr',
-      COALESCE(vp.dahua_card_no, vp.token),
-      vp.guest_name,
-      vp.valid_from,
-      vp.valid_until,
-      0,
-      0,
-      'local',
-      CASE WHEN vp.status = 'active' THEN 'active' ELSE 'revoked' END,
-      vp.created_at
-    FROM visit_passes vp
-    WHERE COALESCE(vp.dahua_card_no, vp.token) IS NOT NULL
-  `);
-  await db.run(sql`
-    CREATE TABLE IF NOT EXISTS credential_device_sync (
-      id TEXT PRIMARY KEY,
-      site_id TEXT NOT NULL REFERENCES sites(id),
-      dahua_user_id TEXT NOT NULL,
-      device_id TEXT NOT NULL REFERENCES dahua_devices(id),
-      status TEXT NOT NULL DEFAULT 'pending',
-      last_error TEXT,
-      last_synced_at INTEGER,
-      UNIQUE (dahua_user_id, device_id)
-    )
-  `);
 }
 
