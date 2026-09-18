@@ -361,7 +361,6 @@ export default function DahuaPeriodosPage() {
                                   value={parsed.start}
                                   onChange={(e) => updateSlot(dayIdx, slotIdx, e.target.value, parsed.end)}
                                   className="w-full bg-slate-50 dark:bg-[#0b0f17] border border-slate-300 dark:border-slate-700 rounded px-1 py-0.5 text-center text-[10px] text-slate-800 dark:text-slate-200 focus:outline-none focus:border-cyan-500"
-                                  placeholder="00:00:00"
                                 />
                                 <span>-</span>
                                 <input
@@ -369,7 +368,6 @@ export default function DahuaPeriodosPage() {
                                   value={parsed.end}
                                   onChange={(e) => updateSlot(dayIdx, slotIdx, parsed.start, e.target.value)}
                                   className="w-full bg-slate-50 dark:bg-[#0b0f17] border border-slate-300 dark:border-slate-700 rounded px-1 py-0.5 text-center text-[10px] text-slate-800 dark:text-slate-200 focus:outline-none focus:border-cyan-500"
-                                  placeholder="00:00:00"
                                 />
                               </div>
                             </div>

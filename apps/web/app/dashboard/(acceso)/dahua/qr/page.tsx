@@ -259,7 +259,6 @@ export default function DahuaQrPage() {
                       type="text"
                       value={testPayload}
                       onChange={(e) => setTestPayload(e.target.value)}
-                      placeholder="Ej: B2FC3764"
                       className="w-full bg-slate-50 dark:bg-[#0b0f17] border border-slate-300 dark:border-[#2b354c] rounded-lg px-3 py-2 text-sm text-slate-900 dark:text-white font-mono focus:outline-none focus:border-cyan-500 transition-colors"
                     />
                     <Key className="w-4 h-4 text-slate-400 absolute right-3 top-2.5" />

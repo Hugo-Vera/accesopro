@@ -1041,11 +1041,6 @@ export function EquipmentPanel() {
                     <input
                       type="text"
                       required
-                      placeholder={
-                        form.deviceType === "camera_ip"
-                          ? "Ej. Cámara LPR Entrada Principal"
-                          : "Ej. Lector Facial Entrada Principal"
-                      }
                       value={form.name}
                       onChange={(e) => setForm({ ...form, name: e.target.value })}
                       className="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#0b0f17] px-3.5 py-2 text-sm text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-600 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
@@ -1060,7 +1055,6 @@ export function EquipmentPanel() {
                     <input
                       type="text"
                       required
-                      placeholder="Ej. 192.168.33.200"
                       value={form.host}
                       onChange={(e) => handleCameraFieldChange({ host: e.target.value })}
                       className="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#0b0f17] px-3.5 py-2 text-sm text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-600 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono"
@@ -1077,7 +1071,6 @@ export function EquipmentPanel() {
                       required
                       min={1}
                       max={65535}
-                      placeholder="80"
                       value={form.port}
                       onChange={(e) => setForm({ ...form, port: e.target.value })}
                       className="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#0b0f17] px-3.5 py-2 text-sm text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-600 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono"
@@ -1105,7 +1098,6 @@ export function EquipmentPanel() {
                             type="number"
                             min={1}
                             max={65535}
-                            placeholder="554"
                             value={form.rtspPort}
                             onChange={(e) =>
                               setForm({
@@ -1136,7 +1128,6 @@ export function EquipmentPanel() {
                             type="number"
                             min={1}
                             max={65535}
-                            placeholder="37777"
                             value={form.pssPort}
                             onChange={(e) => setForm({ ...form, pssPort: e.target.value })}
                             className="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#0b0f17] px-2.5 py-1.5 text-xs font-mono text-slate-900 dark:text-white"
@@ -1154,7 +1145,6 @@ export function EquipmentPanel() {
                     <input
                       type="text"
                       required
-                      placeholder="admin"
                       value={form.username}
                       onChange={(e) => handleCameraFieldChange({ username: e.target.value })}
                       className="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#0b0f17] px-3.5 py-2 text-sm text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-600 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
@@ -1170,7 +1160,6 @@ export function EquipmentPanel() {
                       <input
                         type={showPassword ? "text" : "password"}
                         required={modalMode === "create"}
-                        placeholder={modalMode === "edit" ? "Sin cambios" : "••••••••"}
                         value={form.password}
                         onChange={(e) => handleCameraFieldChange({ password: e.target.value })}
                         className="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#0b0f17] px-3.5 py-2 text-sm text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-600 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 pr-10"
@@ -1183,6 +1172,9 @@ export function EquipmentPanel() {
                         {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                       </button>
                     </div>
+                    {modalMode === "edit" ? (
+                      <p className="mt-1 text-[11px] text-slate-500">Vacío conserva la clave actual.</p>
+                    ) : null}
                   </div>
 
                   {/* Modelo con botón de detección automática */}
@@ -1204,7 +1196,6 @@ export function EquipmentPanel() {
                     </div>
                     <input
                       type="text"
-                      placeholder="Ej. ASI-6214S-PW o IPC-HFW5241E"
                       value={form.model}
                       onChange={(e) => setForm({ ...form, model: e.target.value })}
                       className="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#0b0f17] px-3.5 py-2 text-sm text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-600 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono"
@@ -1218,7 +1209,6 @@ export function EquipmentPanel() {
                     </label>
                     <input
                       type="text"
-                      placeholder="Auto-rellenable o manual"
                       value={form.serialNumber}
                       onChange={(e) => setForm({ ...form, serialNumber: e.target.value })}
                       className="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#0b0f17] px-3.5 py-2 text-sm text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-600 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 font-mono text-xs"
@@ -1232,7 +1222,6 @@ export function EquipmentPanel() {
                     </label>
                     <input
                       type="text"
-                      placeholder="Ej. Barrera principal, lote 1"
                       value={form.location}
                       onChange={(e) => setForm({ ...form, location: e.target.value })}
                       className="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#0b0f17] px-3.5 py-2 text-sm text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-600 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
@@ -1457,11 +1446,6 @@ export function EquipmentPanel() {
                           onChange={(e) =>
                             setForm({ ...form, rtspUrl: e.target.value, customRtsp: true })
                           }
-                          placeholder={
-                            form.cameraBrand === "hikvision"
-                              ? "rtsp://admin:clave@192.168.1.64:554/Streaming/Channels/101"
-                              : "rtsp://admin:clave@192.168.33.200:554/cam/realmonitor?channel=1&subtype=0"
-                          }
                           className="w-full rounded-xl border border-purple-300 dark:border-purple-800 bg-white dark:bg-[#0b0f17] px-3 py-2 text-xs font-mono text-purple-950 dark:text-purple-200 focus:outline-none focus:ring-1 focus:ring-purple-500"
                         />
                       </div>
@@ -1490,7 +1474,6 @@ export function EquipmentPanel() {
                               </label>
                               <input
                                 type="text"
-                                placeholder="Ej. Barrera Entrada"
                                 value={form.actuatorName}
                                 onChange={(e) => setForm({ ...form, actuatorName: e.target.value })}
                                 className="w-full rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#0b0f17] px-2.5 py-1.5 text-xs"
@@ -1522,7 +1505,6 @@ export function EquipmentPanel() {
                         </label>
                         <input
                           type="text"
-                          placeholder="Ej. Puerta peatonal o Barrera"
                           value={form.actuatorName}
                           onChange={(e) => setForm({ ...form, actuatorName: e.target.value })}
                           className="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#0b0f17] px-3.5 py-2 text-sm text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-600 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"

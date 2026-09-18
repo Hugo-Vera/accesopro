@@ -251,7 +251,6 @@ export function DepartmentsPanel() {
                   required
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  placeholder="Ej: Personal General"
                   className="cfg-input w-full"
                 />
               </div>
@@ -266,7 +265,6 @@ export function DepartmentsPanel() {
                     required
                     value={dahuaDeptId}
                     onChange={(e) => setDahuaDeptId(e.target.value)}
-                    placeholder="Ej: 2"
                     className="cfg-input w-full font-mono"
                   />
                 </div>
@@ -296,7 +294,6 @@ export function DepartmentsPanel() {
                   rows={2}
                   value={description}
                   onChange={(e) => setDescription(e.target.value)}
-                  placeholder="Ej: Empleados con horario habitual de lunes a viernes."
                   className="cfg-input w-full resize-none"
                 />
               </div>

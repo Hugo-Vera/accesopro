@@ -77,7 +77,7 @@ Plano del predio = core (`/dashboard/plano`). Mapa OSM o Google (calles / satél
 
 Monorepo: `apps/web` (Next.js), `apps/api` (Hono), `apps/agent` (Dahua CGI). AccesoPro usa SQLite.
 
-Mapa detallado: `docs/ARCHITECTURE.md`. Estado por módulo: `docs/MODULES.md`. Base de datos: `docs/DATABASE.md`. Pendientes: `docs/PENDING.md`. Inventario + plan punta a punta: `docs/ROADMAP.md`. Ops IN/OUT: `docs/OPS_LANES.md`. Sitio físico RB4011 + NAT ASI: `docs/SITE_RB4011.md`. CGI/RTSP ASI: `docs/ASI_CGI.md`. Intercom: `docs/INTERCOM.md`. Smoke: `docs/E2E_SMOKE.md`.
+Radiografía de accesos (ramas own/fam/svc/v_, hold de visita, portería): **`docs/SISTEMA.md`**. Mapa del monorepo: `docs/ARCHITECTURE.md`. Estado por módulo: `docs/MODULES.md`. Base de datos: `docs/DATABASE.md`. Pendientes: `docs/PENDING.md`. Inventario + plan punta a punta: `docs/ROADMAP.md`. Ops IN/OUT: `docs/OPS_LANES.md`. Sitio físico RB4011 + NAT ASI: `docs/SITE_RB4011.md`. CGI/RTSP ASI: `docs/ASI_CGI.md`. Intercom: `docs/INTERCOM.md`. Smoke: `docs/E2E_SMOKE.md`.
 
 ## Convenciones
 
@@ -86,6 +86,7 @@ Mapa detallado: `docs/ARCHITECTURE.md`. Estado por módulo: `docs/MODULES.md`. B
 - Comentarios solo para trampas.
 - Prohibido el uso de emojis tanto en respuestas y explicaciones como en la interfaz de usuario y código fuente. Utilizar siempre iconografía vectorial profesional (SVG / Material icons / Lucide) con estética sobria y técnica.
 - **Regla de Creación, Configuración y Edición (Modales)**: Toda alta, edición o configuración de entidades (equipos, personas, tarjetas, huellas, actuadores, usuarios, propiedades, etc.) DEBE realizarse mediante un modal emergente centrado y limpio, NUNCA mediante formularios incrustados o planos inline que deformen la pantalla o desalineen las tablas/listas. La pantalla principal debe mantener un botón superior prominente «Nuevo / Agregar» y una tabla o grilla con botón de «Configurar / Editar» por fila. **Todo modal debe cerrarse con Escape** usando el hook `useEscapeKey` (`apps/web/hooks/useEscapeKey.ts`): `useEscapeKey(onClose, open)`.
+- **Sin placeholders en inputs**: el `label` nombra el campo. No usar `placeholder="Ej. …"`. Búsqueda: `aria-label` si no hay etiqueta visible. Pistola DNI: `useHidWedge`, no un campo HID a la vista.
 - **Soporte Dual de Tema (Claro / Oscuro)**: Todos los componentes, paneles, inputs (`.cfg-input`), tablas y modales deben ser 100% compatibles con modo claro y oscuro (`bg-white` / `dark:bg-slate-900`, `border-slate-200` / `dark:border-slate-700`, texto con alto contraste). NUNCA dejar inputs o bloques negros fijos en modo claro.
 - **Arquitectura de Agente Dahua Concurrente**: En `apps/agent`, la ejecución de comandos interactivos (`_commands_worker`) DEBE correr en un hilo independiente del poller de eventos (`_dahua_poller_worker`) y del heartbeat (`_heartbeat_worker`). Los equipos offline o con falla de autenticación (HTTP 401) deben entrar en enfriamiento (`backoff` de 40s) para no bloquear ni retrasar las pruebas de diagnóstico ni los comandos de apertura inmediata.
 

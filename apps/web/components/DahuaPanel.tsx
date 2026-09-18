@@ -124,10 +124,9 @@ export function DahuaPanel({ tenantId }: { tenantId: string }) {
         <Field
           label="Nombre del actuador"
           value={form.actuatorName}
-          placeholder="Puerta peatonal"
           onChange={(v) => setForm({ ...form, actuatorName: v })}
         />
-        <Field label="IP / host" value={form.host} placeholder="192.168.1.110" onChange={(v) => setForm({ ...form, host: v })} />
+        <Field label="IP / host" value={form.host} onChange={(v) => setForm({ ...form, host: v })} />
         <Field label="Puerto" value={form.port} onChange={(v) => setForm({ ...form, port: v })} />
         <Field label="Usuario" value={form.username} onChange={(v) => setForm({ ...form, username: v })} />
         <Field label="Clave" value={form.password} type="password" onChange={(v) => setForm({ ...form, password: v })} />
@@ -210,13 +209,11 @@ function Field({
   value,
   onChange,
   type = "text",
-  placeholder,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
   type?: string;
-  placeholder?: string;
 }) {
   return (
     <label className="text-sm">
@@ -225,7 +222,6 @@ function Field({
         className="mt-1 w-full rounded-lg border border-line bg-ink px-3 py-2 outline-none focus:border-accent"
         value={value}
         type={type}
-        placeholder={placeholder}
         onChange={(e) => onChange(e.target.value)}
       />
     </label>

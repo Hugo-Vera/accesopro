@@ -1,6 +1,6 @@
 # Pendientes AccesoPro
 
-Lista viva. Inventario: **`docs/ROADMAP.md`**. Portería (orden a seguir): **`docs/PLAN_PORTERIA.md`**.  
+Lista viva. Cómo está el sistema (ramas, hold, portería): **`docs/SISTEMA.md`**. Inventario: **`docs/ROADMAP.md`**. Portería (orden a seguir): **`docs/PLAN_PORTERIA.md`**.  
 Ops IN/OUT: **`docs/OPS_LANES.md`**. Sitio LAN (MikroTik + ASI publicado): **`docs/SITE_RB4011.md`**.
 
 ## Sitio RB4011 (retomar)

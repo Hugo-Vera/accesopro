@@ -1,264 +1,319 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Camera, Keyboard, ScanLine } from "lucide-react";
+import { ChevronDown, ScanLine } from "lucide-react";
 import { parseDniScan } from "@/lib/parseDni";
-
-type Mode = "lector" | "webcam";
+import { getCameraStream, mediaDevicesAvailable } from "@/lib/camera";
+import { createDniLiveDecoder, type ScanBox, type ScanHint, type ScanHit } from "@/lib/dniLiveScan";
+import { useHidWedge } from "@/hooks/useHidWedge";
 
 type Props = {
   onScan: (raw: string) => void;
   active?: boolean;
 };
 
-type ZxingHandle = {
-  reset: () => void;
-  decode: (el: HTMLVideoElement) => { getText: () => string };
-};
+const QR_GUIDE: ScanBox = { x: 0.29, y: 0.14, w: 0.42, h: 0.46 };
+const PDF_GUIDE: ScanBox = { x: 0.08, y: 0.66, w: 0.84, h: 0.22 };
+
+function videoToDisplay(box: ScanBox, vw: number, vh: number, elW: number, elH: number) {
+  const scale = Math.max(elW / vw, elH / vh);
+  const dw = vw * scale;
+  const dh = vh * scale;
+  const ox = (elW - dw) / 2;
+  const oy = (elH - dh) / 2;
+  return {
+    x: ox + box.x * vw * scale,
+    y: oy + box.y * vh * scale,
+    w: box.w * vw * scale,
+    h: box.h * vh * scale,
+  };
+}
+
+function drawCorners(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  color: string,
+  width: number,
+) {
+  const L = Math.max(10, Math.min(w, h) * 0.22);
+  ctx.strokeStyle = color;
+  ctx.lineWidth = width;
+  ctx.lineCap = "square";
+  ctx.beginPath();
+  ctx.moveTo(x, y + L);
+  ctx.lineTo(x, y);
+  ctx.lineTo(x + L, y);
+  ctx.moveTo(x + w - L, y);
+  ctx.lineTo(x + w, y);
+  ctx.lineTo(x + w, y + L);
+  ctx.moveTo(x + w, y + h - L);
+  ctx.lineTo(x + w, y + h);
+  ctx.lineTo(x + w - L, y + h);
+  ctx.moveTo(x + L, y + h);
+  ctx.lineTo(x, y + h);
+  ctx.lineTo(x, y + h - L);
+  ctx.stroke();
+}
 
 export function DniScanPanel({ onScan, active = true }: Props) {
-  const [mode, setMode] = useState<Mode>("lector");
-  const [raw, setRaw] = useState("");
+  const [open, setOpen] = useState(false);
   const [hint, setHint] = useState<string | null>(null);
   const [camError, setCamError] = useState<string | null>(null);
-  const [camLive, setCamLive] = useState(false);
-  const [decoding, setDecoding] = useState(false);
+  const [status, setStatus] = useState("Buscando QR o PDF417…");
+  const [locked, setLocked] = useState(false);
 
-  const hidRef = useRef<HTMLInputElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
-  const readerRef = useRef<ZxingHandle | null>(null);
-  const flushTimer = useRef<number | null>(null);
+  const overlayRef = useRef<HTMLCanvasElement>(null);
+  const wrapRef = useRef<HTMLDivElement>(null);
   const onScanRef = useRef(onScan);
   onScanRef.current = onScan;
+  const liveHintsRef = useRef<ScanHint[]>([]);
+  const liveHitRef = useRef<ScanHit | null>(null);
+  const statusRef = useRef(status);
+  statusRef.current = status;
 
   const applyIfParsed = useCallback((text: string) => {
     const parsed = parseDniScan(text);
     if (!parsed) return false;
     onScanRef.current(text);
-    setRaw("");
     setHint(`Leído: ${parsed.lastName} ${parsed.firstName} · DNI ${parsed.dni}`.trim());
     return true;
   }, []);
 
+  useHidWedge(applyIfParsed, active);
+
   function stopCamera() {
-    readerRef.current?.reset();
-    readerRef.current = null;
     const video = videoRef.current;
     const stream = video?.srcObject as MediaStream | null;
     stream?.getTracks().forEach((t) => t.stop());
     if (video) video.srcObject = null;
-    setCamLive(false);
-    setDecoding(false);
+    liveHintsRef.current = [];
+    liveHitRef.current = null;
+    setLocked(false);
   }
 
   useEffect(() => {
-    if (!active) stopCamera();
-    return () => stopCamera();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active]);
-
-  useEffect(() => {
-    if (mode === "lector") {
-      stopCamera();
-      const t = window.setTimeout(() => hidRef.current?.focus(), 50);
-      return () => window.clearTimeout(t);
+    if (!open || !active) return;
+    if (!mediaDevicesAvailable()) {
+      setCamError("La cámara no está disponible. Pasá el DNI por el lector USB o usá HTTPS/localhost.");
+      return;
     }
-    return undefined;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode]);
 
-  useEffect(() => {
-    if (mode !== "webcam" || !active) return;
     let cancelled = false;
+    let raf = 0;
+    let decoding = false;
+    let lastDecode = 0;
+    const decoder = createDniLiveDecoder();
 
     async function start() {
       setCamError(null);
       setHint(null);
+      setLocked(false);
+      setStatus("Buscando QR (frente) o PDF417 (dorso)…");
       try {
-        const zxing = await import("@zxing/library");
-        if (cancelled) return;
-        const hints = new Map();
-        hints.set(zxing.DecodeHintType.POSSIBLE_FORMATS, [
-          zxing.BarcodeFormat.PDF_417,
-          zxing.BarcodeFormat.QR_CODE,
-        ]);
-        hints.set(zxing.DecodeHintType.TRY_HARDER, true);
-        const reader = new zxing.BrowserMultiFormatReader(hints, 250);
-        readerRef.current = reader;
-        const video = videoRef.current;
-        if (!video) return;
-        await reader.decodeFromConstraints(
-          {
-            video: {
-              facingMode: { ideal: "environment" },
-              width: { ideal: 1280 },
-              height: { ideal: 720 },
-            },
-            audio: false,
+        const stream = await getCameraStream({
+          video: {
+            facingMode: { ideal: "environment" },
+            width: { ideal: 1920 },
+            height: { ideal: 1080 },
+            frameRate: { ideal: 30 },
           },
-          video,
-          (result) => {
-            if (!result || cancelled) return;
-            if (applyIfParsed(result.getText())) {
-              stopCamera();
-              setMode("lector");
-            }
-          }
-        );
-        if (!cancelled) setCamLive(true);
+          audio: false,
+        });
+        if (cancelled) {
+          stream.getTracks().forEach((t) => t.stop());
+          return;
+        }
+        const video = videoRef.current;
+        if (!video) {
+          stream.getTracks().forEach((t) => t.stop());
+          return;
+        }
+        video.srcObject = stream;
+        await video.play().catch(() => null);
       } catch (err) {
         if (cancelled) return;
-        setCamError(err instanceof Error ? err.message : "No se pudo abrir la cámara");
-        setCamLive(false);
+        const msg = err instanceof Error ? err.message : "No se pudo abrir la cámara";
+        setCamError(
+          msg.includes("getUserMedia") || msg.includes("undefined")
+            ? "La cámara no está disponible. Pasá el DNI por el lector USB."
+            : msg,
+        );
+        return;
       }
+
+      const draw = (now: number) => {
+        if (cancelled) return;
+        const video = videoRef.current;
+        const canvas = overlayRef.current;
+        const wrap = wrapRef.current;
+        if (video && canvas && wrap && video.videoWidth) {
+          const dpr = window.devicePixelRatio || 1;
+          const elW = wrap.clientWidth;
+          const elH = wrap.clientHeight;
+          const cssW = Math.max(1, elW);
+          const cssH = Math.max(1, elH);
+          if (canvas.width !== Math.round(cssW * dpr) || canvas.height !== Math.round(cssH * dpr)) {
+            canvas.width = Math.round(cssW * dpr);
+            canvas.height = Math.round(cssH * dpr);
+          }
+          const ctx = canvas.getContext("2d");
+          if (ctx) {
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            ctx.clearRect(0, 0, cssW, cssH);
+            const vw = video.videoWidth;
+            const vh = video.videoHeight;
+            const hit = liveHitRef.current;
+            const hints = liveHintsRef.current;
+            const map = (box: ScanBox) => videoToDisplay(box, vw, vh, cssW, cssH);
+
+            ctx.fillStyle = "rgba(2, 6, 23, 0.38)";
+            ctx.fillRect(0, 0, cssW, cssH);
+            const card = map({ x: 0.06, y: 0.08, w: 0.88, h: 0.84 });
+            ctx.save();
+            ctx.beginPath();
+            ctx.rect(card.x, card.y, card.w, card.h);
+            ctx.clip();
+            ctx.clearRect(card.x, card.y, card.w, card.h);
+            ctx.restore();
+            drawCorners(ctx, card.x, card.y, card.w, card.h, hit ? "#34d399" : "#93c5fd", 2.5);
+
+            const qrBox = hints.find((h) => h.kind === "qr") || (!hit ? QR_GUIDE : null);
+            const pdfBox = hints.find((h) => h.kind === "pdf417") || (!hit ? PDF_GUIDE : null);
+            if (qrBox && !hit) {
+              const q = map(qrBox);
+              ctx.strokeStyle = hints.some((h) => h.kind === "qr") ? "#38bdf8" : "rgba(148,163,184,0.7)";
+              ctx.setLineDash(hints.some((h) => h.kind === "qr") ? [] : [5, 4]);
+              ctx.lineWidth = 1.5;
+              ctx.strokeRect(q.x, q.y, q.w, q.h);
+              ctx.setLineDash([]);
+              ctx.font = "600 10px ui-sans-serif, system-ui";
+              ctx.fillStyle = "#e2e8f0";
+              ctx.fillText("QR frente · DNI nuevo", q.x + 6, q.y + 14);
+            }
+            if (pdfBox && !hit) {
+              const p = map(pdfBox);
+              ctx.strokeStyle = hints.some((h) => h.kind === "pdf417") ? "#fbbf24" : "rgba(148,163,184,0.7)";
+              ctx.setLineDash(hints.some((h) => h.kind === "pdf417") ? [] : [5, 4]);
+              ctx.lineWidth = 1.5;
+              ctx.strokeRect(p.x, p.y, p.w, p.h);
+              ctx.setLineDash([]);
+              ctx.font = "600 10px ui-sans-serif, system-ui";
+              ctx.fillStyle = "#e2e8f0";
+              ctx.fillText("PDF417 dorso · tarjeta vieja o nueva", p.x + 6, p.y + 14);
+            }
+
+            if (hit?.box) {
+              const b = map(hit.box);
+              ctx.strokeStyle = "#34d399";
+              ctx.lineWidth = 3;
+              ctx.strokeRect(b.x, b.y, b.w, b.h);
+            } else {
+              const lineY = card.y + ((now / 18) % card.h);
+              const grad = ctx.createLinearGradient(0, lineY - 12, 0, lineY + 12);
+              grad.addColorStop(0, "rgba(56,189,248,0)");
+              grad.addColorStop(0.5, "rgba(56,189,248,0.85)");
+              grad.addColorStop(1, "rgba(56,189,248,0)");
+              ctx.fillStyle = grad;
+              ctx.fillRect(card.x, lineY - 12, card.w, 24);
+            }
+          }
+        }
+
+        if (!decoding && now - lastDecode > 110 && video && video.readyState >= 2 && !liveHitRef.current) {
+          decoding = true;
+          lastDecode = now;
+          void decoder.decodeFrame(video).then((frame) => {
+            decoding = false;
+            if (cancelled || liveHitRef.current) return;
+            liveHintsRef.current = frame.hints;
+            if (!frame.hit) {
+              if (frame.hints.length && statusRef.current.startsWith("Buscando")) {
+                setStatus(
+                  frame.hints.some((h) => h.kind === "pdf417")
+                    ? "Código de barras a la vista. Acercá el dorso…"
+                    : "QR a la vista. Mantené el frente estable…",
+                );
+              }
+              return;
+            }
+            if (applyIfParsed(frame.hit.text)) {
+              liveHitRef.current = frame.hit;
+              setLocked(true);
+              setStatus(frame.hit.format === "qr" ? "QR del frente leído" : "PDF417 del dorso leído");
+              window.setTimeout(() => {
+                if (cancelled) return;
+                stopCamera();
+                setOpen(false);
+              }, 700);
+              return;
+            }
+            setStatus("Código visto, no es el DNI. Probá el dorso (PDF417) o el QR de datos del frente.");
+          });
+        }
+
+        raf = window.requestAnimationFrame(draw);
+      };
+      raf = window.requestAnimationFrame(draw);
     }
 
     void start();
     return () => {
       cancelled = true;
+      window.cancelAnimationFrame(raf);
       stopCamera();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mode, active, applyIfParsed]);
-
-  function onHidChange(value: string) {
-    setRaw(value);
-    setHint(null);
-    if (flushTimer.current) window.clearTimeout(flushTimer.current);
-    flushTimer.current = window.setTimeout(() => {
-      applyIfParsed(value);
-    }, 280);
-  }
-
-  function onHidKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
-    if (e.key !== "Enter") return;
-    e.preventDefault();
-    const text = e.currentTarget.value.trim();
-    if (!text) return;
-    if (!applyIfParsed(text)) {
-      setHint("No se reconoció el formato Renaper. Acercá de nuevo el DNI al lector.");
-    }
-  }
-
-  function onHidPaste(e: React.ClipboardEvent<HTMLInputElement>) {
-    const text = e.clipboardData.getData("text");
-    if (!text) return;
-    e.preventDefault();
-    setRaw(text);
-    if (!applyIfParsed(text)) {
-      setHint("No se reconoció el formato Renaper. Acercá de nuevo el DNI al lector.");
-    }
-  }
-
-  async function decodeSnapshot() {
-    const video = videoRef.current;
-    const reader = readerRef.current;
-    if (!video || !video.videoWidth || !reader) return;
-    setDecoding(true);
-    setCamError(null);
-    try {
-      const result = reader.decode(video);
-      const text = result.getText();
-      if (applyIfParsed(text)) {
-        stopCamera();
-        setMode("lector");
-      } else {
-        setHint("Hay un código, pero no coincide con el PDF417/QR del DNI.");
-      }
-    } catch {
-      setHint("No se vio un PDF417 o QR nítido. Acercá el dorso del DNI y repetí.");
-    } finally {
-      setDecoding(false);
-    }
-  }
+  }, [open, active, applyIfParsed]);
 
   return (
-    <div className="rounded-xl border border-blue-200 bg-blue-50/50 p-3 dark:border-blue-900/60 dark:bg-blue-950/20">
-      <div className="mb-2 flex flex-wrap items-center gap-2">
-        <ScanLine className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" />
-        <span className="text-[11px] font-bold uppercase tracking-wider text-blue-900 dark:text-blue-300">
-          Escanear DNI
+    <div className="rounded-xl border border-slate-200 bg-slate-50/60 dark:border-slate-700 dark:bg-slate-900/40">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-2 px-3 py-1.5 text-left"
+      >
+        <ScanLine className="h-3.5 w-3.5 text-slate-500" />
+        <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-300">
+          Escanear DNI con cámara (opcional)
         </span>
-        <div className="ml-auto flex rounded-lg border border-blue-200 bg-white p-0.5 dark:border-blue-800 dark:bg-slate-950">
-          <button
-            type="button"
-            onClick={() => setMode("lector")}
-            className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-semibold ${
-              mode === "lector"
-                ? "bg-blue-600 text-white"
-                : "text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800"
-            }`}
-          >
-            <Keyboard className="h-3 w-3" />
-            Lector DNI
-          </button>
-          <button
-            type="button"
-            onClick={() => setMode("webcam")}
-            className={`inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] font-semibold ${
-              mode === "webcam"
-                ? "bg-blue-600 text-white"
-                : "text-slate-600 hover:bg-slate-50 dark:text-slate-300 dark:hover:bg-slate-800"
-            }`}
-          >
-            <Camera className="h-3 w-3" />
-            Cámara web
-          </button>
-        </div>
-      </div>
+        <ChevronDown className={`ml-auto h-4 w-4 text-slate-400 transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
 
-      {mode === "lector" ? (
-        <div>
-          <label className="mb-1 block text-[11px] font-bold text-blue-900 dark:text-blue-300">
-            Pistola USB o lector de DNI (HID)
-          </label>
-          <input
-            ref={hidRef}
-            type="text"
-            autoComplete="off"
-            spellCheck={false}
-            placeholder="Apoyá el cursor acá y pasá el DNI por el lector…"
-            value={raw}
-            onChange={(e) => onHidChange(e.target.value)}
-            onKeyDown={onHidKeyDown}
-            onPaste={onHidPaste}
-            className="w-full rounded-lg border border-blue-300 bg-white px-3 py-1.5 text-xs text-slate-900 dark:border-blue-800 dark:bg-slate-950 dark:text-white"
-          />
-          <p className="mt-1 text-[10px] text-blue-700 dark:text-blue-400">
-            El lector se comporta como teclado: deja este campo enfocado y pasa el documento
-            (PDF417 del dorso o QR). También sirve pegar la cadena.
-          </p>
-        </div>
-      ) : (
-        <div>
-          <video
-            ref={videoRef}
-            className="mb-2 h-40 w-full rounded-lg bg-slate-900 object-cover"
-            muted
-            playsInline
-            autoPlay
-          />
-          <div className="flex flex-wrap items-center gap-2">
-            <button
-              type="button"
-              onClick={() => void decodeSnapshot()}
-              disabled={!camLive || decoding}
-              className="inline-flex items-center gap-1 rounded-lg bg-blue-600 px-2.5 py-1.5 text-[11px] font-bold text-white disabled:opacity-50"
+      {open ? (
+        <div className="border-t border-slate-200 px-3 py-3 dark:border-slate-700">
+          <div
+            ref={wrapRef}
+            className="relative aspect-[16/10] w-full overflow-hidden rounded-lg bg-slate-950"
+          >
+            <video
+              ref={videoRef}
+              className="absolute inset-0 h-full w-full object-cover"
+              muted
+              playsInline
+              autoPlay
+            />
+            <canvas ref={overlayRef} className="pointer-events-none absolute inset-0 h-full w-full" />
+            <div
+              className={`absolute inset-x-0 bottom-0 px-2.5 py-1.5 text-[10px] font-semibold ${
+                locked
+                  ? "bg-emerald-950/70 text-emerald-200"
+                  : "bg-slate-950/65 text-slate-200"
+              }`}
             >
-              <Camera className="h-3.5 w-3.5" />
-              {decoding ? "Leyendo…" : "Leer recuadro"}
-            </button>
-            <p className="text-[10px] text-blue-700 dark:text-blue-400">
-              Enfocá el PDF417 del dorso (DNI tarjeta) o el QR del frente, con buena luz y de cerca.
-            </p>
+              {status}
+            </div>
           </div>
-          {camError ? <p className="mt-1 text-[11px] text-rose-600">{camError}</p> : null}
+          {camError ? <p className="mt-2 text-[11px] text-rose-600">{camError}</p> : null}
         </div>
-      )}
+      ) : null}
 
       {hint ? (
         <p
-          className={`mt-2 text-[11px] font-semibold ${
+          className={`px-3 pb-2 text-[11px] font-semibold ${
             hint.startsWith("Leído")
               ? "text-emerald-700 dark:text-emerald-400"
               : "text-amber-800 dark:text-amber-300"

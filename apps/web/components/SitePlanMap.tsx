@@ -877,7 +877,7 @@ export function SitePlanMap() {
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Buscar barrio, calle o ciudad"
+            aria-label="Buscar barrio, calle o ciudad"
             className="cfg-input w-full rounded-lg border border-slate-200 bg-white py-1.5 pl-8 pr-2 text-xs text-slate-800 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100"
           />
           <button type="submit" className="ops-plan-tool" disabled={searching}>

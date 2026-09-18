@@ -8,6 +8,7 @@ import { useToast } from "@/components/Toast";
 import { useTheme } from "@/components/ThemeProvider";
 import { isAsiCardNo, normalizeAsiCardNo, randomAsiCardNo } from "@accesopro/catalog";
 import { useEscapeKey } from "@/hooks/useEscapeKey";
+import { getCameraStream } from "@/lib/camera";
 import { DahuaDateTimePicker } from "@/components/DahuaDateTimePicker";
 import {
   CreditCard,
@@ -293,7 +294,7 @@ function CreatePersonModal({
       if (streamRef.current) {
         stopWebcam();
       }
-      const stream = await navigator.mediaDevices.getUserMedia({
+      const stream = await getCameraStream({
         video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" },
         audio: false,
       });
@@ -518,7 +519,6 @@ function CreatePersonModal({
                     required
                     value={name}
                     onChange={(e) => setName(e.target.value)}
-                    placeholder="Ej. Martín Rodríguez"
                     className="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#0b0f17] px-3.5 py-2 text-sm text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-600 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                   />
                 </div>
@@ -532,7 +532,6 @@ function CreatePersonModal({
                     required
                     value={userId}
                     onChange={(e) => setUserId(e.target.value)}
-                    placeholder="Ej. 34567890"
                     className="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#0b0f17] px-3.5 py-2 text-sm font-mono text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-600 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                   />
                   <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">Identificador en el lector (UserID). El QR se emite aparte, en hexadecimal.</p>
@@ -546,7 +545,6 @@ function CreatePersonModal({
                     type="text"
                     value={lotNumber}
                     onChange={(e) => setLotNumber(e.target.value)}
-                    placeholder="Ej. Lote 14 - Manzana 2"
                     className="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#0b0f17] px-3.5 py-2 text-sm text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-600 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                   />
                 </div>
@@ -589,7 +587,6 @@ function CreatePersonModal({
                   maxLength={6}
                   value={pinPassword}
                   onChange={(e) => setPinPassword(e.target.value)}
-                  placeholder="Ej. 1234"
                   className="w-full max-w-xs rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#0b0f17] px-3.5 py-2 text-sm font-mono text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-600 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                 />
               </div>
@@ -982,7 +979,7 @@ function EditPersonModal({
       if (streamRef.current) {
         stopWebcam();
       }
-      const stream = await navigator.mediaDevices.getUserMedia({
+      const stream = await getCameraStream({
         video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" },
         audio: false,
       });
@@ -1454,7 +1451,6 @@ function EditPersonModal({
                     type="text"
                     value={lotNumber}
                     onChange={(e) => setLotNumber(e.target.value)}
-                    placeholder="Ej. Lote 14"
                     className="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#0b0f17] px-3.5 py-2 text-sm text-slate-900 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                   />
                 </div>
@@ -1916,9 +1912,9 @@ function EditPersonModal({
                       maxLength={6}
                       value={pinPassword}
                       onChange={(e) => setPinPassword(e.target.value)}
-                      placeholder="Dejar en blanco para conservar contraseña existente"
                       className="w-full max-w-sm rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#0b0f17] px-3.5 py-2 text-sm font-mono text-slate-900 dark:text-white focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                     />
+                    <p className="text-[11px] text-slate-500">Vacío conserva el PIN actual.</p>
                   </div>
                 )}
               </div>
@@ -2019,7 +2015,6 @@ function EditPersonModal({
                     type="text"
                     value={newCardInput}
                     onChange={(e) => setNewCardInput(e.target.value)}
-                    placeholder="Ej: B2FC3764"
                     className="flex-1 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#0b0f17] px-3.5 py-2 text-sm font-mono text-slate-900 dark:text-white uppercase focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
                   />
                   <button
@@ -2062,7 +2057,6 @@ function EditPersonModal({
                   type="text"
                   value={newQrInput}
                   onChange={(e) => setNewQrInput(e.target.value)}
-                  placeholder="Vacío = se genera hexadecimal"
                   className="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-[#0b0f17] px-3.5 py-2 text-sm font-mono text-slate-900 dark:text-white focus:border-cyan-500 focus:outline-none focus:ring-1 focus:ring-cyan-500"
                 />
                 <p className="text-[11px] text-slate-500 dark:text-slate-400">
@@ -2415,10 +2409,10 @@ export function PersonsPanel({ initialSearch = "" }: { initialSearch?: string })
           <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
           <input
             type="text"
-            placeholder="Buscar por nombre, DNI, lote o tarjeta…"
             value={searchFilter}
             onChange={(e) => setSearchFilter(e.target.value)}
-            className="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 pl-10 pr-4 py-2 text-xs text-slate-900 dark:text-slate-100 placeholder:text-slate-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
+            aria-label="Buscar por nombre, DNI, lote o tarjeta"
+            className="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-950 pl-10 pr-4 py-2 text-xs text-slate-900 dark:text-slate-100 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500"
           />
           {searchFilter && (
             <button

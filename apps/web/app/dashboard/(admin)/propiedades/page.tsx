@@ -279,7 +279,6 @@ export default function PropiedadesPage() {
                   <input
                     type="text"
                     required
-                    placeholder="Ej: 14B"
                     value={form.lotNumber}
                     onChange={(e) => setForm({ ...form, lotNumber: e.target.value })}
                     className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800/80 dark:text-white"
@@ -292,7 +291,6 @@ export default function PropiedadesPage() {
                   <input
                     type="text"
                     required
-                    placeholder="Ej: Familia Gomez"
                     value={form.label}
                     onChange={(e) => setForm({ ...form, label: e.target.value })}
                     className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800/80 dark:text-white"
@@ -306,7 +304,6 @@ export default function PropiedadesPage() {
                 </label>
                 <input
                   type="text"
-                  placeholder="Ej: Calle Los Alamos 230"
                   value={form.address}
                   onChange={(e) => setForm({ ...form, address: e.target.value })}
                   className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800/80 dark:text-white"
@@ -320,7 +317,6 @@ export default function PropiedadesPage() {
                   </label>
                   <input
                     type="text"
-                    placeholder="-34.4521"
                     value={form.mapLat}
                     onChange={(e) => setForm({ ...form, mapLat: e.target.value })}
                     className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800/80 dark:text-white"
@@ -332,7 +328,6 @@ export default function PropiedadesPage() {
                   </label>
                   <input
                     type="text"
-                    placeholder="-58.6210"
                     value={form.mapLng}
                     onChange={(e) => setForm({ ...form, mapLng: e.target.value })}
                     className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800/80 dark:text-white"
@@ -413,7 +408,6 @@ export default function PropiedadesPage() {
                   </label>
                   <input
                     type="text"
-                    placeholder="Juan Perez"
                     value={ownerForm.name}
                     onChange={(e) => setOwnerForm({ ...ownerForm, name: e.target.value })}
                     className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800/80 dark:text-white"
@@ -425,7 +419,6 @@ export default function PropiedadesPage() {
                   </label>
                   <input
                     type="text"
-                    placeholder="35849201"
                     value={ownerForm.dni}
                     onChange={(e) => setOwnerForm({ ...ownerForm, dni: e.target.value })}
                     className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800/80 dark:text-white"
@@ -440,7 +433,6 @@ export default function PropiedadesPage() {
                 <input
                   type="email"
                   required
-                  placeholder="vecino@correo.com"
                   value={ownerForm.email}
                   onChange={(e) => setOwnerForm({ ...ownerForm, email: e.target.value })}
                   className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800/80 dark:text-white"
@@ -453,7 +445,6 @@ export default function PropiedadesPage() {
                 <input
                   type="tel"
                   required
-                  placeholder="11 4567-8901"
                   value={ownerForm.whatsapp}
                   onChange={(e) => setOwnerForm({ ...ownerForm, whatsapp: e.target.value })}
                   className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800/80 dark:text-white"

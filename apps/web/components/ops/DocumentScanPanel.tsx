@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Camera, Check, FileText, RotateCcw, RotateCw, Upload, X } from "lucide-react";
 import { api, apiUrl, withTenant } from "@/lib/api";
 import { detectDocBox, type DocBox } from "@/lib/detectDocBox";
+import { getCameraStream } from "@/lib/camera";
 
 export type AcceptedDoc = {
   base64: string | null;
@@ -164,7 +165,7 @@ export function DocumentScanPanel({
     onOverlayChange(true);
     try {
       stopCam();
-      const stream = await navigator.mediaDevices.getUserMedia({
+      const stream = await getCameraStream({
         video: {
           facingMode: { ideal: "environment" },
           width: { ideal: 1280 },

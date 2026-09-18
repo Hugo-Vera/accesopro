@@ -399,10 +399,10 @@ export default function FichadasPage() {
               <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
               <input
                 type="text"
-                placeholder="Buscar persona, DNI o terminal..."
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                className="w-full rounded-xl border border-slate-300 bg-white py-2 pl-9 pr-3 text-xs text-slate-900 shadow-sm placeholder:text-slate-400 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+                aria-label="Buscar persona, DNI o terminal"
+                className="w-full rounded-xl border border-slate-300 bg-white py-2 pl-9 pr-3 text-xs text-slate-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
               />
             </div>
 
@@ -600,7 +600,6 @@ export default function FichadasPage() {
                   <input
                     type="text"
                     required
-                    placeholder="Ej. Juan Pérez (Seguridad)"
                     value={manualForm.personName}
                     onChange={(e) => setManualForm({ ...manualForm, personName: e.target.value })}
                     className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs text-slate-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
@@ -614,7 +613,6 @@ export default function FichadasPage() {
                     </label>
                     <input
                       type="text"
-                      placeholder="Ej. 34567890"
                       value={manualForm.personId}
                       onChange={(e) => setManualForm({ ...manualForm, personId: e.target.value })}
                       className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs text-slate-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"
@@ -674,7 +672,6 @@ export default function FichadasPage() {
                   </label>
                   <textarea
                     rows={2}
-                    placeholder="Ej. Olvido de tarjeta física, corte de energía o ingreso especial..."
                     value={manualForm.notes}
                     onChange={(e) => setManualForm({ ...manualForm, notes: e.target.value })}
                     className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs text-slate-900 shadow-sm focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100"

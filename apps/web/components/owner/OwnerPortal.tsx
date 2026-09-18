@@ -548,7 +548,6 @@ export function OwnerPortal() {
                       type="text"
                       name="dni"
                       defaultValue={profile?.dni || ""}
-                      placeholder="Ej: 35123456"
                       className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-blue-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                     />
                   </div>
@@ -561,7 +560,6 @@ export function OwnerPortal() {
                       type="tel"
                       name="phone"
                       defaultValue={profile?.phone || ""}
-                      placeholder="Ej: +54 9 11 5555-1234"
                       className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-blue-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                     />
                   </div>
@@ -574,7 +572,6 @@ export function OwnerPortal() {
                       type="text"
                       name="emergencyName"
                       defaultValue={profile?.emergencyName || ""}
-                      placeholder="Nombre del contacto"
                       className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-blue-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                     />
                   </div>
@@ -587,7 +584,6 @@ export function OwnerPortal() {
                       type="tel"
                       name="emergencyPhone"
                       defaultValue={profile?.emergencyPhone || ""}
-                      placeholder="Teléfono de emergencia"
                       className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-blue-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                     />
                   </div>
@@ -1101,7 +1097,6 @@ export function OwnerPortal() {
                   type="text"
                   name="name"
                   required
-                  placeholder="Ej: Lucía Gusman"
                   className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-blue-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                 />
               </div>
@@ -1130,7 +1125,6 @@ export function OwnerPortal() {
                   <input
                     type="text"
                     name="dni"
-                    placeholder="Ej: 42123456"
                     className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-blue-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                   />
                 </div>
@@ -1143,7 +1137,6 @@ export function OwnerPortal() {
                 <input
                   type="tel"
                   name="phone"
-                  placeholder="Ej: +54 9 11 4444-5555"
                   className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-blue-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                 />
               </div>
@@ -1263,7 +1256,6 @@ export function OwnerPortal() {
                   type="text"
                   name="name"
                   required
-                  placeholder="Ej: Rosa Benítez"
                   className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-blue-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                 />
               </div>
@@ -1293,7 +1285,6 @@ export function OwnerPortal() {
                   <input
                     type="text"
                     name="dni"
-                    placeholder="Ej: 28123456"
                     className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-blue-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                   />
                 </div>
@@ -1306,7 +1297,6 @@ export function OwnerPortal() {
                 <input
                   type="text"
                   name="patente"
-                  placeholder="Ej: AF123ZZ"
                   className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-mono text-slate-900 uppercase focus:border-blue-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                 />
               </div>
@@ -1491,7 +1481,6 @@ export function OwnerPortal() {
                   type="text"
                   name="guestName"
                   required
-                  placeholder="Ej: Marcelo Gallardo"
                   className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-blue-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                 />
               </div>
@@ -1504,7 +1493,6 @@ export function OwnerPortal() {
                     type="text"
                     name="guestDni"
                     required
-                    placeholder="Ej: 30123456"
                     className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-blue-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                   />
                 </div>
@@ -1545,7 +1533,6 @@ export function OwnerPortal() {
                 <input
                   type="text"
                   name="patente"
-                  placeholder="Ej: AF123ZZ"
                   className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-mono uppercase dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                 />
               </div>
@@ -1574,25 +1561,40 @@ export function OwnerPortal() {
                 24 horas de validez
               </label>
               <div className="grid grid-cols-3 gap-2">
-                <input name="insuranceCompany" placeholder="Compañía (opcional)" className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-[11px] dark:border-slate-700 dark:bg-slate-800" />
-                <input name="policyNumber" placeholder="Póliza" className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-[11px] dark:border-slate-700 dark:bg-slate-800" />
-                <input type="date" name="insuranceValidUntil" className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-[11px] dark:border-slate-700 dark:bg-slate-800" />
+                <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300">
+                  Compañía
+                  <input name="insuranceCompany" className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-[11px] font-normal dark:border-slate-700 dark:bg-slate-800" />
+                </label>
+                <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300">
+                  Póliza
+                  <input name="policyNumber" className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-[11px] font-normal dark:border-slate-700 dark:bg-slate-800" />
+                </label>
+                <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300">
+                  Vence
+                  <input type="date" name="insuranceValidUntil" className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-[11px] font-normal dark:border-slate-700 dark:bg-slate-800" />
+                </label>
               </div>
               <div>
                 <p className="text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Acompañantes (mismo QR)</p>
+                <div className="mb-1 grid grid-cols-2 gap-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                  <span>Nombre</span>
+                  <span>DNI</span>
+                </div>
                 <div className="grid grid-cols-2 gap-2">
-                  <input name="companionName" placeholder="Nombre" className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs dark:border-slate-700 dark:bg-slate-800" />
-                  <input name="companionDni" placeholder="DNI" className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs dark:border-slate-700 dark:bg-slate-800" />
-                  <input name="companionName" placeholder="Nombre" className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs dark:border-slate-700 dark:bg-slate-800" />
-                  <input name="companionDni" placeholder="DNI" className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs dark:border-slate-700 dark:bg-slate-800" />
+                  <input name="companionName" aria-label="Nombre acompañante 1" className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs dark:border-slate-700 dark:bg-slate-800" />
+                  <input name="companionDni" aria-label="DNI acompañante 1" className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs dark:border-slate-700 dark:bg-slate-800" />
+                  <input name="companionName" aria-label="Nombre acompañante 2" className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs dark:border-slate-700 dark:bg-slate-800" />
+                  <input name="companionDni" aria-label="DNI acompañante 2" className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs dark:border-slate-700 dark:bg-slate-800" />
                 </div>
               </div>
-              <textarea
-                name="notes"
-                rows={2}
-                placeholder="Notas para portería (opcional)"
-                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-800"
-              />
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                Notas para portería
+                <textarea
+                  name="notes"
+                  rows={2}
+                  className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-normal dark:border-slate-700 dark:bg-slate-800"
+                />
+              </label>
               <div className="rounded-xl border border-blue-200 bg-blue-50/70 p-3 text-xs text-blue-900 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-300">
                 <p className="font-semibold">Tu invitado no entra hasta que portería apruebe.</p>
                 <p className="mt-0.5 text-[11px] opacity-80">

@@ -20,7 +20,7 @@ Todo vive en **AccesoPro**: dashboard, API, agent Dahua y módulo ALPR nativo.
 | **API** | `apps/api` | Auth, tenants, hardware, cola del agent |
 | **Agent Dahua** | `apps/agent` | CGI Digest, openDoor, eventos faciales → API; ALPR opcional (`AGENT_ALPR=1`) |
 | **Reglas Cursor** | `.cursor/rules` | Convenciones del proyecto para el IDE |
-| **Docs** | `docs/` | Arquitectura, estado de módulos, playbooks. Sitio físico RB4011 + NAT ASI (retome §0): `docs/SITE_RB4011.md`. CGI vs RTSP del ASI: `docs/ASI_CGI.md`. |
+| **Docs** | `docs/` | Arquitectura, estado de módulos, playbooks. Radiografía de accesos: `docs/SISTEMA.md`. Sitio físico RB4011 + NAT ASI (retome §0): `docs/SITE_RB4011.md`. CGI vs RTSP del ASI: `docs/ASI_CGI.md`. |
 
 ## `apps/web` — dashboard por sectores de UI
 

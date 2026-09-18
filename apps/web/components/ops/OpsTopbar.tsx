@@ -123,7 +123,6 @@ export function OpsTopbar({
           <IconSearch className="h-3.5 w-3.5 text-slate-500 dark:text-[#1a9fbf]" />
           <input
             className="ops-search-input"
-            placeholder="Nombre / DNI"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             aria-label="Buscar persona por nombre o DNI"

@@ -405,7 +405,6 @@ export function ActuatorsPanel() {
                 <input
                   type="text"
                   required
-                  placeholder="Ej: Barrera Entrada, Porton Cochera"
                   value={form.name}
                   onChange={(e) => setForm({ ...form, name: e.target.value })}
                   className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800/80 dark:text-white dark:focus:border-blue-500"
@@ -502,7 +501,6 @@ export function ActuatorsPanel() {
                   </label>
                   <input
                     type="url"
-                    placeholder="http://192.168.1.150/relay/open"
                     value={form.httpUrl}
                     onChange={(e) => setForm({ ...form, httpUrl: e.target.value })}
                     className="w-full rounded-xl border border-slate-200 bg-white px-3.5 py-2.5 text-sm font-mono text-slate-900 focus:border-blue-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-white"

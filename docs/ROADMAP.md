@@ -1,7 +1,7 @@
 # AccesoPro — inventario + plan punta a punta
 
 Fecha de revisión: 2026-09-12.  
-Orden práctico portería (live/toast/cableado): **`docs/PLAN_PORTERIA.md`**.
+Radiografía de accesos (código hoy): **`docs/SISTEMA.md`**. Orden práctico portería (live/toast/cableado): **`docs/PLAN_PORTERIA.md`**.
 
 ---
 

@@ -67,7 +67,6 @@ export function AltaDniPanel() {
             className="cfg-input min-h-[96px] w-full"
             value={raw}
             onChange={(e) => setRaw(e.target.value)}
-            placeholder="@APELLIDO@NOMBRE@M@30123456@A@01/01/1980@..."
             required
           />
         </label>

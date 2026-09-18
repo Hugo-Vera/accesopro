@@ -549,6 +549,9 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
                 <span className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
                   Datos Filiatorios (DNI Argentino)
                 </span>
+                <span className="text-[10px] text-slate-500">
+                  Lector USB completa el formulario
+                </span>
               </div>
 
               <DniScanPanel active={isOpen && step === 1} onScan={handleParsePdf417} />
@@ -561,7 +564,6 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
                   <div className="relative">
                     <input
                       type="text"
-                      placeholder="Ej. 34567890"
                       value={dniNumber}
                       onChange={(e) => setDniNumber(e.target.value)}
                       onBlur={() => void handleDniBlurOrSearch()}
@@ -584,7 +586,6 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
                   </label>
                   <input
                     type="text"
-                    placeholder="11 dígitos del DNI tarjeta"
                     value={tramiteNumber}
                     onChange={(e) => setTramiteNumber(e.target.value)}
                     className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs font-mono text-slate-900 shadow-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
@@ -614,7 +615,6 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
                   </label>
                   <input
                     type="text"
-                    placeholder="Ej. González"
                     value={lastName}
                     onChange={(e) => setLastName(e.target.value)}
                     className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs font-bold text-slate-900 shadow-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
@@ -626,7 +626,6 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
                   </label>
                   <input
                     type="text"
-                    placeholder="Ej. Martín Alejandro"
                     value={firstName}
                     onChange={(e) => setFirstName(e.target.value)}
                     className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs font-bold text-slate-900 shadow-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
@@ -652,7 +651,6 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
                   </label>
                   <input
                     type="text"
-                    placeholder="Ej. 11 4455 6677"
                     value={phone}
                     onChange={(e) => setPhone(e.target.value)}
                     className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs text-slate-900 shadow-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
@@ -664,7 +662,6 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
                   </label>
                   <input
                     type="text"
-                    placeholder="Localidad / Domicilio"
                     value={address}
                     onChange={(e) => setAddress(e.target.value)}
                     className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs text-slate-900 shadow-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
@@ -706,7 +703,6 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
                   </label>
                   <input
                     type="text"
-                    placeholder="Ej. Roberto García"
                     value={authorizedBy}
                     onChange={(e) => setAuthorizedBy(e.target.value)}
                     className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs font-bold text-slate-900 shadow-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
@@ -788,7 +784,6 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
                       </label>
                       <input
                         type="text"
-                        placeholder="Ej. Sancor, Provincia ART"
                         value={lifeCompany}
                         onChange={(e) => setLifeCompany(e.target.value)}
                         className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs text-slate-900 shadow-xs dark:border-slate-700 dark:bg-slate-950 dark:text-white"
@@ -824,6 +819,12 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
                   Acompañantes (mismo QR)
                 </label>
                 <div className="space-y-2">
+                  {companions.length > 0 ? (
+                    <div className="grid grid-cols-2 gap-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                      <span>Nombre</span>
+                      <span>DNI</span>
+                    </div>
+                  ) : null}
                   {companions.map((row, i) => (
                     <div key={i} className="grid grid-cols-2 gap-2">
                       <input
@@ -831,7 +832,7 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
                         onChange={(e) =>
                           setCompanions((prev) => prev.map((p, j) => (j === i ? { ...p, name: e.target.value } : p)))
                         }
-                        placeholder="Nombre"
+                        aria-label={`Nombre acompañante ${i + 1}`}
                         className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs dark:border-slate-700 dark:bg-slate-950 dark:text-white"
                       />
                       <input
@@ -839,7 +840,7 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
                         onChange={(e) =>
                           setCompanions((prev) => prev.map((p, j) => (j === i ? { ...p, dni: e.target.value } : p)))
                         }
-                        placeholder="DNI"
+                        aria-label={`DNI acompañante ${i + 1}`}
                         className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs dark:border-slate-700 dark:bg-slate-950 dark:text-white"
                       />
                     </div>
@@ -859,7 +860,6 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
                 </label>
                 <textarea
                   rows={2}
-                  placeholder="Ej. Viene a reparar pileta, ingresa con herramientas."
                   value={notes}
                   onChange={(e) => setNotes(e.target.value)}
                   className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 shadow-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
@@ -954,7 +954,6 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
                   <div className="relative">
                     <input
                       type="text"
-                      placeholder="Ej. AA 123 BB o ABC 123"
                       value={plate}
                       onChange={(e) => setPlate(e.target.value.toUpperCase())}
                       onBlur={handlePlateBlurOrSearch}
@@ -995,7 +994,6 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
                   </label>
                   <input
                     type="text"
-                    placeholder="Ej. Blanco"
                     value={color}
                     onChange={(e) => setColor(e.target.value)}
                     className="w-full rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 shadow-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
@@ -1010,7 +1008,6 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
                   </label>
                   <input
                     type="text"
-                    placeholder="Ej. Toyota"
                     value={brand}
                     onChange={(e) => setBrand(e.target.value)}
                     className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs text-slate-900 shadow-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
@@ -1022,7 +1019,6 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
                   </label>
                   <input
                     type="text"
-                    placeholder="Ej. Hilux SRX"
                     value={model}
                     onChange={(e) => setModel(e.target.value)}
                     className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs text-slate-900 shadow-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
@@ -1058,7 +1054,6 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
                     {insuranceCompany === "Otra Compañía" && (
                       <input
                         type="text"
-                        placeholder="Escribí el nombre de la aseguradora..."
                         value={customInsuranceCompany}
                         onChange={(e) => setCustomInsuranceCompany(e.target.value)}
                         className="mt-2 w-full rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900 shadow-xs dark:border-slate-700 dark:bg-slate-950 dark:text-white"
@@ -1072,7 +1067,6 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
                     </label>
                     <input
                       type="text"
-                      placeholder="Ej. 104-5892340-01"
                       value={policyNumber}
                       onChange={(e) => setPolicyNumber(e.target.value)}
                       className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2 font-mono text-xs font-bold text-slate-900 shadow-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
@@ -1135,7 +1129,6 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
                   </label>
                   <input
                     type="text"
-                    placeholder={dniNumber || "Número de carnet"}
                     value={licenseNumber || dniNumber}
                     onChange={(e) => setLicenseNumber(e.target.value)}
                     className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2 font-mono text-xs font-bold text-slate-900 shadow-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
@@ -1181,7 +1174,6 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
                   </label>
                   <input
                     type="text"
-                    placeholder="Ej. Pilar, Prov. de Buenos Aires"
                     value={licenseJurisdiction}
                     onChange={(e) => setLicenseJurisdiction(e.target.value)}
                     className="w-full rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs text-slate-900 shadow-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-950 dark:text-white"

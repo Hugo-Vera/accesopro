@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Camera, ScanFace } from "lucide-react";
+import { getCameraStream } from "@/lib/camera";
 
 function processImageToJpegBase64(imageSource: HTMLVideoElement): string {
   const max = 640;
@@ -50,7 +51,7 @@ export function VisitFaceCapture({ preview, onCapture, onClear }: Props) {
     setError(null);
     try {
       stop();
-      const stream = await navigator.mediaDevices.getUserMedia({
+      const stream = await getCameraStream({
         video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" },
         audio: false,
       });

@@ -285,7 +285,6 @@ export function AccessPointsPanel() {
                   className="cfg-input w-full"
                   value={form.name}
                   onChange={(e) => setForm({ ...form, name: e.target.value })}
-                  placeholder="Ingreso vehicular"
                   required
                 />
               </label>

@@ -20,8 +20,9 @@ Leer `AGENTS.md` antes de tocar auth, módulos, actuadores, plano, alarmas o pun
 5. Nunca fusionar módulo comercial (ALPR/Dahua/visitas) dentro de la fila del punto.
 6. Migraciones: `CREATE IF NOT EXISTS` + backfill; **no borrar** la DB ni datos legacy.
 
-## Modales (siempre)
+- Modales (siempre)
 
 - Todo modal/overlay usa `useEscapeKey(onClose, open)` desde `apps/web/hooks/useEscapeKey.ts`.
 - Escape cierra / vuelve atrás; click en backdrop también cuando aplica.
-- No inventar otro listener de teclado por pantalla.
+- No inventar otro listener de teclado por pantalla (salvo `useHidWedge` para pistola DNI).
+- Inputs de formulario **sin** `placeholder`. La etiqueta (`label`) nombra el campo. Búsquedas: `aria-label` si no hay label visible.
