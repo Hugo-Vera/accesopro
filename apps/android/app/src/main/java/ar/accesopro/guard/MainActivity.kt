@@ -2,8 +2,14 @@ package ar.accesopro.guard
 
 import android.content.Context
 import android.content.Intent
+import android.media.AudioManager
+import android.media.ToneGenerator
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -45,6 +51,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -60,6 +67,30 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+
+private fun pingGuard(ctx: Context) {
+    runCatching {
+        val tg = ToneGenerator(AudioManager.STREAM_NOTIFICATION, 90)
+        tg.startTone(ToneGenerator.TONE_CDMA_ALERT_CALL_GUARD, 450)
+        android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ tg.release() }, 700)
+    }
+    runCatching {
+        val pattern = longArrayOf(0, 140, 90, 140)
+        if (Build.VERSION.SDK_INT >= 31) {
+            val vm = ctx.getSystemService(VibratorManager::class.java)
+            vm.defaultVibrator.vibrate(VibrationEffect.createWaveform(pattern, -1))
+        } else {
+            @Suppress("DEPRECATION")
+            val v = ctx.getSystemService(Context.VIBRATOR_SERVICE) as Vibrator
+            if (Build.VERSION.SDK_INT >= 26) {
+                v.vibrate(VibrationEffect.createWaveform(pattern, -1))
+            } else {
+                @Suppress("DEPRECATION")
+                v.vibrate(320)
+            }
+        }
+    }
+}
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -93,11 +124,28 @@ fun GuardApp(prefs: android.content.SharedPreferences) {
     val api = remember(baseUrl, cloudUrl, token) { GuardApi(baseUrl, cloudUrl, token) }
 
     val isPreview = LocalInspectionMode.current
+    val ctx = LocalContext.current
+    var knownIds by remember { mutableStateOf<Set<String>?>(null) }
+    val selectedNow = rememberUpdatedState(selected)
+    val censusNow = rememberUpdatedState(showCensus)
+
     LaunchedEffect(token) {
+        knownIds = null
         if (token.isBlank() || isPreview) return@LaunchedEffect
         while (true) {
-            runCatching { items = api.listApprovals() }
-            delay(3000)
+            runCatching {
+                val next = api.listApprovals()
+                val ids = next.map { it.id }.toSet()
+                val prev = knownIds
+                knownIds = ids
+                val fresh = if (prev == null) emptyList() else next.filter { it.id !in prev }
+                items = next
+                if (fresh.isNotEmpty()) {
+                    pingGuard(ctx)
+                    if (selectedNow.value == null && !censusNow.value) selected = fresh.first()
+                }
+            }
+            delay(1000)
         }
     }
 
@@ -152,14 +200,19 @@ fun GuardApp(prefs: android.content.SharedPreferences) {
     if (current != null) {
         ApprovalDetail(
             item = current,
-            onBack = { selected = null },
+            error = error,
+            busy = isLoading,
+            onBack = { selected = null; error = null },
             onDecide = { decision, comment, trunk, dni, company, policy, until, plate ->
                 scope.launch {
+                    isLoading = true
+                    error = null
                     runCatching {
                         api.decide(current.id, decision, comment, trunk, dni, company, policy, until, plate)
                         selected = null
                         items = api.listApprovals()
                     }.onFailure { error = it.message }
+                    isLoading = false
                 }
             },
         )
@@ -168,7 +221,7 @@ fun GuardApp(prefs: android.content.SharedPreferences) {
 
     Column(Modifier.padding(16.dp)) {
         Text("Aprobaciones de visita", style = MaterialTheme.typography.titleLarge)
-        Text("LAN primero (2 s); si no responde, URL pública. El QR identifica; vos abrís.", style = MaterialTheme.typography.bodySmall)
+        Text("LAN primero (2 s). Si apoyan el QR en el ASI, suena acá y se abre la ficha. El QR identifica; vos abrís.", style = MaterialTheme.typography.bodySmall)
         if (error != null) Text(error!!, color = MaterialTheme.colorScheme.error)
         Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(onClick = {
@@ -503,6 +556,8 @@ fun CensusScreen(
 @Composable
 fun ApprovalDetail(
     item: ApprovalItem,
+    error: String? = null,
+    busy: Boolean = false,
     onBack: () -> Unit,
     onDecide: (String, String, Boolean, String, String, String, String, String) -> Unit,
 ) {
@@ -557,11 +612,20 @@ fun ApprovalDetail(
                 ctx.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$phone")))
             }) { Text("Llamar al lote (${item.ownerName})") }
         }
+        if (error != null) Text(error, color = MaterialTheme.colorScheme.error)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(onClick = { onDecide("approved", comment, trunk, dni, company, policy, until, plate) }, modifier = Modifier.weight(1f)) {
-                Text("Aprobar")
+            Button(
+                onClick = { onDecide("approved", comment, trunk, dni, company, policy, until, plate) },
+                enabled = !busy,
+                modifier = Modifier.weight(1f),
+            ) {
+                Text(if (busy) "Abriendo…" else "Aprobar")
             }
-            OutlinedButton(onClick = { onDecide("denied", comment, trunk, dni, company, policy, until, plate) }, modifier = Modifier.weight(1f)) {
+            OutlinedButton(
+                onClick = { onDecide("denied", comment, trunk, dni, company, policy, until, plate) },
+                enabled = !busy,
+                modifier = Modifier.weight(1f),
+            ) {
                 Text("Denegar")
             }
         }

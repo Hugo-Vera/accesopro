@@ -546,7 +546,7 @@ visitorsApi.post("/visitors/approvals/:id/decide", async (c) => {
     trunkChecked: Boolean(body.trunkChecked),
   });
   if (!result.ok) return c.json({ error: result.error, missing: result.missing }, 400);
-  return c.json({ ok: true });
+  return c.json({ ok: true, actuatorsFired: result.actuatorsFired || [] });
 });
 
 visitorsApi.post("/visitors/announce", async (c) => {

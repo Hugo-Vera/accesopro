@@ -206,7 +206,7 @@ export async function holdVisitQr(input: {
       createdAt: now,
       decidedAt: null,
     });
-  } else if (existing.reason !== reason || existing.sentido !== sentido) {
+  } else {
     await db
       .update(guardApprovals)
       .set({ reason, sentido, deviceId: input.deviceId || existing.deviceId })
@@ -268,14 +268,19 @@ async function openForVisit(
   deviceId?: string | null,
 ) {
   const fired: string[] = [];
+  const errors: string[] = [];
   const wired = deviceId ? await actuatorsForDahuaDevice(site.id, deviceId) : [];
   const byLane = await actuatorsForSentido(site.id, sentido);
-  const targets = wired.length ? wired : byLane.filter((x) => x.triggerQr);
+  const targets = wired.length ? wired : byLane;
+  if (!targets.length) {
+    return { fired, error: "No hay relé cableado a ese punto o carril" };
+  }
   for (const a of targets) {
     const r = await fireActuator(site, a.id, "open");
     if (r.ok) fired.push(a.name);
+    else if (r.error) errors.push(`${a.name}: ${r.error}`);
   }
-  return fired;
+  return { fired, error: fired.length ? undefined : errors[0] || "El relé no pulsó" };
 }
 
 export async function decideGuardApproval(input: {
@@ -285,7 +290,7 @@ export async function decideGuardApproval(input: {
   decision: "approved" | "denied";
   comment?: string | null;
   trunkChecked?: boolean;
-}): Promise<{ ok: true } | { ok: false; error: string; missing?: string[] }> {
+}): Promise<{ ok: true; actuatorsFired?: string[] } | { ok: false; error: string; missing?: string[] }> {
   const row = await db
     .select()
     .from(guardApprovals)
@@ -339,6 +344,11 @@ export async function decideGuardApproval(input: {
     }
   }
 
+  const pulse = await openForVisit(input.site, row.sentido as "in" | "out", row.deviceId);
+  if (!pulse.fired.length) {
+    return { ok: false, error: pulse.error || "No se pudo pulsar el relé. Revisá el agent y el cableado." };
+  }
+
   const nextStatus = row.sentido === "out" ? "completed" : "in_site";
   const patch: Partial<typeof visitPasses.$inferInsert> = { status: nextStatus };
   if (row.sentido === "in") patch.scannedInAt = pass.scannedInAt ?? now;
@@ -360,7 +370,6 @@ export async function decideGuardApproval(input: {
     })
     .where(eq(guardApprovals.id, row.id));
 
-  const fired = await openForVisit(input.site, row.sentido as "in" | "out", row.deviceId);
   const property = await db.select().from(properties).where(eq(properties.id, pass.propertyId)).get();
   await db.insert(events).values({
     id: nid(),
@@ -373,7 +382,7 @@ export async function decideGuardApproval(input: {
       approvalId: row.id,
       guestName: pass.guestName,
       lotNumber: property?.lotNumber,
-      actuatorsFired: fired,
+      actuatorsFired: pulse.fired,
       accessKind: "visita",
       guardApproved: true,
     }),
@@ -387,7 +396,7 @@ export async function decideGuardApproval(input: {
     payload: { passId: pass.id, approvalId: row.id, decided: "approved", sentido: row.sentido },
     createdAt: now.getTime(),
   });
-  return { ok: true };
+  return { ok: true, actuatorsFired: pulse.fired };
 }
 
 export async function serializePassFicha(

@@ -76,6 +76,8 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
     const es = new EventSource(apiUrl(withTenant("/api/events/stream?type=visit_hold", tenantId)), {
       withCredentials: true,
     });
+    // El QR en el ASI no abre este modal: solo refresca la campana.
+    // La ficha la abre el guardia (campana / pin) o la app Android.
     es.addEventListener("message", () => load());
     es.addEventListener("access_event", () => load());
     return () => {

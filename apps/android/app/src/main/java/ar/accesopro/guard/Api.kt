@@ -167,7 +167,10 @@ class GuardApi(
         var last: Exception? = null
         urls.forEachIndexed { index, base ->
             try {
-                val timeout = if (index == 0 && urls.size > 1) 2000 else 12000
+                // GET corto para probar LAN. POST de abrir espera al agent (~8 s).
+                val timeout =
+                    if (method == "GET" && index == 0 && urls.size > 1) 2000
+                    else 20000
                 return requestOnce(base, method, path, body, auth, timeout)
             } catch (e: Exception) {
                 last = e

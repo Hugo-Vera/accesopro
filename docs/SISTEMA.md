@@ -93,7 +93,7 @@ in_site
   → QR OUT → awaiting_exit → (aprueba + baúl si auto) completed | (deniega) denied
 ```
 
-Aprobar exige: DNI numérico; si `arrivalMode=vehiculo` también patente, seguro y **baúl tildado**. Fuera de ventana: igual entra a cola con `reason=expired` (el guardia puede excepción con comentario).
+Aprobar en app o web dispara `openDoor` **antes** de cerrar el ticket. Si el agent no pulsa, la solicitud sigue pendiente y se ve el error.
 
 Walk-up portería (`VisitorCheckinModal.tsx`): mismo `visit_passes` + hold de entrada. El wizard **no** abre barrera ni enrola cara. `visit_records.status` sigue al pase (`awaiting_entry` hasta que el guardia aprueba).
 
@@ -132,7 +132,7 @@ Portería (`HomeDashboard.tsx`): **Ingreso | plano | Salida**. AccesoCam RTSP no
 | Vecino | `/portal` | Cara propia, familia, servicios, autorizar visita QR |
 | Visita | Nada (solo el QR) | Identificarse; no abre |
 
-App Android: poll 3 s a la misma API. Dual-host: LAN 2 s y después URL pública. **No hay FCM.** Censo y SOS en la app.
+App Android: poll 1 s a la misma API; ticket nuevo suena y abre la ficha. Dual-host: LAN 2 s y después URL pública. **No hay FCM.** Censo y SOS en la app. El dashboard web no abre el modal al leer el QR: solo la campana.
 
 ---
 
