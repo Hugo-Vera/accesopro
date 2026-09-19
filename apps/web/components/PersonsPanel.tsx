@@ -1,6 +1,6 @@
 "use client";
 
-import { FormEvent, useEffect, useRef, useState, type ReactNode, type SVGProps } from "react";
+import { FormEvent, useEffect, useState, type ReactNode, type SVGProps } from "react";
 import QRCode from "qrcode";
 import { api, apiUrl, withTenant } from "@/lib/api";
 import { useDash } from "@/components/DashboardProvider";
@@ -8,7 +8,7 @@ import { useToast } from "@/components/Toast";
 import { useTheme } from "@/components/ThemeProvider";
 import { isAsiCardNo, normalizeAsiCardNo, randomAsiCardNo } from "@accesopro/catalog";
 import { useEscapeKey } from "@/hooks/useEscapeKey";
-import { getCameraStream } from "@/lib/camera";
+import { useWebcam } from "@/hooks/useWebcam";
 import { DahuaDateTimePicker } from "@/components/DahuaDateTimePicker";
 import {
   CreditCard,
@@ -257,68 +257,26 @@ function CreatePersonModal({
   // Estados de captura
   const [activeTab, setActiveTab] = useState<"dahua" | "webcam" | "file">("dahua");
   const [capturingDahua, setCapturingDahua] = useState(false);
-  const [isWebcamActive, setIsWebcamActive] = useState(false);
-  const [webcamError, setWebcamError] = useState<string | null>(null);
 
   // UI States
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
+  const webcam = useWebcam(isOpen && activeTab === "webcam");
 
   function t(path: string) {
     return withTenant(path, tenantId);
   }
 
-  function stopWebcam() {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
-    }
-    if (videoRef.current) {
-      videoRef.current.srcObject = null;
-    }
-    setIsWebcamActive(false);
-  }
-
-  useEffect(() => {
-    return () => {
-      stopWebcam();
-    };
-  }, []);
-
-  async function startWebcam() {
-    setWebcamError(null);
-    try {
-      if (streamRef.current) {
-        stopWebcam();
-      }
-      const stream = await getCameraStream({
-        video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" },
-        audio: false,
-      });
-      streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
-      }
-      setIsWebcamActive(true);
-    } catch (err) {
-      setWebcamError(err instanceof Error ? err.message : "No se pudo acceder a la cámara web");
-      setIsWebcamActive(false);
-    }
-  }
-
   function captureWebcamFrame() {
-    if (!videoRef.current) return;
+    if (!webcam.videoRef.current) return;
     try {
-      const b64 = processImageToJpegBase64(videoRef.current);
+      const b64 = processImageToJpegBase64(webcam.videoRef.current);
       const dataUrl = `data:image/jpeg;base64,${b64}`;
       setPhotoB64(b64);
       setPhotoPreview(dataUrl);
       setPhotoSource("webcam");
-      stopWebcam();
+      webcam.stop();
       toast.success("Foto facial capturada", "Captura obtenida correctamente desde la cámara web.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error al procesar captura");
@@ -444,7 +402,7 @@ function CreatePersonModal({
         qrUrl: null,
       };
 
-      stopWebcam();
+      webcam.stop();
       if (passwordPackOn && pinPassword.trim()) {
         try {
           await api(t("/api/credentials"), {
@@ -487,7 +445,7 @@ function CreatePersonModal({
           <button
             type="button"
             onClick={() => {
-              stopWebcam();
+              webcam.stop();
               onClose();
             }}
             className="rounded-lg p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
@@ -617,7 +575,6 @@ function CreatePersonModal({
                 <button
                   type="button"
                   onClick={() => {
-                    stopWebcam();
                     setActiveTab("dahua");
                   }}
                   className={`flex-1 rounded-md py-1.5 text-xs font-semibold transition-colors flex items-center justify-center gap-1.5 ${
@@ -633,7 +590,6 @@ function CreatePersonModal({
                   type="button"
                   onClick={() => {
                     setActiveTab("webcam");
-                    startWebcam();
                   }}
                   className={`flex-1 rounded-md py-1.5 text-xs font-semibold transition-colors flex items-center justify-center gap-1.5 ${
                     activeTab === "webcam"
@@ -647,7 +603,6 @@ function CreatePersonModal({
                 <button
                   type="button"
                   onClick={() => {
-                    stopWebcam();
                     setActiveTab("file");
                   }}
                   className={`flex-1 rounded-md py-1.5 text-xs font-semibold transition-colors flex items-center justify-center gap-1.5 ${
@@ -683,25 +638,42 @@ function CreatePersonModal({
 
                 {activeTab === "webcam" && (
                   <div className="space-y-3">
-                    {webcamError ? (
-                      <p className="text-xs text-rose-600 dark:text-rose-400">{webcamError}</p>
-                    ) : (
-                      <>
-                        <div className="mx-auto h-48 w-48 overflow-hidden rounded-xl border border-slate-300 dark:border-slate-700 bg-black shadow-inner">
-                          <video ref={videoRef} autoPlay playsInline muted className="h-full w-full object-cover" />
-                        </div>
-                        {isWebcamActive && (
-                          <button
-                            type="button"
-                            onClick={captureWebcamFrame}
-                            className="inline-flex items-center gap-2 rounded-xl bg-blue-600 hover:bg-blue-500 px-4 py-2 text-xs font-bold text-white shadow-sm transition-colors"
-                          >
-                            <Camera className="h-4 w-4" />
-                            <span>Capturar Fotograma</span>
-                          </button>
-                        )}
-                      </>
-                    )}
+                    {webcam.devices.length > 1 ? (
+                      <label className="block text-left text-xs font-semibold text-slate-700 dark:text-slate-300">
+                        Cámara
+                        <select
+                          aria-label="Cámara"
+                          className="cfg-input mt-1 w-full"
+                          value={webcam.deviceId}
+                          onChange={(e) => webcam.setDeviceId(e.target.value)}
+                        >
+                          <option value="">Automática</option>
+                          {webcam.devices.map((d) => (
+                            <option key={d.deviceId} value={d.deviceId}>
+                              {d.label}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    ) : null}
+                    {webcam.error ? (
+                      <p className="text-xs text-rose-600 dark:text-rose-400">{webcam.error}</p>
+                    ) : null}
+                    <div className="mx-auto h-48 w-48 overflow-hidden rounded-xl border border-slate-300 dark:border-slate-700 bg-black shadow-inner">
+                      <video ref={webcam.videoRef} autoPlay playsInline muted className="h-full w-full object-cover" />
+                    </div>
+                    {webcam.live ? (
+                      <button
+                        type="button"
+                        onClick={captureWebcamFrame}
+                        className="inline-flex items-center gap-2 rounded-xl bg-blue-600 hover:bg-blue-500 px-4 py-2 text-xs font-bold text-white shadow-sm transition-colors"
+                      >
+                        <Camera className="h-4 w-4" />
+                        <span>Capturar fotograma</span>
+                      </button>
+                    ) : !webcam.error ? (
+                      <p className="text-[11px] text-slate-500">Abriendo cámara…</p>
+                    ) : null}
                   </div>
                 )}
 
@@ -760,7 +732,7 @@ function CreatePersonModal({
             <button
               type="button"
               onClick={() => {
-                stopWebcam();
+                webcam.stop();
                 onClose();
               }}
               className="rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-4 py-2 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors shadow-sm"
@@ -926,15 +898,11 @@ function EditPersonModal({
   // Modos de captura
   const [activeTab, setActiveTab] = useState<"dahua" | "webcam" | "file">("dahua");
   const [capturingDahua, setCapturingDahua] = useState(false);
-  const [isWebcamActive, setIsWebcamActive] = useState(false);
-  const [webcamError, setWebcamError] = useState<string | null>(null);
+  const webcam = useWebcam(activeTab === "webcam");
 
   // Estados de proceso
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
 
   function t(path: string) {
     return withTenant(path, tenantId);
@@ -956,54 +924,15 @@ function EditPersonModal({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId, person.userId, qrPackOn, cardPackOn]);
 
-  function stopWebcam() {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
-    }
-    if (videoRef.current) {
-      videoRef.current.srcObject = null;
-    }
-    setIsWebcamActive(false);
-  }
-
-  useEffect(() => {
-    return () => {
-      stopWebcam();
-    };
-  }, []);
-
-  async function startWebcam() {
-    setWebcamError(null);
-    try {
-      if (streamRef.current) {
-        stopWebcam();
-      }
-      const stream = await getCameraStream({
-        video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: "user" },
-        audio: false,
-      });
-      streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
-      }
-      setIsWebcamActive(true);
-    } catch (err) {
-      setWebcamError(err instanceof Error ? err.message : "No se pudo acceder a la cámara web");
-      setIsWebcamActive(false);
-    }
-  }
-
   function captureWebcamFrame() {
-    if (!videoRef.current) return;
+    if (!webcam.videoRef.current) return;
     try {
-      const b64 = processImageToJpegBase64(videoRef.current);
+      const b64 = processImageToJpegBase64(webcam.videoRef.current);
       const dataUrl = `data:image/jpeg;base64,${b64}`;
       setPhotoB64(b64);
       setPhotoPreview(dataUrl);
       setPhotoSource("webcam");
-      stopWebcam();
+      webcam.stop();
       toast.success("Foto facial capturada", "Captura obtenida correctamente desde la cámara web.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error al procesar captura");
@@ -1370,7 +1299,7 @@ function EditPersonModal({
         qrUrl: qrUrl,
       };
 
-      stopWebcam();
+      webcam.stop();
       toast.success("Usuario actualizado", `Ficha de ${name.trim()} sincronizada con éxito en el terminal Dahua.`);
       onSuccess(name.trim(), enrolledData);
     } catch (err) {
@@ -1405,7 +1334,7 @@ function EditPersonModal({
           <button
             type="button"
             onClick={() => {
-              stopWebcam();
+              webcam.stop();
               onClose();
             }}
             className="rounded-lg p-1.5 text-slate-400 hover:text-slate-700 dark:hover:text-white hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
@@ -1546,7 +1475,7 @@ function EditPersonModal({
                       <button
                         type="button"
                         onClick={() => {
-                          stopWebcam();
+                          webcam.stop();
                           setActiveTab("dahua");
                         }}
                         className={`flex-1 rounded-md py-1.5 text-xs font-semibold transition-colors flex items-center justify-center gap-1.5 ${
@@ -1562,7 +1491,6 @@ function EditPersonModal({
                         type="button"
                         onClick={() => {
                           setActiveTab("webcam");
-                          startWebcam();
                         }}
                         className={`flex-1 rounded-md py-1.5 text-xs font-semibold transition-colors flex items-center justify-center gap-1.5 ${
                           activeTab === "webcam"
@@ -1576,7 +1504,7 @@ function EditPersonModal({
                       <button
                         type="button"
                         onClick={() => {
-                          stopWebcam();
+                          webcam.stop();
                           setActiveTab("file");
                         }}
                         className={`flex-1 rounded-md py-1.5 text-xs font-semibold transition-colors flex items-center justify-center gap-1.5 ${
@@ -1613,15 +1541,51 @@ function EditPersonModal({
                             <span>{capturingDahua ? "Capturando…" : "Tomar Captura del Lector ASI"}</span>
                           </button>
                         )}
-                        {activeTab === "webcam" && isWebcamActive && (
-                          <button
-                            type="button"
-                            onClick={captureWebcamFrame}
-                            className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-xl shadow-sm transition-colors flex items-center gap-2"
-                          >
-                            <Camera className="w-4 h-4" />
-                            <span>Capturar Fotograma</span>
-                          </button>
+                        {activeTab === "webcam" && (
+                          <div className="space-y-2">
+                            {webcam.devices.length > 1 ? (
+                              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                                Cámara
+                                <select
+                                  aria-label="Cámara"
+                                  className="cfg-input mt-1 w-full"
+                                  value={webcam.deviceId}
+                                  onChange={(e) => webcam.setDeviceId(e.target.value)}
+                                >
+                                  <option value="">Automática</option>
+                                  {webcam.devices.map((d) => (
+                                    <option key={d.deviceId} value={d.deviceId}>
+                                      {d.label}
+                                    </option>
+                                  ))}
+                                </select>
+                              </label>
+                            ) : null}
+                            {webcam.error ? (
+                              <p className="text-xs text-rose-600 dark:text-rose-400">{webcam.error}</p>
+                            ) : null}
+                            <div className="h-40 w-40 overflow-hidden rounded-xl border border-slate-300 bg-black dark:border-slate-700">
+                              <video
+                                ref={webcam.videoRef}
+                                autoPlay
+                                playsInline
+                                muted
+                                className="h-full w-full object-cover"
+                              />
+                            </div>
+                            {webcam.live ? (
+                              <button
+                                type="button"
+                                onClick={captureWebcamFrame}
+                                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-xl shadow-sm transition-colors flex items-center gap-2"
+                              >
+                                <Camera className="w-4 h-4" />
+                                <span>Capturar fotograma</span>
+                              </button>
+                            ) : !webcam.error ? (
+                              <p className="text-[11px] text-slate-500">Abriendo cámara…</p>
+                            ) : null}
+                          </div>
                         )}
                         {activeTab === "file" && (
                           <label className="inline-flex cursor-pointer items-center gap-2 px-4 py-2 border border-slate-300 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-700 text-xs font-semibold rounded-xl shadow-sm transition-colors">
@@ -1927,7 +1891,7 @@ function EditPersonModal({
             <button
               type="button"
               onClick={() => {
-                stopWebcam();
+                webcam.stop();
                 onClose();
               }}
               className="rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-4 py-2 text-xs font-semibold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors shadow-sm"
