@@ -12,7 +12,7 @@ En AccesoPro el lector de este predio es un **ASI-6214S**. El encoder de video e
 | Eventos en vivo | HTTP CGI Digest | `eventManager.cgi?action=attach&codes=[AccessControl]&heartbeat=5` | **Única consulta continua.** Heartbeat cada 5 s. |
 | Historial / cursor RecNo | RPC `RecordFinder` | **Solo si el attach cayó.** Con attach sano queda apagado: un login+6 RPC cada 8 s trababa el SoC. |
 | Abrir | CGI | `accessControl.cgi?action=openDoor&channel=1` | Puntual. |
-| Personas / cara | CGI | `FaceInfoManager.cgi`, `recordUpdater` AccessControlCard | Alta, foto de enroll, baja. El reconcile **no** baja JPEG de todas las caras. |
+| Personas / cara | CGI | `FaceInfoManager.cgi`, `recordUpdater` AccessControlCard | Alta, foto de enroll, baja. El listado del padrón sí pide caras (`AccessFace.list` + `FaceInfoManager.get`). El reconcile periódico **no** baja JPEG. |
 | Foto del **evento** | RPC `FileManager` + `/RPC2_Loadfile` | **Una vez**, desde el **agent**, al toque (si el JPEG no está, reintento 120/250/450 ms). Se guarda en `apps/api/data/evidence/{site}/{eventId}.jpg`. Toast, historial, Eventos y Evidencia leen `GET /api/events/:id/photo`. El browser **no** pega FileManager. |
 
 ## Qué no se usa en el ASI (aunque exista en cámaras)

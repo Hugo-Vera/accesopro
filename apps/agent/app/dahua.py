@@ -120,6 +120,29 @@ def parse_table(text: str) -> list[dict[str, str]]:
     return [rows[i] for i in sorted(rows)]
 
 
+def _photo_list(info: dict[str, Any] | None) -> list[str]:
+    if not info:
+        return []
+    raw = info.get("PhotoData") or info.get("Photo") or info.get("photoData") or []
+    if isinstance(raw, str):
+        raw = [raw]
+    elif isinstance(raw, dict):
+        raw = [raw.get("Data") or raw.get("photo") or ""]
+    out: list[str] = []
+    for item in raw:
+        if not item:
+            continue
+        if isinstance(item, dict):
+            item = item.get("Data") or item.get("photo") or ""
+        text = str(item).strip()
+        if text.startswith("data:"):
+            text = text.split(",", 1)[-1]
+        text = "".join(text.split())
+        if len(text) > 80:
+            out.append(text)
+    return out
+
+
 class DahuaClient:
     def __init__(self, host: str, username: str, password: str, port: int = 80) -> None:
         port_num = int(port or 80)
@@ -546,12 +569,21 @@ class DahuaClient:
                         if u.get("UserID"):
                             rpc_users[str(u["UserID"])] = u
 
-                    # AccessFace.list trae JPEG de todas las caras: solo si la UI lo pide.
+                    # AccessFace.list trae JPEG. Si falla o viene vacío, FaceInfoManager por usuario.
                     if include_faces:
-                        f_resp = self._rpc_send("AccessFace.list", {"UserIDList": user_ids}, session_id=sid)
-                        for f in f_resp.get("params", {}).get("FaceDataList", []):
-                            if f.get("UserID"):
-                                rpc_faces[str(f["UserID"])] = f
+                        try:
+                            f_resp = self._rpc_send("AccessFace.list", {"UserIDList": user_ids}, session_id=sid)
+                            for f in f_resp.get("params", {}).get("FaceDataList", []) or []:
+                                if f.get("UserID"):
+                                    rpc_faces[str(f["UserID"])] = f
+                        except Exception:
+                            pass
+                        for uid in user_ids[:20]:
+                            if uid in rpc_faces and _photo_list(rpc_faces[uid]):
+                                continue
+                            cgi_face = self._face_photo_cgi(uid)
+                            if cgi_face:
+                                rpc_faces[uid] = cgi_face
 
                     if fingerprints:
                         for uid in user_ids[:30]:
@@ -571,7 +603,7 @@ class DahuaClient:
             f_info = rpc_faces.get(uid) or {}
             fp_count = rpc_fps.get(uid, 0)
 
-            photos = f_info.get("PhotoData") or []
+            photos = _photo_list(f_info)
             photo_b64 = photos[0] if photos else None
 
             v_start = u_info.get("ValidFrom") or r.get("ValidDateStart") or "1970-01-01 00:00:00"
@@ -600,6 +632,43 @@ class DahuaClient:
                 }
             )
         return {"ok": True, "persons": people, "count": len(people)}
+
+    def _face_photo_cgi(self, user_id: str) -> dict[str, Any] | None:
+        from urllib.parse import quote
+
+        uid = str(user_id).strip()
+        if not uid:
+            return None
+        paths = (
+            f"/cgi-bin/FaceInfoManager.cgi?action=get&UserID={quote(uid)}",
+            f"/cgi-bin/recordFinder.cgi?action=find&name=AccessFace&count=8&condition.UserID={quote(uid)}",
+        )
+        for path in paths:
+            try:
+                res = self._request("GET", path, timeout=10)
+                body = (res.text or "").strip()
+                if res.status_code >= 400 or not body or body.upper().startswith("ERROR"):
+                    continue
+                try:
+                    import json
+
+                    data = json.loads(body)
+                except Exception:
+                    data = None
+                if isinstance(data, dict):
+                    info = data.get("Info") or data.get("info") or data
+                    if isinstance(info, list) and info:
+                        info = info[0]
+                    if isinstance(info, dict) and _photo_list(info):
+                        return {"UserID": uid, **info}
+                rows = parse_table(body)
+                for row in rows:
+                    photos = _photo_list(row)
+                    if photos:
+                        return {"UserID": uid, "PhotoData": photos}
+            except Exception:
+                continue
+        return None
 
     def _cgi_card_write(self, params: list[str]) -> tuple[bool, str]:
         path = "/cgi-bin/recordUpdater.cgi?" + "&".join(params)

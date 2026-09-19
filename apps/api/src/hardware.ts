@@ -916,14 +916,18 @@ hardware.get("/dahua/:id/persons", async (c) => {
   try {
     const res = await fetch(`${agentBase}/dahua/${id}/persons`, {
       headers: { Authorization: `Bearer ${agentToken}` },
-      signal: AbortSignal.timeout(20000),
+      signal: AbortSignal.timeout(45000),
     });
     if (res.ok) return c.json(await res.json());
   } catch {
     /* cola */
   }
-  const cmd = await enqueue(scoped.site.id, "dahua_person_list", { deviceId: id, fingerprints: true });
-  const done = await waitCommand(cmd, 30);
+  const cmd = await enqueue(scoped.site.id, "dahua_person_list", {
+    deviceId: id,
+    fingerprints: true,
+    includeFaces: true,
+  });
+  const done = await waitCommand(cmd, 90);
   if (!done.ok) return c.json({ error: done.error || "No se pudo listar" }, 502);
   return c.json(done.result ?? { ok: true, persons: [] });
 });
