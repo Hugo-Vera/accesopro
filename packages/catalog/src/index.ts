@@ -153,6 +153,7 @@ export const PLAN_CATALOG: PlanDef[] = [
       "dahua.intercom",
       "access.visitors.manage",
       "access.owners.invite",
+      "ops.census",
       "staff.employees",
       "tenant.grants",
     ],
@@ -191,6 +192,7 @@ export const PLAN_CATALOG: PlanDef[] = [
       "dahua.intercom",
       "access.visitors.manage",
       "access.owners.invite",
+      "ops.census",
       "access.dni_enroll",
       "access.attendance",
       "staff.employees",
@@ -227,6 +229,7 @@ export type CapabilityKey =
   | "ops.dashboard"
   | "ops.plano"
   | "ops.alarms"
+  | "ops.census"
   | "ops.relay"
   | "core.config"
   | "core.users.read"
@@ -270,6 +273,7 @@ export const CAPABILITY_CATALOG: CapabilityDef[] = [
   { key: "ops.dashboard", group: "Monitoreo", name: "Dashboard", summary: "Ver KPIs y live del predio." },
   { key: "ops.plano", group: "Monitoreo", name: "Plano", summary: "Ver el plano del predio." },
   { key: "ops.alarms", group: "Monitoreo", name: "Alarmas", summary: "Cola de alarmas (pánico / fuego)." },
+  { key: "ops.census", group: "Monitoreo", name: "Censo de evacuación", summary: "Vidas en predio por lote para Bomberos / Defensa Civil.", moduleKey: "visitors" },
   { key: "ops.relay", group: "Monitoreo", name: "Abrir barreras", summary: "Abrir y cerrar actuadores.", moduleKey: "actuators" },
   { key: "core.config", group: "General", name: "Configuración", summary: "Editar motor, actuadores y equipos." },
   { key: "core.users.read", group: "General", name: "Ver usuarios", summary: "Listar usuarios del barrio." },
@@ -484,6 +488,16 @@ export const FEATURE_PACK_CATALOG: FeaturePackDef[] = [
     defaultOn: false,
     sortOrder: 95,
   },
+  {
+    key: "visitors.census",
+    parentModule: "visitors",
+    name: "Censo de evacuación",
+    summary: "Conteo de visitas en predio, lote a lote, para entregar a Bomberos.",
+    capabilityKey: "ops.census",
+    href: "/dashboard/censo",
+    defaultOn: true,
+    sortOrder: 20,
+  },
 ];
 
 /** Plantillas base por rol (se cruzan con el plan del barrio). */
@@ -493,6 +507,7 @@ export const ROLE_TEMPLATES: Record<string, CapabilityKey[]> = {
     "ops.dashboard",
     "ops.plano",
     "ops.alarms",
+    "ops.census",
     "ops.relay",
     "core.config",
     "core.users.read",
@@ -525,6 +540,7 @@ export const ROLE_TEMPLATES: Record<string, CapabilityKey[]> = {
     "ops.dashboard",
     "ops.plano",
     "ops.alarms",
+    "ops.census",
     "ops.relay",
     "access.alpr",
     "access.dahua",

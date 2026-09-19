@@ -23,10 +23,36 @@ data class ApprovalItem(
     val lotNumber: String?,
     val ownerName: String,
     val ownerPhone: String?,
+    val ownerAuthStatus: String,
+    val goodsAlert: Boolean,
+    val goodsAuthorized: Boolean,
+    val goodsCallReady: Boolean,
     val emergencies: List<Emergency>,
 )
 
-class GuardApi(private val baseUrl: String, private var token: String) {
+data class CensusLot(
+    val lotNumber: String,
+    val label: String,
+    val adults: Int,
+    val minors: Int,
+    val ownerName: String?,
+    val phone: String?,
+    val emergencyPhone: String?,
+)
+
+data class CensusSnapshot(
+    val total: Int,
+    val adults: Int,
+    val minors: Int,
+    val lotsWithPeople: Int,
+    val lots: List<CensusLot>,
+)
+
+class GuardApi(
+    private val lanUrl: String,
+    private val cloudUrl: String,
+    private var token: String,
+) {
     suspend fun login(email: String, password: String): String = withContext(Dispatchers.IO) {
         val body = JSONObject().put("email", email).put("password", password)
         val json = post("/auth/login", body, auth = false)
@@ -40,6 +66,34 @@ class GuardApi(private val baseUrl: String, private var token: String) {
         buildList {
             for (i in 0 until arr.length()) add(parseItem(arr.getJSONObject(i)))
         }
+    }
+
+    suspend fun census(): CensusSnapshot = withContext(Dispatchers.IO) {
+        val json = get("/api/census")
+        val lots = json.optJSONArray("lots") ?: JSONArray()
+        CensusSnapshot(
+            total = json.optInt("total"),
+            adults = json.optInt("adults"),
+            minors = json.optInt("minors"),
+            lotsWithPeople = json.optInt("lotsWithPeople"),
+            lots = (0 until lots.length()).map {
+                val o = lots.getJSONObject(it)
+                CensusLot(
+                    lotNumber = o.optString("lotNumber"),
+                    label = o.optString("label"),
+                    adults = o.optInt("adults"),
+                    minors = o.optInt("minors"),
+                    ownerName = o.optString("ownerName").ifBlank { null },
+                    phone = o.optString("phone").ifBlank { null },
+                    emergencyPhone = o.optString("emergencyPhone").ifBlank { null },
+                )
+            },
+        )
+    }
+
+    suspend fun panicSos() = withContext(Dispatchers.IO) {
+        post("/api/alarms/panic", JSONObject().put("message", "SOS desde app de guardia").put("source", "android"))
+        Unit
     }
 
     suspend fun decide(
@@ -88,6 +142,10 @@ class GuardApi(private val baseUrl: String, private var token: String) {
             lotNumber = o.optString("lotNumber").ifBlank { null },
             ownerName = o.optString("ownerName"),
             ownerPhone = o.optString("ownerPhone").ifBlank { null },
+            ownerAuthStatus = o.optString("ownerAuthStatus"),
+            goodsAlert = o.optBoolean("goodsAlert"),
+            goodsAuthorized = o.optBoolean("goodsAuthorized"),
+            goodsCallReady = o.optBoolean("goodsCallReady"),
             emergencies = (0 until em.length()).map {
                 val e = em.getJSONObject(it)
                 Emergency(e.optString("label"), e.optString("phone"))
@@ -100,12 +158,37 @@ class GuardApi(private val baseUrl: String, private var token: String) {
     private fun post(path: String, body: JSONObject, auth: Boolean = true): JSONObject =
         request("POST", path, body, auth)
 
+    private fun bases(): List<String> =
+        listOf(lanUrl, cloudUrl).map { it.trim().trimEnd('/') }.filter { it.isNotBlank() }.distinct()
+
     private fun request(method: String, path: String, body: JSONObject?, auth: Boolean): JSONObject {
-        val url = URL(baseUrl.trimEnd('/') + path)
+        val urls = bases()
+        if (urls.isEmpty()) throw IllegalStateException("Falta la URL de la API")
+        var last: Exception? = null
+        urls.forEachIndexed { index, base ->
+            try {
+                val timeout = if (index == 0 && urls.size > 1) 2000 else 12000
+                return requestOnce(base, method, path, body, auth, timeout)
+            } catch (e: Exception) {
+                last = e
+            }
+        }
+        throw last ?: IllegalStateException("Sin servidor")
+    }
+
+    private fun requestOnce(
+        base: String,
+        method: String,
+        path: String,
+        body: JSONObject?,
+        auth: Boolean,
+        timeout: Int,
+    ): JSONObject {
+        val url = URL(base + path)
         val conn = (url.openConnection() as HttpURLConnection).apply {
             requestMethod = method
-            connectTimeout = 12000
-            readTimeout = 12000
+            connectTimeout = timeout
+            readTimeout = timeout
             setRequestProperty("Accept", "application/json")
             setRequestProperty("Content-Type", "application/json")
             if (auth && token.isNotBlank()) setRequestProperty("Authorization", "Bearer $token")

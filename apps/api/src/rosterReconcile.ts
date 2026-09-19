@@ -15,6 +15,7 @@ import { tenantFeatureEnabled } from "./features.js";
 import { listCredentials } from "./credentials.js";
 import { ASI_CARD_TYPES, ASI_USER_TYPES } from "@accesopro/catalog";
 import { isOpenVisitStatus } from "./visitHold.js";
+import { isMinorBirthDate } from "./age.js";
 
 const PREFIXES = ["own_", "u_", "fam_", "svc_", "v_", "vis_"];
 
@@ -62,7 +63,7 @@ async function expectedRoster(siteId: string) {
   const family = await db.select().from(propertyFamilyMembers).where(eq(propertyFamilyMembers.active, true));
   for (const f of family.filter((x) => propIds.has(x.propertyId))) {
     if (!f.dahuaUserId) continue;
-    if (faceOn && f.photoBase64) {
+    if (faceOn && f.photoBase64 && !isMinorBirthDate(f.birthDate)) {
       rows.push({
         userId: f.dahuaUserId,
         name: f.name,

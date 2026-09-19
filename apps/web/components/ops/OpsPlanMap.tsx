@@ -182,6 +182,11 @@ export function OpsPlanMap() {
           if (ring.length < 3) continue;
           L.polygon(ring, { color: "#0284c7", weight: 2, fillColor: "#38bdf8", fillOpacity: 0.28 })
             .bindTooltip(`Lote ${lot.lotNumber} · ${lot.label}`, { sticky: true })
+            .on("click", () => {
+              window.dispatchEvent(
+                new CustomEvent("ap:announce-lot", { detail: { propertyId: lot.id, lotNumber: lot.lotNumber } }),
+              );
+            })
             .addTo(group);
         } catch {
           /* polígono inválido */

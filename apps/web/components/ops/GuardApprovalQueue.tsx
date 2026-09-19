@@ -17,7 +17,7 @@ export type GuardApprovalItem = {
   arrivalMode: string;
   needsTrunk: boolean;
   missing: string[];
-  companions: { name: string; dni: string | null }[];
+  companions: { name: string; dni: string | null; isMinor?: boolean }[];
   lotNumber: string | null;
   ownerName: string;
   ownerPhone: string | null;
@@ -27,6 +27,15 @@ export type GuardApprovalItem = {
   validFrom: string | number;
   validUntil: string | number;
   passStatus?: string;
+  ownerAuthStatus?: string;
+  goodsAlert?: boolean;
+  goodsDescription?: string | null;
+  goodsAuthorized?: boolean;
+  goodsCallReady?: boolean;
+  minorsIn?: number;
+  adultsIn?: number;
+  originPropertyId?: string | null;
+  minorTransferAuthorized?: boolean;
 };
 
 type Props = { tenantId: string; enabled: boolean };
@@ -42,6 +51,11 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
   const [insPolicy, setInsPolicy] = useState("");
   const [insUntil, setInsUntil] = useState("");
   const [plate, setPlate] = useState("");
+  const [goodsDesc, setGoodsDesc] = useState("");
+  const [goodsPhoto, setGoodsPhoto] = useState<string | null>(null);
+  const [exitMinors, setExitMinors] = useState("");
+  const [originLot, setOriginLot] = useState("");
+  const [lots, setLots] = useState<{ id: string; lotNumber: string }[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -49,6 +63,9 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
     if (!enabled || !tenantId) return;
     api<{ items: GuardApprovalItem[] }>(withTenant("/api/visitors/approvals", tenantId))
       .then((d) => setItems(d.items || []))
+      .catch(() => undefined);
+    api<{ properties: { id: string; lotNumber: string }[] }>(withTenant("/api/visitors/properties", tenantId))
+      .then((d) => setLots(d.properties || []))
       .catch(() => undefined);
   }, [enabled, tenantId]);
 
@@ -109,6 +126,8 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
     setTrunkChecked(false);
     setGuestDni(current.guestDni || "");
     setPlate(current.patente || "");
+    setGoodsDesc(current.goodsDescription || "");
+    setExitMinors(String(current.minorsIn ?? ""));
     setError(null);
   }, [current?.id]);
 
@@ -177,7 +196,15 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
                       ? "Faltan datos"
                       : current.reason === "preview"
                         ? "Todavía no pasó el QR por el lector"
-                        : "Identificado en el lector"}
+                        : current.reason === "walk_in"
+                      ? current.ownerAuthStatus === "owner_approved"
+                        ? "El titular autorizó. Completá la inspección y abrí."
+                        : current.ownerAuthStatus === "owner_denied"
+                          ? "El titular rechazó. Podés denegar o hacer excepción."
+                          : current.ownerAuthStatus === "owner_expired"
+                            ? "El titular no contestó a tiempo. Podés excepción."
+                            : "Walk-in: avisamos al lote (2 min). La barrera la abrís vos."
+                    : "Identificado en el lector"}
                 </p>
               </div>
               <button type="button" onClick={() => { setOpenId(null); setPreview(null); }} className="rounded p-1 text-slate-500" aria-label="Cerrar">
@@ -228,8 +255,123 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
 
             {current.companions.length ? (
               <p className="mt-2 text-[11px] text-slate-600 dark:text-slate-400">
-                Acompañantes: {current.companions.map((x) => `${x.name}${x.dni ? ` (${x.dni})` : ""}`).join(", ")}
+                Acompañantes: {current.companions.map((x) => `${x.name}${x.isMinor ? " (menor)" : ""}${x.dni ? ` (${x.dni})` : ""}`).join(", ")}
               </p>
+            ) : null}
+
+            {current.sentido === "out" && canDecide ? (
+              <div className="mt-3 space-y-2 rounded-lg border border-slate-200 p-2 dark:border-slate-700">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Egreso</p>
+                <label className="block text-[11px] font-semibold">
+                  Descripción del bien no registrado
+                  <input
+                    value={goodsDesc}
+                    onChange={(e) => setGoodsDesc(e.target.value)}
+                    className="mt-0.5 w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+                  />
+                </label>
+                <label className="block text-[11px] font-semibold">
+                  Foto del bien
+                  <input
+                    type="file"
+                    accept="image/*"
+                    capture="environment"
+                    className="mt-0.5 block w-full text-[11px]"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      const reader = new FileReader();
+                      reader.onload = () => setGoodsPhoto(String(reader.result || ""));
+                      reader.readAsDataURL(file);
+                    }}
+                  />
+                </label>
+                <button
+                  type="button"
+                  disabled={busy || (!goodsDesc && !goodsPhoto)}
+                  className="rounded-lg bg-amber-600 px-2 py-1 text-[11px] font-bold text-white disabled:opacity-50"
+                  onClick={async () => {
+                    setBusy(true);
+                    try {
+                      await api(withTenant(`/api/visitors/approvals/${current.id}/goods`, tenantId), {
+                        method: "POST",
+                        body: JSON.stringify({ description: goodsDesc, photoBase64: goodsPhoto }),
+                      });
+                      load();
+                    } catch (err) {
+                      setError(err instanceof Error ? err.message : "No se pudo alertar");
+                    } finally {
+                      setBusy(false);
+                    }
+                  }}
+                >
+                  Alertar bien no registrado
+                </button>
+                {current.goodsAlert ? (
+                  <p className="text-[11px] text-amber-700 dark:text-amber-300">
+                    {current.goodsAuthorized
+                      ? "El titular autorizó el bien."
+                      : current.goodsCallReady
+                        ? "Sin respuesta: llamá al titular."
+                        : "Esperando autorización del lote. La barrera queda retenida."}
+                  </p>
+                ) : null}
+                <label className="block text-[11px] font-semibold">
+                  Menores que salen
+                  <input
+                    value={exitMinors}
+                    onChange={(e) => setExitMinors(e.target.value)}
+                    className="mt-0.5 w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+                  />
+                </label>
+                {Number(exitMinors) > (current.minorsIn ?? 0) ? (
+                  <>
+                    <label className="block text-[11px] font-semibold">
+                      Lote de procedencia del menor
+                      <select
+                        value={originLot}
+                        onChange={(e) => setOriginLot(e.target.value)}
+                        className="mt-0.5 w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+                      >
+                        <option value="">Elegí el lote</option>
+                        {lots.map((l) => (
+                          <option key={l.id} value={l.id}>
+                            {l.lotNumber}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <button
+                      type="button"
+                      disabled={busy || !originLot}
+                      className="rounded-lg bg-slate-900 px-2 py-1 text-[11px] font-bold text-white dark:bg-white dark:text-slate-900 disabled:opacity-50"
+                      onClick={async () => {
+                        setBusy(true);
+                        try {
+                          await api(withTenant(`/api/visitors/approvals/${current.id}/minors`, tenantId), {
+                            method: "POST",
+                            body: JSON.stringify({
+                              originPropertyId: originLot,
+                              exitMinorsCount: Number(exitMinors),
+                              exitAdultsCount: current.adultsIn,
+                            }),
+                          });
+                          load();
+                        } catch (err) {
+                          setError(err instanceof Error ? err.message : "No se pudo pedir autorización");
+                        } finally {
+                          setBusy(false);
+                        }
+                      }}
+                    >
+                      Pedir autorización de traslado
+                    </button>
+                    {current.minorTransferAuthorized ? (
+                      <p className="text-[11px] text-emerald-700">El lote de procedencia autorizó el traslado.</p>
+                    ) : null}
+                  </>
+                ) : null}
+              </div>
             ) : null}
 
             <div className="mt-3 flex flex-wrap gap-2">

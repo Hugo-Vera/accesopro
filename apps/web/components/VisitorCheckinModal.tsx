@@ -150,7 +150,7 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
   // Paso 3: Modalidad
   const [arrivalMode, setArrivalMode] = useState<"peatonal" | "plataforma" | "vehiculo">("peatonal");
   const isVehicular = arrivalMode === "vehiculo";
-  const [companions, setCompanions] = useState<{ name: string; dni: string }[]>([{ name: "", dni: "" }]);
+  const [companions, setCompanions] = useState<{ name: string; dni: string; isMinor: boolean }[]>([{ name: "", dni: "", isMinor: false }]);
 
   // Paso 4: Vehículo & Seguro Automotor Argentina
   const [plate, setPlate] = useState("");
@@ -820,13 +820,14 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
                 </label>
                 <div className="space-y-2">
                   {companions.length > 0 ? (
-                    <div className="grid grid-cols-2 gap-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                    <div className="grid grid-cols-[1fr_1fr_auto] gap-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
                       <span>Nombre</span>
                       <span>DNI</span>
+                      <span>Menor</span>
                     </div>
                   ) : null}
                   {companions.map((row, i) => (
-                    <div key={i} className="grid grid-cols-2 gap-2">
+                    <div key={i} className="grid grid-cols-[1fr_1fr_auto] gap-2">
                       <input
                         value={row.name}
                         onChange={(e) =>
@@ -843,11 +844,21 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
                         aria-label={`DNI acompañante ${i + 1}`}
                         className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs dark:border-slate-700 dark:bg-slate-950 dark:text-white"
                       />
+                      <label className="flex items-center gap-1 text-[11px]">
+                        <input
+                          type="checkbox"
+                          checked={row.isMinor}
+                          onChange={(e) =>
+                            setCompanions((prev) => prev.map((p, j) => (j === i ? { ...p, isMinor: e.target.checked } : p)))
+                          }
+                        />
+                        Menor
+                      </label>
                     </div>
                   ))}
                   <button
                     type="button"
-                    onClick={() => setCompanions((prev) => [...prev, { name: "", dni: "" }])}
+                    onClick={() => setCompanions((prev) => [...prev, { name: "", dni: "", isMinor: false }])}
                     className="text-[11px] font-bold text-blue-600"
                   >
                     Agregar acompañante

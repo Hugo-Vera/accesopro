@@ -26,6 +26,8 @@ import { revokeCredentialsForUser, upsertCredential } from "./credentials.js";
 import { ASI_CARD_TYPES, ASI_USER_TYPES } from "@accesopro/catalog";
 import { applyRoleTemplate, userHasCapability } from "./grants.js";
 import { assertFeature, tenantFeatureEnabled } from "./features.js";
+import { isMinorBirthDate } from "./age.js";
+import { decideOwnerNotice, listOwnerNoticesForProperty } from "./ownerNotices.js";
 import {
   activationUrl,
   hashPassword,
@@ -524,6 +526,7 @@ residents.post("/me/family", async (c) => {
     relationship?: string;
     phone?: string;
     photoBase64?: string;
+    birthDate?: string;
     fechaDesde?: string;
     fechaHasta?: string;
     horaDesde?: string;
@@ -533,7 +536,12 @@ residents.post("/me/family", async (c) => {
 
   const name = body.name?.trim();
   if (!name) return c.json({ error: "Falta el nombre del familiar" }, 400);
-  if (body.photoBase64) {
+  const birthDate = body.birthDate?.trim() || null;
+  const minor = isMinorBirthDate(birthDate);
+  if (minor && body.photoBase64) {
+    return c.json({ error: "No se enrola la cara de un menor de 18 años (Ley 25.326 / 26.061)" }, 400);
+  }
+  if (body.photoBase64 && !minor) {
     const blocked = await assertFeature(scoped.tenantId, "dahua.face");
     if (blocked) return c.json({ error: blocked }, 403);
   }
@@ -550,9 +558,10 @@ residents.post("/me/family", async (c) => {
     dni: body.dni?.trim() || null,
     relationship: body.relationship?.trim() || "familiar",
     phone: body.phone?.trim() || null,
-    photoBase64: body.photoBase64 || null,
+    photoBase64: minor ? null : body.photoBase64 || null,
     dahuaUserId,
     dahuaSynced: false,
+    birthDate,
     fechaDesde,
     fechaHasta,
     horaDesde: body.horaDesde?.trim() || null,
@@ -563,7 +572,7 @@ residents.post("/me/family", async (c) => {
   });
 
   let deviceSync: unknown[] = [];
-  if (body.photoBase64) {
+  if (body.photoBase64 && !minor) {
     const results = await enrollPersonOnSiteDevicesWait(
       ctx.property.siteId,
       {
@@ -588,7 +597,7 @@ residents.post("/me/family", async (c) => {
     deviceSync = results;
   }
 
-  return c.json({ ok: true, id, dahuaUserId, deviceSync });
+  return c.json({ ok: true, id, dahuaUserId, deviceSync, minor });
 });
 
 residents.delete("/me/family/:id", async (c) => {
@@ -996,4 +1005,44 @@ residents.get("/me/history", async (c) => {
       diasSemana: a.diasSemana ? (JSON.parse(a.diasSemana) as number[]) : null,
     })),
   });
+});
+
+residents.get("/me/notices", async (c) => {
+  const scoped = await scopedSiteWithModule(c, "visitors");
+  if ("error" in scoped) return scoped.error;
+  const ctx = await ownerContext(c.get("user"));
+  if (!ctx) return c.json({ error: "Perfil de propietario no encontrado" }, 404);
+  const rows = await listOwnerNoticesForProperty(ctx.property.id);
+  return c.json({
+    notices: rows.map((n) => ({
+      id: n.id,
+      kind: n.kind,
+      status: n.status,
+      title: n.title,
+      message: n.message,
+      payload: n.payload ? JSON.parse(n.payload) : null,
+      expiresAt: n.expiresAt,
+      createdAt: n.createdAt,
+      passId: n.passId,
+      approvalId: n.approvalId,
+    })),
+  });
+});
+
+residents.post("/me/notices/:id/decide", async (c) => {
+  const scoped = await scopedSiteWithModule(c, "visitors");
+  if ("error" in scoped) return scoped.error;
+  const ctx = await ownerContext(c.get("user"));
+  if (!ctx) return c.json({ error: "Perfil de propietario no encontrado" }, 404);
+  const body = await c.req.json<{ decision?: "approved" | "denied" }>();
+  const decision = body.decision === "denied" ? "denied" : body.decision === "approved" ? "approved" : null;
+  if (!decision) return c.json({ error: "Indicá aprobar o rechazar" }, 400);
+  const result = await decideOwnerNotice({
+    noticeId: c.req.param("id"),
+    propertyId: ctx.property.id,
+    userId: c.get("user").id,
+    decision,
+  });
+  if (!result.ok) return c.json({ error: result.error }, 400);
+  return c.json({ ok: true, kind: result.kind });
 });

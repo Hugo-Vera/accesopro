@@ -23,7 +23,7 @@ import { ASI_CARD_TYPES, ASI_USER_TYPES } from "@accesopro/catalog";
 import { processDocumentImage } from "./documentScan.js";
 import { mimeOfPath, readVisitorDoc, saveVisitorDoc } from "./visitorDocs.js";
 import { upsertCredential } from "./credentials.js";
-import { makeVisitToken } from "./visitPass.js";
+import { makeVisitToken, parseVisitQrPayload } from "./visitPass.js";
 import {
   attachVehicleInsurance,
   decideGuardApproval,
@@ -32,7 +32,11 @@ import {
   listPendingApprovals,
   replaceCompanions,
   serializePassFicha,
+  announceWalkIn,
+  attachGoodsAlert,
+  requestMinorTransfer,
 } from "./visitHold.js";
+import { readEventPhoto } from "./eventPhotos.js";
 
 function tsMs(v: Date | number | null | undefined) {
   if (v == null) return null;
@@ -545,6 +549,124 @@ visitorsApi.post("/visitors/approvals/:id/decide", async (c) => {
   return c.json({ ok: true });
 });
 
+visitorsApi.post("/visitors/announce", async (c) => {
+  const denied = await denyUnlessCapability(c.get("user"), "access.visitors.manage");
+  if (denied) return denied;
+  const scoped = await scopedSiteWithModule(c, "visitors");
+  if ("error" in scoped) return scoped.error;
+  const body = await c.req.json<{ propertyId?: string; guestName?: string; guestDni?: string }>();
+  if (!body.propertyId) return c.json({ error: "Falta el lote" }, 400);
+  const result = await announceWalkIn({
+    site: scoped.site,
+    propertyId: body.propertyId,
+    guardUserId: c.get("user").id,
+    guestName: body.guestName,
+    guestDni: body.guestDni,
+  });
+  if (!result.ok) return c.json({ error: result.error }, 400);
+  return c.json(result);
+});
+
+visitorsApi.post("/visitors/approvals/:id/goods", async (c) => {
+  const denied = await denyUnlessCapability(c.get("user"), "access.visitors.manage");
+  if (denied) return denied;
+  const scoped = await scopedSiteWithModule(c, "visitors");
+  if ("error" in scoped) return scoped.error;
+  const body = await c.req.json<{ description?: string; photoBase64?: string }>();
+  const result = await attachGoodsAlert({
+    site: scoped.site,
+    approvalId: c.req.param("id"),
+    description: body.description || "",
+    photoBase64: body.photoBase64,
+  });
+  if (!result.ok) return c.json({ error: result.error }, 400);
+  return c.json({ ok: true });
+});
+
+visitorsApi.get("/visitors/approvals/:id/goods-photo", async (c) => {
+  const denied = await denyUnlessCapability(c.get("user"), "access.visitors.manage");
+  if (denied) return denied;
+  const scoped = await scopedSiteWithModule(c, "visitors");
+  if ("error" in scoped) return scoped.error;
+  const buf = readEventPhoto(scoped.site.id, `goods-${c.req.param("id")}`);
+  if (!buf) return c.json({ error: "No hay foto" }, 404);
+  return c.body(new Uint8Array(buf), 200, { "Content-Type": "image/jpeg", "Cache-Control": "private, max-age=60" });
+});
+
+visitorsApi.post("/visitors/approvals/:id/minors", async (c) => {
+  const denied = await denyUnlessCapability(c.get("user"), "access.visitors.manage");
+  if (denied) return denied;
+  const scoped = await scopedSiteWithModule(c, "visitors");
+  if ("error" in scoped) return scoped.error;
+  const body = await c.req.json<{
+    originPropertyId?: string;
+    exitAdultsCount?: number;
+    exitMinorsCount?: number;
+    extraName?: string;
+    extraDni?: string;
+  }>();
+  if (!body.originPropertyId) return c.json({ error: "Falta el lote de procedencia del menor" }, 400);
+  const result = await requestMinorTransfer({
+    site: scoped.site,
+    approvalId: c.req.param("id"),
+    originPropertyId: body.originPropertyId,
+    exitAdultsCount: body.exitAdultsCount,
+    exitMinorsCount: body.exitMinorsCount,
+    extraName: body.extraName,
+    extraDni: body.extraDni,
+  });
+  if (!result.ok) return c.json({ error: result.error }, 400);
+  return c.json({ ok: true });
+});
+
+visitorsApi.get("/visit-passes/verify/:token", async (c) => {
+  const denied = await denyUnlessCapability(c.get("user"), "access.visitors.manage");
+  if (denied) return denied;
+  const scoped = await scopedSiteWithModule(c, "visitors");
+  if ("error" in scoped) return scoped.error;
+  const token = c.req.param("token");
+  const pass = await db
+    .select()
+    .from(visitPasses)
+    .where(and(eq(visitPasses.token, token), eq(visitPasses.siteId, scoped.site.id)))
+    .get();
+  if (!pass) return c.json({ valid: false, error: "QR no encontrado" }, 404);
+  const property = await db.select().from(properties).where(eq(properties.id, pass.propertyId)).get();
+  const now = Date.now();
+  const { isOpenVisitStatus } = await import("./visitHold.js");
+  const valid =
+    isOpenVisitStatus(pass.status) && now >= new Date(pass.validFrom).getTime() && now <= new Date(pass.validUntil).getTime();
+  return c.json({
+    valid,
+    status: pass.status,
+    guestName: pass.guestName,
+    patente: pass.patente,
+    guestDni: pass.guestDni,
+    lotNumber: property?.lotNumber,
+    validFrom: pass.validFrom,
+    validUntil: pass.validUntil,
+    horaDesde: pass.horaDesde,
+    horaHasta: pass.horaHasta,
+    scannedInAt: pass.scannedInAt,
+    scannedOutAt: pass.scannedOutAt,
+  });
+});
+
+visitorsApi.post("/visit-passes/scan", async (c) => {
+  const denied = await denyUnlessCapability(c.get("user"), "access.visitors.manage");
+  if (denied) return denied;
+  const scoped = await scopedSiteWithModule(c, "visitors");
+  if ("error" in scoped) return scoped.error;
+  const body = await c.req.json<{ raw?: string; token?: string; sentido?: string }>();
+  let token = body.token?.trim() ?? "";
+  if (body.raw) token = parseVisitQrPayload(body.raw) ?? token;
+  if (!token) return c.json({ ok: false, error: "QR inválido" }, 400);
+  const sentido = body.sentido === "out" ? "out" : "in";
+  const { scanVisitPass } = await import("./visitPass.js");
+  const result = await scanVisitPass(scoped.site, token, sentido);
+  return c.json(result, result.ok ? 200 : 403);
+});
+
 visitorsApi.post("/visitors/passes/:id/complete", async (c) => {
   const denied = await denyUnlessCapability(c.get("user"), "access.visitors.manage");
   if (denied) return denied;
@@ -679,7 +801,7 @@ export type VisitorCheckinPayload = {
     validUntil: number | string;
   };
   arrivalMode?: "peatonal" | "plataforma" | "vehiculo";
-  companions?: { name?: string; dni?: string }[];
+  companions?: { name?: string; dni?: string; birthDate?: string; isMinor?: boolean; situation?: string }[];
   /** Visita = QR + guardia. Cara de invitado no se enrola en el ASI. */
   accessMethod?: "qr";
   /** Seguro de vida / ART de la persona (no el del auto). */
@@ -932,10 +1054,10 @@ visitorsApi.post("/visitors/checkin", async (c) => {
     personInsuranceId,
     licenseId,
     visitType: body.destination.visitType || "social",
-    status: "in_site",
+    status: "awaiting_entry",
     authorizedBy: body.destination.authorizedBy.trim(),
     passToken: token,
-    scannedInAt: now,
+    scannedInAt: null,
     notes: body.destination.notes || null,
     createdByUserId: c.get("user")?.id,
     createdAt: now,

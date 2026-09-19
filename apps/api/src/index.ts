@@ -19,9 +19,7 @@ import { agentRoutes } from "./agent.js";
 import { startRosterReconcilePoller } from "./rosterReconcile.js";
 import { isUnlockMethodPack, syncAsiUnlockMethods } from "./dahuaUnlock.js";
 import { db } from "./db/client.js";
-import { properties, ownerProfiles, sites, tenantModules, tenants, users, visitPasses, events } from "./db/schema.js";
-import { scanVisitPass, parseVisitQrPayload } from "./visitPass.js";
-import { isOpenVisitStatus } from "./visitHold.js";
+import { properties, ownerProfiles, sites, tenantModules, tenants, users, events } from "./db/schema.js";
 import { accessPointsApi } from "./accessPoints.js";
 import { planApi } from "./plan.js";
 import { hardware } from "./hardware.js";
@@ -30,6 +28,8 @@ import { alarmsApi } from "./alarms.js";
 import { dniEnrollApi } from "./dniEnroll.js";
 import { attendanceApi } from "./attendance.js";
 import { visitorsApi } from "./visitors.js";
+import { censusApi } from "./census.js";
+import { retentionApi, startRetentionPoller } from "./retention.js";
 import { eventStreamRoutes } from "./eventStream.js";
 import { credentialsApi } from "./credentials.js";
 import {
@@ -192,44 +192,6 @@ app.get("/auth/me", async (c) => {
   if (!user) return c.json({ user: null });
   const capabilities = await resolveCapabilities(user);
   return c.json({ user: { ...user, capabilities } });
-});
-
-app.get("/api/visit-passes/verify/:token", async (c) => {
-  const token = c.req.param("token");
-  const pass = await db.select().from(visitPasses).where(eq(visitPasses.token, token)).get();
-  if (!pass) return c.json({ valid: false, error: "QR no encontrado" }, 404);
-  const property = await db.select().from(properties).where(eq(properties.id, pass.propertyId)).get();
-  const now = Date.now();
-  const valid =
-    isOpenVisitStatus(pass.status) && now >= new Date(pass.validFrom).getTime() && now <= new Date(pass.validUntil).getTime();
-  return c.json({
-    valid,
-    status: pass.status,
-    guestName: pass.guestName,
-    patente: pass.patente,
-    guestDni: pass.guestDni,
-    lotNumber: property?.lotNumber,
-    validFrom: pass.validFrom,
-    validUntil: pass.validUntil,
-    horaDesde: pass.horaDesde,
-    horaHasta: pass.horaHasta,
-    scannedInAt: pass.scannedInAt,
-    scannedOutAt: pass.scannedOutAt,
-  });
-});
-
-app.post("/api/visit-passes/scan", async (c) => {
-  const body = await c.req.json<{ raw?: string; token?: string; sentido?: string }>();
-  let token = body.token?.trim() ?? "";
-  if (body.raw) token = parseVisitQrPayload(body.raw) ?? token;
-  if (!token) return c.json({ ok: false, error: "QR inválido" }, 400);
-  const sentido = body.sentido === "out" ? "out" : "in";
-  const pass = await db.select().from(visitPasses).where(eq(visitPasses.token, token)).get();
-  if (!pass) return c.json({ ok: false, error: "QR no encontrado" }, 404);
-  const site = await db.select().from(sites).where(eq(sites.id, pass.siteId)).get();
-  if (!site) return c.json({ ok: false, error: "Sitio no encontrado" }, 404);
-  const result = await scanVisitPass(site, token, sentido);
-  return c.json(result, result.ok ? 200 : 403);
 });
 
 app.use("/api/*", requireAuth);
@@ -414,6 +376,8 @@ app.route("/api", systemApi);
 app.route("/api/residents", residents);
 app.route("/api", attendanceApi);
 app.route("/api", visitorsApi);
+app.route("/api", censusApi);
+app.route("/api", retentionApi);
 app.route("/api", alarmsApi);
 app.route("/api", dniEnrollApi);
 app.route("/api", credentialsApi);
@@ -479,6 +443,7 @@ const host = process.env.HOST ?? "0.0.0.0";
 
 await seedIfEmpty();
 startRosterReconcilePoller();
+startRetentionPoller();
 
 serve({ fetch: app.fetch, port, hostname: host }, () => {
   console.log(`AccesoPro API en http://${host}:${port}`);

@@ -1,8 +1,10 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { useDash } from "@/components/DashboardProvider";
 import { PageHeader } from "@/components/PageHeader";
 import { ServerUpdatePanel } from "@/components/ServerUpdatePanel";
+import { api } from "@/lib/api";
 
 export function ConfigPage() {
   const { plan, plans, modules, features, isPlatform, toggleModule, toggleFeature, assignPlan, can } = useDash();
@@ -16,6 +18,8 @@ export function ConfigPage() {
       />
 
       <ServerUpdatePanel />
+
+      <RetentionPanel />
 
       <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
         <div className="mb-6 flex flex-col gap-1 border-b border-slate-200 pb-4 dark:border-slate-800">
@@ -209,5 +213,54 @@ export function ConfigPage() {
         </div>
       </section>
     </div>
+  );
+}
+
+function RetentionPanel() {
+  const { tenantId, can } = useDash();
+  const [days, setDays] = useState<number>(90);
+  const [msg, setMsg] = useState<string | null>(null);
+  const allowed = can("core.config");
+
+  useEffect(() => {
+    if (!tenantId || !allowed) return;
+    api<{ retentionDays: number }>(`/api/tenants/${tenantId}/retention`)
+      .then((d) => setDays(d.retentionDays))
+      .catch(() => undefined);
+  }, [tenantId, allowed]);
+
+  if (!tenantId || !allowed) return null;
+
+  return (
+    <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+      <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Retención de visitas</h2>
+      <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+        Pasado el plazo se anonimizan DNI y nombres de visitas cerradas. Las métricas quedan. 0 = no purgar.
+      </p>
+      <label className="mt-4 block text-xs font-semibold text-slate-700 dark:text-slate-300">
+        Días
+        <select
+          className="mt-1 w-full max-w-xs rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+          value={days}
+          onChange={(e) => {
+            const n = Number(e.target.value);
+            setDays(n);
+            api(`/api/tenants/${tenantId}/retention`, {
+              method: "PUT",
+              body: JSON.stringify({ retentionDays: n }),
+            })
+              .then(() => setMsg("Guardado"))
+              .catch((err) => setMsg(err instanceof Error ? err.message : "Error"));
+          }}
+        >
+          <option value={30}>30</option>
+          <option value={60}>60</option>
+          <option value={90}>90</option>
+          <option value={180}>180</option>
+          <option value={0}>No purgar</option>
+        </select>
+      </label>
+      {msg ? <p className="mt-2 text-xs text-slate-500">{msg}</p> : null}
+    </section>
   );
 }

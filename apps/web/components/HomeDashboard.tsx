@@ -24,6 +24,7 @@ import { ACTUATOR_POLL_MS, useOpsEvents } from "@/components/ops/useOpsEvents";
 import { mergeLaneActuatorIds, resolveOpenActuatorId } from "@/components/ops/resolveOpenRelay";
 import { GuardApprovalQueue } from "@/components/ops/GuardApprovalQueue";
 import { VisitorCheckinModal } from "@/components/VisitorCheckinModal";
+import { AnnounceVisitModal } from "@/components/ops/AnnounceVisitModal";
 import { useToast } from "@/components/Toast";
 
 const OpsPlanMap = dynamic(
@@ -108,6 +109,7 @@ export function HomeDashboard() {
     action: "open" | "close";
   } | null>(null);
   const [checkinOpen, setCheckinOpen] = useState(false);
+  const [announce, setAnnounce] = useState<{ propertyId: string; lotNumber: string } | null>(null);
   const toast = useToast();
 
   const showLivePage = featureOn("dahua.live") && can("dahua.live");
@@ -231,6 +233,16 @@ export function HomeDashboard() {
     return () => clearInterval(id);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tenantId, showActuators, showDevices, showLivePage, eventsEnabled]);
+
+  useEffect(() => {
+    function onAnnounce(e: Event) {
+      const detail = (e as CustomEvent<{ propertyId?: string; lotNumber?: string }>).detail;
+      if (!detail?.propertyId) return;
+      setAnnounce({ propertyId: detail.propertyId, lotNumber: detail.lotNumber || "" });
+    }
+    window.addEventListener("ap:announce-lot", onAnnounce);
+    return () => window.removeEventListener("ap:announce-lot", onAnnounce);
+  }, []);
 
   async function fire(id: string, action: "open" | "close") {
     if (!tenantId) return;
@@ -422,6 +434,17 @@ export function HomeDashboard() {
           onSuccess={() => {
             setCheckinOpen(false);
             toast.success("Visita identificada", "El guardia tiene que aprobar la entrada. El propietario sigue pasando solo.");
+          }}
+        />
+      ) : null}
+      {tenantId && announce && showOwnerAuth ? (
+        <AnnounceVisitModal
+          tenantId={tenantId}
+          propertyId={announce.propertyId}
+          lotNumber={announce.lotNumber}
+          onClose={() => setAnnounce(null)}
+          onDone={(passId) => {
+            window.dispatchEvent(new CustomEvent("ap:open-visit-approval", { detail: { passId } }));
           }}
         />
       ) : null}

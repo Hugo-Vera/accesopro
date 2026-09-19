@@ -205,6 +205,14 @@ export const NAV_CATALOG: NavGroup[] = [
     defaultItemId: "panico",
     items: [
       { id: "panico", href: "/dashboard/panico", label: "Pánico", module: "panic", capability: "ops.alarms" },
+      {
+        id: "censo",
+        href: "/dashboard/censo",
+        label: "Censo",
+        module: "visitors",
+        feature: "visitors.census",
+        capability: "ops.census",
+      },
       { id: "fuego", href: "/dashboard/fuego", label: "Fuego", module: "fire", capability: "ops.alarms" },
     ],
   },

@@ -358,6 +358,8 @@ export const propertyFamilyMembers = sqliteTable("property_family_members", {
   photoBase64: text("photo_base64"),
   dahuaUserId: text("dahua_user_id"),
   dahuaSynced: integer("dahua_synced", { mode: "boolean" }).notNull().default(false),
+  /** YYYY-MM-DD. Menor de 18: no se manda cara al ASI. */
+  birthDate: text("birth_date"),
   fechaDesde: integer("fecha_desde", { mode: "timestamp_ms" }),
   fechaHasta: integer("fecha_hasta", { mode: "timestamp_ms" }),
   horaDesde: text("hora_desde"),
@@ -461,6 +463,10 @@ export const visitCompanions = sqliteTable("visit_companions", {
     .references(() => visitPasses.id),
   name: text("name").notNull(),
   dni: text("dni"),
+  birthDate: text("birth_date"),
+  isMinor: integer("is_minor", { mode: "boolean" }).notNull().default(false),
+  /** acompanante | queda_a_jugar | traslado */
+  situation: text("situation").notNull().default("acompanante"),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
 });
 
@@ -484,6 +490,18 @@ export const guardApprovals = sqliteTable("guard_approvals", {
   deviceId: text("device_id"),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
   decidedAt: integer("decided_at", { mode: "timestamp_ms" }),
+  /** none | pending_owner | owner_approved | owner_denied | owner_expired */
+  ownerAuthStatus: text("owner_auth_status").notNull().default("none"),
+  ownerAuthExpiresAt: integer("owner_auth_expires_at", { mode: "timestamp_ms" }),
+  ownerAuthorizedByUserId: text("owner_authorized_by_user_id").references(() => users.id),
+  goodsAlert: integer("goods_alert", { mode: "boolean" }).notNull().default(false),
+  goodsDescription: text("goods_description"),
+  goodsPhotoPath: text("goods_photo_path"),
+  goodsAuthorizedByUserId: text("goods_authorized_by_user_id").references(() => users.id),
+  exitAdultsCount: integer("exit_adults_count"),
+  exitMinorsCount: integer("exit_minors_count"),
+  originPropertyId: text("origin_property_id").references(() => properties.id),
+  minorTransferAuthorizedByUserId: text("minor_transfer_authorized_by_user_id").references(() => users.id),
 });
 
 export const departments = sqliteTable("departments", {
@@ -615,7 +633,8 @@ export const visitRecords = sqliteTable("visit_records", {
   personInsuranceId: text("person_insurance_id").references(() => personInsurances.id),
   licenseId: text("license_id").references(() => driverLicenses.id),
   visitType: text("visit_type").notNull().default("social"),
-  status: text("status").notNull().default("in_site"),
+  /** awaiting_entry | in_site | awaiting_exit | completed | denied */
+  status: text("status").notNull().default("awaiting_entry"),
   authorizedBy: text("authorized_by").notNull(),
   passToken: text("pass_token"),
   scannedInAt: integer("scanned_in_at", { mode: "timestamp_ms" }),
@@ -687,4 +706,36 @@ export const credentialDeviceSync = sqliteTable("credential_device_sync", {
   lastSyncedAt: integer("last_synced_at", { mode: "timestamp_ms" }),
 });
 
+/** Avisos al titular del lote (walk-in, bien no registrado, traslado de menor). */
+export const ownerNotices = sqliteTable("owner_notices", {
+  id: text("id").primaryKey(),
+  siteId: text("site_id")
+    .notNull()
+    .references(() => sites.id),
+  propertyId: text("property_id")
+    .notNull()
+    .references(() => properties.id),
+  passId: text("pass_id").references(() => visitPasses.id),
+  approvalId: text("approval_id").references(() => guardApprovals.id),
+  /** walk_in | goods | minor_transfer */
+  kind: text("kind").notNull(),
+  /** pending | approved | denied | expired */
+  status: text("status").notNull().default("pending"),
+  title: text("title").notNull(),
+  message: text("message").notNull(),
+  payload: text("payload"),
+  expiresAt: integer("expires_at", { mode: "timestamp_ms" }),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  decidedAt: integer("decided_at", { mode: "timestamp_ms" }),
+  decidedByUserId: text("decided_by_user_id").references(() => users.id),
+});
+
+/** Retención comercial por barrio (días). 0 = no purgar. */
+export const tenantSettings = sqliteTable("tenant_settings", {
+  tenantId: text("tenant_id")
+    .primaryKey()
+    .references(() => tenants.id),
+  retentionDays: integer("retention_days").notNull().default(90),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+});
 

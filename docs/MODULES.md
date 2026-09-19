@@ -8,7 +8,7 @@ Fuente de verdad: `packages/catalog/src/index.ts` (`MODULE_CATALOG` + `PLAN_CATA
 | Actuadores | `actuators` | — | `/dashboard/actuadores`, `/dashboard/puntos-acceso` | `hardware.ts`, `actuatorExec.ts`, `accessPoints.ts` | CRUD + cableado |
 | Acceso Dahua | `dahua_access` | actuators | `/dashboard/dahua/*` | `agent.ts`, `apps/agent` | Packs: equipos, eventos, abrir, personas, facial, huella, tarjeta, PIN, QR, periodos, evidencia, live, intercom, puerta, alarma |
 | Chapas ALPR | `alpr` | actuators | `/dashboard/alpr` | `hardware.ts` (`/alpr/live`, `/plates`), `agent.ts` | Eventos `plate` + lista blanca/negra |
-| Visitas | `visitors` | actuators | `/dashboard/visitas`, `/portal` | `visitors.ts`, `visitPass.ts`, `residents.ts` | QR portal + check-in portería |
+| Visitas | `visitors` | actuators | `/dashboard/visitas`, `/dashboard/censo`, `/portal` | `visitors.ts`, `visitPass.ts`, `residents.ts`, `census.ts` | QR portal + check-in + censo + avisos al lote |
 | Alta DNI | `dni_enroll` | visitors | `/dashboard/visitas?tab=dni` | `dniEnroll.ts` | PDF417/QR DNI en portería (pestaña de Visitas) |
 | Pánico | `panic` | — | `/dashboard/panico`, SOS portal | `alarms.ts` | Cola SOS |
 | Fuego | `fire` | — | `/dashboard/fuego` | `alarms.ts` | Contacto panel, no certificado |

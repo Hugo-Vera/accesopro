@@ -109,8 +109,10 @@ Visita: ingreso en carril 1 (`visit_passes.scanned_in_at`) y egreso en carril 2 
 | `credential_device_sync` | Enroll OK/error por lector (ingreso/salida) |
 | `visit_authorizations` | Autorización temporal (empleada, proveedor) |
 | `visit_passes` | QR de visita: vigencia, modalidad (`peatonal`/`plataforma`/`vehiculo`), estado de aprobación |
-| `visit_companions` | Acompañantes del mismo QR |
-| `guard_approvals` | Cola del guardia: entrada/salida, baúl, aprobar/denegar |
+| `visit_companions` | Acompañantes (nombre, DNI, menor, situación) |
+| `guard_approvals` | Cola del guardia: entrada/salida, baúl, bien no registrado, walk-in |
+| `owner_notices` | Avisos al titular (walk-in 120 s, bien, traslado de menor) |
+| `tenant_settings` | Retención comercial (días) |
 | `visitor_identities` | Persona filiatoria DNI (PDF417), lista negra |
 | `vehicles` | Parque automotor por patente |
 | `person_insurances` | Seguro de vida / ART de la persona + constancia en disco |
@@ -123,7 +125,7 @@ Visita: ingreso en carril 1 (`visit_passes.scanned_in_at`) y egreso en carril 2 
 | `owner_profiles` | `user_id` único, `dni`, `photo_base64`, `dahua_user_id`, `dahua_synced` |
 | `visit_passes` | `token`, `arrival_mode`, `status` (preauthorized/awaiting_entry/in_site/awaiting_exit/completed), `dahua_card_no` |
 | `visitor_identities` | `dni_number`, `tramite_number`, `last_name`, `first_name`, `raw_pdf417`, `blacklisted` |
-| `visit_records` | `visit_type` (default `social`), `status` (default `in_site`), `pass_token`, IN/OUT |
+| `visit_records` | `visit_type` (default `social`), `status` (sigue al pase: `awaiting_entry`…), `pass_token`, IN/OUT |
 
 ### Relaciones clave
 

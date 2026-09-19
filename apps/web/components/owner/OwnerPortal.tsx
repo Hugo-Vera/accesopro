@@ -187,6 +187,9 @@ export function OwnerPortal() {
   });
   const [sosBusy, setSosBusy] = useState(false);
   const [sosMsg, setSosMsg] = useState<string | null>(null);
+  const [notices, setNotices] = useState<
+    { id: string; kind: string; status: string; title: string; message: string; expiresAt: string | number | null }[]
+  >([]);
   useEscapeKey(() => {
     if (showFamilyModal) setShowFamilyModal(false);
     else if (showServiceModal) setShowServiceModal(false);
@@ -219,6 +222,10 @@ export function OwnerPortal() {
       } else {
         setPasses([]);
       }
+      const n = await api<{
+        notices: { id: string; kind: string; status: string; title: string; message: string; expiresAt: string | number | null }[];
+      }>("/api/residents/me/notices").catch(() => ({ notices: [] }));
+      setNotices(n.notices || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Error al cargar portal");
     }
@@ -226,6 +233,14 @@ export function OwnerPortal() {
 
   useEffect(() => {
     load();
+    const id = window.setInterval(() => {
+      api<{
+        notices: { id: string; kind: string; status: string; title: string; message: string; expiresAt: string | number | null }[];
+      }>("/api/residents/me/notices")
+        .then((n) => setNotices(n.notices || []))
+        .catch(() => undefined);
+    }, 4000);
+    return () => window.clearInterval(id);
   }, [load]);
 
   useEffect(() => {
@@ -410,6 +425,48 @@ export function OwnerPortal() {
           </button>
         </div>
       </header>
+
+      {notices.filter((n) => n.status === "pending").length ? (
+        <div className="space-y-2">
+          {notices
+            .filter((n) => n.status === "pending")
+            .map((n) => (
+              <article
+                key={n.id}
+                className="rounded-xl border border-amber-300 bg-amber-50 p-4 dark:border-amber-800 dark:bg-amber-950/40"
+              >
+                <p className="text-sm font-bold text-amber-900 dark:text-amber-200">{n.title}</p>
+                <p className="mt-1 text-xs text-amber-800 dark:text-amber-300">{n.message}</p>
+                <div className="mt-3 flex gap-2">
+                  <button
+                    type="button"
+                    className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white"
+                    onClick={() =>
+                      api(`/api/residents/me/notices/${n.id}/decide`, {
+                        method: "POST",
+                        body: JSON.stringify({ decision: "approved" }),
+                      }).then(load)
+                    }
+                  >
+                    Autorizar
+                  </button>
+                  <button
+                    type="button"
+                    className="rounded-lg bg-rose-600 px-3 py-1.5 text-xs font-bold text-white"
+                    onClick={() =>
+                      api(`/api/residents/me/notices/${n.id}/decide`, {
+                        method: "POST",
+                        body: JSON.stringify({ decision: "denied" }),
+                      }).then(load)
+                    }
+                  >
+                    Rechazar
+                  </button>
+                </div>
+              </article>
+            ))}
+        </div>
+      ) : null}
 
       {/* Navegación por Solapas */}
       <nav className="flex flex-wrap gap-2 rounded-xl border border-slate-200 bg-white p-1.5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
@@ -1064,6 +1121,7 @@ export function OwnerPortal() {
                 const dni = String(fd.get("dni") || "").trim();
                 const relationship = String(fd.get("relationship") || "familiar");
                 const phone = String(fd.get("phone") || "").trim();
+                const birthDate = String(fd.get("birthDate") || "").trim();
                 const fileInput = e.currentTarget.elements.namedItem("photo") as HTMLInputElement;
                 const file = fileInput?.files?.[0];
 
@@ -1079,7 +1137,7 @@ export function OwnerPortal() {
                 try {
                   await api("/api/residents/me/family", {
                     method: "POST",
-                    body: JSON.stringify({ name, dni, relationship, phone, photoBase64 }),
+                    body: JSON.stringify({ name, dni, relationship, phone, photoBase64, birthDate }),
                   });
                   setShowFamilyModal(false);
                   load();
@@ -1128,6 +1186,17 @@ export function OwnerPortal() {
                     className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-blue-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                   />
                 </div>
+
+                <div className="col-span-2">
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                    Fecha de nacimiento
+                  </label>
+                  <input
+                    type="date"
+                    name="birthDate"
+                    className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-blue-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                  />
+                </div>
               </div>
 
               <div>
@@ -1145,6 +1214,9 @@ export function OwnerPortal() {
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
                   Foto Facial para Reconocimiento en Lector ASI
                 </label>
+                <p className="mt-1 text-[11px] text-slate-500">
+                  Si es menor de 18 años no subas foto: no se enrola la cara en el lector.
+                </p>
                 <input
                   type="file"
                   name="photo"

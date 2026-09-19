@@ -95,9 +95,15 @@ in_site
 
 Aprobar exige: DNI numérico; si `arrivalMode=vehiculo` también patente, seguro y **baúl tildado**. Fuera de ventana: igual entra a cola con `reason=expired` (el guardia puede excepción con comentario).
 
-Walk-up portería (`VisitorCheckinModal.tsx`): mismo `visit_passes` + hold de entrada. El wizard **no** abre barrera ni enrola cara.
+Walk-up portería (`VisitorCheckinModal.tsx`): mismo `visit_passes` + hold de entrada. El wizard **no** abre barrera ni enrola cara. `visit_records.status` sigue al pase (`awaiting_entry` hasta que el guardia aprueba).
 
-Hueco: el check-in escribe `visit_records.status = in_site` **antes** de que el guardia apruebe. El pase sí queda `awaiting_entry`. Las dos tablas no coinciden hasta el approve.
+Walk-in desde el plano: **Anunciar visita** → aviso al portal del lote (120 s). El titular autoriza o rechaza; **abrir** sigue siendo el guardia.
+
+Egreso: baúl si hay vehículo. Bien no registrado: foto + aviso al lote; la barrera no abre hasta que el titular autoriza. Menor de más: hay que pedir traslado al lote de procedencia.
+
+Censo (`/dashboard/censo`, pack `visitors.census`): visitas `in_site` / `awaiting_exit` + acompañantes, teléfonos del titular. No cuenta dueños con cara (no hay reloj de permanencia).
+
+`GET /api/visit-passes/verify` y `POST /api/visit-passes/scan` requieren sesión de guardia (`access.visitors.manage`). El ASI sigue por `holdVisitQr` interno.
 
 ---
 
@@ -112,7 +118,7 @@ Orden fijo (`apps/api/src/db/schema.ts`, `apps/api/src/accessPoints.ts`):
 
 El módulo comercial (ALPR, visitas, Dahua) **no** va en la fila del punto. Admin: `/dashboard/puntos-acceso`.
 
-Portería (`HomeDashboard.tsx`): **Ingreso | plano | Salida**. AccesoCam RTSP no vive ahí (`/dashboard/dahua/live`). Toast facial al mismo carril. Campana del mapa abre la ficha de aprobación (`ap:open-visit-approval`).
+Portería (`HomeDashboard.tsx`): **Ingreso | plano | Salida**. AccesoCam RTSP no vive ahí (`/dashboard/dahua/live`). Toast facial al mismo carril. Campana del mapa abre la ficha de aprobación (`ap:open-visit-approval`). Clic en un lote = anunciar visita walk-in.
 
 ---
 
@@ -126,7 +132,7 @@ Portería (`HomeDashboard.tsx`): **Ingreso | plano | Salida**. AccesoCam RTSP no
 | Vecino | `/portal` | Cara propia, familia, servicios, autorizar visita QR |
 | Visita | Nada (solo el QR) | Identificarse; no abre |
 
-App Android: poll 3 s a la misma API. **No hay push.**
+App Android: poll 3 s a la misma API. Dual-host: LAN 2 s y después URL pública. **No hay FCM.** Censo y SOS en la app.
 
 ---
 
@@ -160,14 +166,12 @@ App Android: poll 3 s a la misma API. **No hay push.**
 
 ### Seguridad / consistencia del flujo
 
-- Unificar `visit_records` con el pase (hoy el check-in marca `in_site` demasiado pronto).
 - QR permanente del vecino: enrolarlo siempre en `person_credentials` para que Error 96 abra sin alta manual.
-- Cerrar o autenticar `GET /api/visit-passes/verify` y `POST /scan` (hoy públicos).
 - Distinguir en UI `svc_*` permanente vs visita con `visitKind=service`.
 
 ### Ops del guardia
 
-- Push real al celular (hoy poll 3 s; hay que tener app o dashboard abiertos).
+- Push real al celular (hoy poll 3 s + dual-host; no hay FCM).
 - Unir en historial la fila Error 96 + la apertura remota post-approve.
 - Foto de evidencia de visita **sin** enrolar en ASI (`VisitFaceCapture.tsx` existe y no está cableado).
 

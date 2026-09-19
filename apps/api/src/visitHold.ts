@@ -17,6 +17,9 @@ import { actuatorsForDahuaDevice, actuatorsForSentido, laneCodeOf } from "./acce
 import { broadcastRealtimeEvent } from "./eventStream.js";
 import { nid, normalizePlate } from "./scope.js";
 import { parseVisitQrPayload } from "./visitPass.js";
+import { companionIsMinor, isMinorBirthDate } from "./age.js";
+import { createOwnerNotice, expireOwnerNotices } from "./ownerNotices.js";
+import { saveEventPhoto } from "./eventPhotos.js";
 
 export type ArrivalMode = "peatonal" | "plataforma" | "vehiculo";
 export type VisitKind = "social" | "service" | "contractor" | "delivery";
@@ -79,7 +82,7 @@ export async function listCompanions(passId: string) {
 
 export async function replaceCompanions(
   passId: string,
-  rows: { name?: string; dni?: string }[] | undefined,
+  rows: { name?: string; dni?: string; birthDate?: string; isMinor?: boolean; situation?: string }[] | undefined,
 ) {
   if (!rows) return;
   await db.delete(visitCompanions).where(eq(visitCompanions.passId, passId));
@@ -87,14 +90,36 @@ export async function replaceCompanions(
   for (const row of rows) {
     const name = String(row.name || "").trim();
     if (!name) continue;
+    const birthDate = String(row.birthDate || "").trim() || null;
+    const situation =
+      row.situation === "queda_a_jugar" || row.situation === "traslado" ? row.situation : "acompanante";
     await db.insert(visitCompanions).values({
       id: nid(),
       passId,
       name,
       dni: String(row.dni || "").replace(/\D/g, "") || null,
+      birthDate,
+      isMinor: Boolean(row.isMinor) || isMinorBirthDate(birthDate),
+      situation,
       createdAt: now,
     });
   }
+}
+
+export async function syncVisitRecordFromPass(pass: typeof visitPasses.$inferSelect) {
+  if (!pass.visitRecordId) return;
+  const recordStatus =
+    pass.status === "in_site" || pass.status === "completed" || pass.status === "denied" || pass.status === "awaiting_exit"
+      ? pass.status
+      : "awaiting_entry";
+  await db
+    .update(visitRecords)
+    .set({
+      status: recordStatus,
+      scannedInAt: pass.scannedInAt ?? null,
+      scannedOutAt: pass.scannedOutAt ?? null,
+    })
+    .where(eq(visitRecords.id, pass.visitRecordId));
 }
 
 export async function missingVisitFields(passId: string): Promise<string[]> {
@@ -190,6 +215,7 @@ export async function holdVisitQr(input: {
 
   if (pass.status !== nextStatus && pass.status !== "completed") {
     await db.update(visitPasses).set({ status: nextStatus }).where(eq(visitPasses.id, pass.id));
+    await syncVisitRecordFromPass({ ...pass, status: nextStatus });
   }
 
   const property = await db.select().from(properties).where(eq(properties.id, pass.propertyId)).get();
@@ -295,6 +321,24 @@ export async function decideGuardApproval(input: {
     return { ok: false, error: "Hay que revisar el baúl antes de aprobar" };
   }
 
+  if (row.sentido === "out") {
+    if (row.goodsAlert && !row.goodsAuthorizedByUserId) {
+      return {
+        ok: false,
+        error: "Hay un bien no registrado: el titular del lote tiene que autorizar la salida",
+      };
+    }
+    const comps = await listCompanions(pass.id);
+    const minorsIn = comps.filter((x) => companionIsMinor(x)).length;
+    const exitMinors = row.exitMinorsCount ?? minorsIn;
+    if (exitMinors > minorsIn && !row.minorTransferAuthorizedByUserId) {
+      return {
+        ok: false,
+        error: "Sale un menor de más: pedí autorización al lote de procedencia",
+      };
+    }
+  }
+
   const nextStatus = row.sentido === "out" ? "completed" : "in_site";
   const patch: Partial<typeof visitPasses.$inferInsert> = { status: nextStatus };
   if (row.sentido === "in") patch.scannedInAt = pass.scannedInAt ?? now;
@@ -304,16 +348,7 @@ export async function decideGuardApproval(input: {
   }
 
   await db.update(visitPasses).set(patch).where(eq(visitPasses.id, pass.id));
-  if (pass.visitRecordId) {
-    await db
-      .update(visitRecords)
-      .set({
-        status: nextStatus === "completed" ? "completed" : "in_site",
-        scannedInAt: patch.scannedInAt ?? undefined,
-        scannedOutAt: patch.scannedOutAt ?? undefined,
-      })
-      .where(eq(visitRecords.id, pass.visitRecordId));
-  }
+  await syncVisitRecordFromPass({ ...pass, ...patch, status: nextStatus });
   await db
     .update(guardApprovals)
     .set({
@@ -401,7 +436,14 @@ export async function serializePassFicha(
     validUntil: pass.validUntil,
     needsTrunk: needsVehicleDocs(pass.arrivalMode),
     missing,
-    companions: companions.map((x) => ({ id: x.id, name: x.name, dni: x.dni })),
+    companions: companions.map((x) => ({
+      id: x.id,
+      name: x.name,
+      dni: x.dni,
+      birthDate: x.birthDate,
+      isMinor: companionIsMinor(x),
+      situation: x.situation,
+    })),
     insurance,
     lotNumber: property?.lotNumber ?? null,
     propertyId: pass.propertyId,
@@ -409,6 +451,23 @@ export async function serializePassFicha(
     mapLng: property?.mapLng ?? null,
     lotPolygon: property?.lotPolygon ?? null,
     ...contact,
+    ownerAuthStatus: row?.ownerAuthStatus ?? "none",
+    ownerAuthExpiresAt: row?.ownerAuthExpiresAt ?? null,
+    goodsAlert: Boolean(row?.goodsAlert),
+    goodsDescription: row?.goodsDescription ?? null,
+    goodsPhotoPath: row?.goodsPhotoPath ?? null,
+    goodsAuthorized: Boolean(row?.goodsAuthorizedByUserId),
+    goodsCallReady: Boolean(
+      row?.goodsAlert &&
+        !row.goodsAuthorizedByUserId &&
+        Date.now() - (row.createdAt instanceof Date ? row.createdAt.getTime() : Number(row.createdAt)) >= 30_000,
+    ),
+    exitAdultsCount: row?.exitAdultsCount ?? null,
+    exitMinorsCount: row?.exitMinorsCount ?? null,
+    originPropertyId: row?.originPropertyId ?? null,
+    minorTransferAuthorized: Boolean(row?.minorTransferAuthorizedByUserId),
+    minorsIn: companions.filter((x) => companionIsMinor(x)).length,
+    adultsIn: 1 + companions.filter((x) => !companionIsMinor(x)).length,
     emergencies: [
       { label: "Policía / emergencias", phone: "911" },
       { label: "SAME", phone: "107" },
@@ -422,6 +481,7 @@ export async function serializeApproval(row: typeof guardApprovals.$inferSelect)
 }
 
 export async function listPendingApprovals(siteId: string) {
+  await expireOwnerNotices();
   const rows = await db
     .select()
     .from(guardApprovals)
@@ -492,3 +552,185 @@ export async function attachVehicleInsurance(
     .set({ vehicleId, insuranceId: insId, patente: plate, completeness: "full" })
     .where(eq(visitPasses.id, passId));
 }
+
+export async function announceWalkIn(input: {
+  site: { id: string; tenantId: string };
+  propertyId: string;
+  guardUserId: string;
+  guestName?: string;
+  guestDni?: string;
+}): Promise<{ ok: true; passId: string; approvalId: string } | { ok: false; error: string }> {
+  const property = await db
+    .select()
+    .from(properties)
+    .where(and(eq(properties.id, input.propertyId), eq(properties.siteId, input.site.id)))
+    .get();
+  if (!property) return { ok: false, error: "Lote no encontrado" };
+  const now = new Date();
+  const passId = nid();
+  const token = (await import("./visitPass.js")).makeVisitToken(property.id, passId);
+  const guestName = (input.guestName || "Visita espontánea").trim();
+  await db.insert(visitPasses).values({
+    id: passId,
+    propertyId: property.id,
+    siteId: input.site.id,
+    authorizationId: null,
+    token,
+    guestName,
+    guestDni: input.guestDni?.replace(/\D/g, "") || null,
+    patente: null,
+    validFrom: now,
+    validUntil: new Date(now.getTime() + 24 * 60 * 60 * 1000),
+    horaDesde: null,
+    horaHasta: null,
+    status: "awaiting_entry",
+    arrivalMode: "peatonal",
+    visitKind: "social",
+    completeness: "basic",
+    vehicleId: null,
+    insuranceId: null,
+    visitRecordId: null,
+    notes: "Walk-in anunciado desde el plano",
+    dahuaSynced: false,
+    dahuaCardNo: token,
+    scannedInAt: null,
+    scannedOutAt: null,
+    createdByUserId: input.guardUserId,
+    createdAt: now,
+  });
+  const hold = await holdVisitQr({
+    siteId: input.site.id,
+    tenantId: input.site.tenantId,
+    cardRaw: token,
+    sentido: "in",
+    at: now,
+  });
+  if (hold.approvalId) {
+    await db
+      .update(guardApprovals)
+      .set({
+        reason: "walk_in",
+        ownerAuthStatus: "pending_owner",
+        ownerAuthExpiresAt: new Date(now.getTime() + 120_000),
+      })
+      .where(eq(guardApprovals.id, hold.approvalId));
+    await createOwnerNotice({
+      siteId: input.site.id,
+      tenantId: input.site.tenantId,
+      propertyId: property.id,
+      passId,
+      approvalId: hold.approvalId,
+      kind: "walk_in",
+      title: "Visita en garita",
+      message: `${guestName} pide entrar a tu lote. Tenés 2 minutos para autorizar. La barrera la abre el guardia.`,
+      payload: { guestName, guestDni: input.guestDni || null },
+      ttlMs: 120_000,
+    });
+  }
+  return { ok: true, passId, approvalId: hold.approvalId || "" };
+}
+
+export async function attachGoodsAlert(input: {
+  site: { id: string; tenantId: string };
+  approvalId: string;
+  description: string;
+  photoBase64?: string | null;
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  const row = await db
+    .select()
+    .from(guardApprovals)
+    .where(and(eq(guardApprovals.id, input.approvalId), eq(guardApprovals.siteId, input.site.id)))
+    .get();
+  if (!row || row.status !== "pending") return { ok: false, error: "No hay una solicitud de salida" };
+  if (row.sentido !== "out") return { ok: false, error: "La alerta de bien es en el egreso" };
+  const pass = await db.select().from(visitPasses).where(eq(visitPasses.id, row.passId)).get();
+  if (!pass) return { ok: false, error: "El pase ya no existe" };
+  let photoPath: string | null = row.goodsPhotoPath;
+  if (input.photoBase64) {
+    const raw = input.photoBase64.replace(/^data:[\w/+.-]+;base64,/, "").trim();
+    try {
+      const buf = Buffer.from(raw, "base64");
+      if (buf.length > 80 && buf.length < 4 * 1024 * 1024) {
+        saveEventPhoto(input.site.id, `goods-${row.id}`, buf);
+        photoPath = `goods-${row.id}`;
+      }
+    } catch {
+      /* sin foto */
+    }
+  }
+  await db
+    .update(guardApprovals)
+    .set({
+      goodsAlert: true,
+      goodsDescription: input.description.trim() || "Bien no registrado",
+      goodsPhotoPath: photoPath,
+    })
+    .where(eq(guardApprovals.id, row.id));
+  await createOwnerNotice({
+    siteId: input.site.id,
+    tenantId: input.site.tenantId,
+    propertyId: pass.propertyId,
+    passId: pass.id,
+    approvalId: row.id,
+    kind: "goods",
+    title: "Bien no registrado en la salida",
+    message: `${pass.guestName} sale con: ${input.description.trim() || "un objeto no declarado"}. La barrera queda retenida hasta que autorices.`,
+    payload: { description: input.description, hasPhoto: Boolean(photoPath) },
+    ttlMs: 30 * 60 * 1000,
+  });
+  return { ok: true };
+}
+
+export async function requestMinorTransfer(input: {
+  site: { id: string; tenantId: string };
+  approvalId: string;
+  originPropertyId: string;
+  exitAdultsCount?: number;
+  exitMinorsCount?: number;
+  extraName?: string;
+  extraDni?: string;
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  const row = await db
+    .select()
+    .from(guardApprovals)
+    .where(and(eq(guardApprovals.id, input.approvalId), eq(guardApprovals.siteId, input.site.id)))
+    .get();
+  if (!row || row.status !== "pending" || row.sentido !== "out") {
+    return { ok: false, error: "No hay un egreso pendiente" };
+  }
+  const origin = await db
+    .select()
+    .from(properties)
+    .where(and(eq(properties.id, input.originPropertyId), eq(properties.siteId, input.site.id)))
+    .get();
+  if (!origin) return { ok: false, error: "Lote de procedencia no encontrado" };
+  const pass = await db.select().from(visitPasses).where(eq(visitPasses.id, row.passId)).get();
+  if (!pass) return { ok: false, error: "El pase ya no existe" };
+  await db
+    .update(guardApprovals)
+    .set({
+      originPropertyId: origin.id,
+      exitAdultsCount: input.exitAdultsCount ?? null,
+      exitMinorsCount: input.exitMinorsCount ?? null,
+    })
+    .where(eq(guardApprovals.id, row.id));
+  await createOwnerNotice({
+    siteId: input.site.id,
+    tenantId: input.site.tenantId,
+    propertyId: origin.id,
+    passId: pass.id,
+    approvalId: row.id,
+    kind: "minor_transfer",
+    title: "Autorizar traslado de menor",
+    message: `Un menor sale con ${pass.guestName}${pass.patente ? ` (patente ${pass.patente})` : ""}. Confirmá el traslado.`,
+    payload: {
+      conductor: pass.guestName,
+      patente: pass.patente,
+      extraName: input.extraName || null,
+      extraDni: input.extraDni || null,
+    },
+    ttlMs: 30 * 60 * 1000,
+  });
+  return { ok: true };
+}
+

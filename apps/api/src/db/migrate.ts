@@ -764,5 +764,47 @@ async function backfillAccessPointsFromLegacy() {
       }
     }
   }
+
+  await addColumn("property_family_members", "birth_date", "TEXT");
+  await addColumn("visit_companions", "birth_date", "TEXT");
+  await addColumn("visit_companions", "is_minor", "INTEGER NOT NULL DEFAULT 0");
+  await addColumn("visit_companions", "situation", "TEXT NOT NULL DEFAULT 'acompanante'");
+  await addColumn("guard_approvals", "owner_auth_status", "TEXT NOT NULL DEFAULT 'none'");
+  await addColumn("guard_approvals", "owner_auth_expires_at", "INTEGER");
+  await addColumn("guard_approvals", "owner_authorized_by_user_id", "TEXT");
+  await addColumn("guard_approvals", "goods_alert", "INTEGER NOT NULL DEFAULT 0");
+  await addColumn("guard_approvals", "goods_description", "TEXT");
+  await addColumn("guard_approvals", "goods_photo_path", "TEXT");
+  await addColumn("guard_approvals", "goods_authorized_by_user_id", "TEXT");
+  await addColumn("guard_approvals", "exit_adults_count", "INTEGER");
+  await addColumn("guard_approvals", "exit_minors_count", "INTEGER");
+  await addColumn("guard_approvals", "origin_property_id", "TEXT");
+  await addColumn("guard_approvals", "minor_transfer_authorized_by_user_id", "TEXT");
+
+  await db.run(sql`
+    CREATE TABLE IF NOT EXISTS owner_notices (
+      id TEXT PRIMARY KEY,
+      site_id TEXT NOT NULL REFERENCES sites(id),
+      property_id TEXT NOT NULL REFERENCES properties(id),
+      pass_id TEXT REFERENCES visit_passes(id),
+      approval_id TEXT REFERENCES guard_approvals(id),
+      kind TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending',
+      title TEXT NOT NULL,
+      message TEXT NOT NULL,
+      payload TEXT,
+      expires_at INTEGER,
+      created_at INTEGER NOT NULL,
+      decided_at INTEGER,
+      decided_by_user_id TEXT REFERENCES users(id)
+    )
+  `);
+  await db.run(sql`
+    CREATE TABLE IF NOT EXISTS tenant_settings (
+      tenant_id TEXT PRIMARY KEY REFERENCES tenants(id),
+      retention_days INTEGER NOT NULL DEFAULT 90,
+      updated_at INTEGER NOT NULL
+    )
+  `);
 }
 
