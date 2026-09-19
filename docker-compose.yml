@@ -71,6 +71,22 @@ services:
       start_period: 25s
     restart: unless-stopped
 
+  web-tls:
+    image: nginx:1.27-alpine
+    ports:
+      - "3443:443"
+    environment:
+      ACCESOPRO_TLS_IP: ${ACCESOPRO_IP:-}
+    volumes:
+      - ./deploy/tls/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./deploy/tls/entrypoint.sh:/entrypoint.sh:ro
+      - web_tls_certs:/certs
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    depends_on:
+      web:
+        condition: service_healthy
+    restart: unless-stopped
+
   agent:
     profiles: [dahua]
     build:
@@ -100,3 +116,4 @@ services:
 
 volumes:
   api_data:
+  web_tls_certs:

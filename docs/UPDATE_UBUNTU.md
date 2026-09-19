@@ -8,7 +8,7 @@ Repo: `https://github.com/Hugo-Vera/accesopro` · carpeta típica: `/opt/accesop
 
 1. **En la PC de desarrollo:** commit + **push a `master`**.
 2. **En el Ubuntu:** actualizar el código y rebuild (vía A o B abajo).
-3. **Probar** `http://IP:3000` (dashboard), `:8787/health` (API), `:8790/health` (agent Dahua).
+3. **Probar** `http://IP:3000` (dashboard), `https://IP:3443` (cámara DNI desde otra PC; aceptar el certificado una vez), `:8787/health` (API), `:8790/health` (agent Dahua).
 
 El Ubuntu **no** se actualiza solo con el push: hace falta el paso 2.
 

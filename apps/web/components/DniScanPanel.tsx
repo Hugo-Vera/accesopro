@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronDown, ScanLine } from "lucide-react";
 import { parseDniScan } from "@/lib/parseDni";
-import { getCameraStream, mediaDevicesAvailable } from "@/lib/camera";
+import { cameraBlockReason, cameraHttpsUrl, cameraNeedsHttps, getCameraStream } from "@/lib/camera";
 import { createDniLiveDecoder, type ScanBox, type ScanHint, type ScanHit } from "@/lib/dniLiveScan";
 import { useHidWedge } from "@/hooks/useHidWedge";
 
@@ -97,8 +97,9 @@ export function DniScanPanel({ onScan, active = true }: Props) {
 
   useEffect(() => {
     if (!open || !active) return;
-    if (!mediaDevicesAvailable()) {
-      setCamError("La cámara no está disponible. Pasá el DNI por el lector USB o usá HTTPS/localhost.");
+    const blocked = cameraBlockReason();
+    if (blocked) {
+      setCamError(blocked);
       return;
     }
 
@@ -311,7 +312,21 @@ export function DniScanPanel({ onScan, active = true }: Props) {
               {status}
             </div>
           </div>
-          {camError ? <p className="mt-2 text-[11px] text-rose-600">{camError}</p> : null}
+          {camError ? (
+            <p className="mt-2 text-[11px] text-rose-600">
+              {cameraNeedsHttps() ? (
+                <>
+                  El navegador bloquea la cámara en HTTP.{" "}
+                  <a className="font-semibold underline" href={cameraHttpsUrl()}>
+                    Entrá por HTTPS
+                  </a>{" "}
+                  (aceptá el certificado una vez) o usá el lector USB.
+                </>
+              ) : (
+                camError
+              )}
+            </p>
+          ) : null}
         </div>
       ) : null}
 

@@ -195,6 +195,13 @@ if [[ -f .env ]] && grep -q 'WEB_ORIGIN=http://localhost:3000' .env; then
   sed -i "s|WEB_ORIGIN=http://localhost:3000|WEB_ORIGIN=http://${IP}:3000|" .env
   echo "    WEB_ORIGIN → http://${IP}:3000"
 fi
+if [[ -f .env ]] && ! grep -q '^ACCESOPRO_IP=' .env; then
+  echo "ACCESOPRO_IP=${IP}" >> .env
+  echo "    ACCESOPRO_IP=${IP}"
+fi
+if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -qi active; then
+  need_root ufw allow 3443/tcp >/dev/null || true
+fi
 
 echo "==> Compilando imágenes (el dashboard :3000 sigue en línea)"
 build_ok=0
@@ -225,5 +232,6 @@ echo ok > "$STATUS_FILE"
 
 echo ""
 echo "Listo. Dashboard: http://${IP}:3000"
+echo "Cámara DNI (otras PCs): https://${IP}:3443"
 echo "Autostart: systemctl status accesopro"
 compose "${profile_args[@]}" ps

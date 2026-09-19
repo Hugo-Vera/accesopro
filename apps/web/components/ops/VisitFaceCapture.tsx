@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { Camera, ScanFace } from "lucide-react";
-import { getCameraStream } from "@/lib/camera";
+import { cameraBlockReason, getCameraStream } from "@/lib/camera";
 
 function processImageToJpegBase64(imageSource: HTMLVideoElement): string {
   const max = 640;
@@ -62,7 +62,7 @@ export function VisitFaceCapture({ preview, onCapture, onClear }: Props) {
       }
       setLive(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "No se pudo abrir la cámara");
+      setError(cameraBlockReason() || (err instanceof Error ? err.message : "No se pudo abrir la cámara"));
       setLive(false);
     }
   }

@@ -145,6 +145,9 @@ write_env() {
       sed -i "s|WEB_ORIGIN=http://localhost:3000|WEB_ORIGIN=http://${ip}:3000|" .env
       ok "WEB_ORIGIN → http://${ip}:3000"
     fi
+    if ! grep -q '^ACCESOPRO_IP=' .env 2>/dev/null; then
+      echo "ACCESOPRO_IP=${ip}" >> .env
+    fi
     return
   fi
 
@@ -160,6 +163,7 @@ write_env() {
   cat > .env << EOF
 JWT_SECRET=${secret}
 WEB_ORIGIN=http://${ip}:3000
+ACCESOPRO_IP=${ip}
 
 NEXT_PUBLIC_API_URL=
 
@@ -179,9 +183,10 @@ EOF
 
 open_firewall() {
   if command -v ufw >/dev/null 2>&1 && need_root_for ufw status 2>/dev/null | grep -qi active; then
-    step "Firewall UFW: puerto 3000"
+    step "Firewall UFW: puertos 3000 y 3443"
     need_root_for ufw allow 3000/tcp >/dev/null || true
-    ok "ufw allow 3000/tcp"
+    need_root_for ufw allow 3443/tcp >/dev/null || true
+    ok "ufw allow 3000/tcp 3443/tcp"
   fi
 }
 
@@ -230,6 +235,7 @@ print_done() {
   echo -e "${GRN}========================================${NC}"
   echo ""
   echo "  Dashboard:  http://${ip}:3000"
+  echo "  Cámara DNI: https://${ip}:3443  (aceptá el certificado una vez)"
   echo "  API:        http://${ip}:8787/health"
   echo "  Agent:      http://${ip}:8790/health"
   echo ""

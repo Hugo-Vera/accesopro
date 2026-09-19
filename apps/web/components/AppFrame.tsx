@@ -6,12 +6,14 @@ import { useDash } from "@/components/DashboardProvider";
 import { Sidebar } from "@/components/Sidebar";
 import { useTheme } from "@/components/ThemeProvider";
 import { Sun, Moon } from "lucide-react";
+import { cameraHttpsUrl, cameraNeedsHttps } from "@/lib/camera";
 
 export function AppFrame({ children }: { children: React.ReactNode }) {
   const { error, loading, user, tenantName, plan, status, isPlatform, tenants, tenantId, setTenant, logout } =
     useDash();
   const { theme, toggleTheme } = useTheme();
   const [open, setOpen] = useState(false);
+  const [httpsCamUrl, setHttpsCamUrl] = useState<string | null>(null);
   const pathname = usePathname();
   const opsHome = pathname === "/dashboard";
 
@@ -20,6 +22,10 @@ export function AppFrame({ children }: { children: React.ReactNode }) {
     const handler = () => setOpen(true);
     window.addEventListener("ap:open-sidebar", handler);
     return () => window.removeEventListener("ap:open-sidebar", handler);
+  }, []);
+
+  useEffect(() => {
+    if (cameraNeedsHttps()) setHttpsCamUrl(cameraHttpsUrl());
   }, []);
 
   if (loading && !user) {
@@ -63,6 +69,15 @@ export function AppFrame({ children }: { children: React.ReactNode }) {
       ) : null}
 
       <div className="flex min-w-0 flex-1 flex-col">
+        {httpsCamUrl ? (
+          <div className="shrink-0 border-b border-amber-300 bg-amber-50 px-4 py-1.5 text-[11px] font-medium text-amber-950 dark:border-amber-800 dark:bg-amber-950/70 dark:text-amber-100">
+            La cámara del DNI no funciona en HTTP.{" "}
+            <a className="font-semibold underline" href={httpsCamUrl}>
+              Abrir por HTTPS
+            </a>{" "}
+            y aceptá el certificado una vez.
+          </div>
+        ) : null}
         {opsHome ? null : (
           <header className="flex items-center gap-3 border-b border-slate-200 dark:border-line/80 bg-white/90 dark:bg-transparent px-4 py-3 backdrop-blur-sm lg:px-8 lg:py-4 transition-colors">
             <button type="button" className="btn-ghost lg:hidden" onClick={() => setOpen(true)}>

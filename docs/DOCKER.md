@@ -20,7 +20,7 @@ Playbook completo (permisos `.git`, self-update, anti-errores): **[`docs/UPDATE_
    sudo chown -R "$USER:$USER" /opt/accesopro   # si git falla por permisos root
    curl -fsSL https://raw.githubusercontent.com/Hugo-Vera/accesopro/master/scripts/update-ubuntu.sh | bash
    ```
-3. Recargar `http://IP:3000`. Conserva volúmenes (`api_data`).
+3. Recargar `http://IP:3000`. Cámara DNI desde otra PC: `https://IP:3443` (aceptar el certificado una vez). Conserva volúmenes (`api_data`).
 
 Self-update: `ACCESOPRO_ALLOW_SELF_UPDATE=1`, montaje `/opt/accesopro` + `docker.sock`, y **`ACCESOPRO_OWNER=<usuario-linux>`** en `.env` (evita que el contenedor deje `.git` de root).
 
@@ -82,6 +82,7 @@ powershell -ExecutionPolicy Bypass -File scripts\start-server.ps1 -Native -Profi
 | Servicio | Puerto | Perfil | Datos |
 |----------|--------|--------|-------|
 | `web` | 3000 | core | — |
+| `web-tls` | 3443 | core | HTTPS para cámara DNI (certificado propio) |
 | `api` | 8787 | core | volumen `api_data` |
 | `agent` | 8790 | dahua | — |
 | `postgres` | 5432 | alpr | `pgdata` |

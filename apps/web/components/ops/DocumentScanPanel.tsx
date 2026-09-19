@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { Camera, Check, FileText, RotateCcw, RotateCw, Upload, X } from "lucide-react";
 import { api, apiUrl, withTenant } from "@/lib/api";
 import { detectDocBox, type DocBox } from "@/lib/detectDocBox";
-import { getCameraStream } from "@/lib/camera";
+import { cameraBlockReason, getCameraStream } from "@/lib/camera";
 
 export type AcceptedDoc = {
   base64: string | null;
@@ -180,7 +180,7 @@ export function DocumentScanPanel({
       }
       setLive(true);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "No se pudo abrir la webcam USB");
+      setError(cameraBlockReason() || (err instanceof Error ? err.message : "No se pudo abrir la webcam USB"));
     }
   }
 
