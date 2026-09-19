@@ -12,11 +12,11 @@ type Props = {
   active?: boolean;
 };
 
-const QR_GUIDE: ScanBox = { x: 0.29, y: 0.14, w: 0.42, h: 0.46 };
+const QR_GUIDE: ScanBox = { x: 0.18, y: 0.08, w: 0.64, h: 0.72 };
 const PDF_GUIDE: ScanBox = { x: 0.08, y: 0.66, w: 0.84, h: 0.22 };
 
 function videoToDisplay(box: ScanBox, vw: number, vh: number, elW: number, elH: number) {
-  const scale = Math.max(elW / vw, elH / vh);
+  const scale = Math.min(elW / vw, elH / vh);
   const dw = vw * scale;
   const dh = vh * scale;
   const ox = (elW - dw) / 2;
@@ -226,33 +226,37 @@ export function DniScanPanel({ onScan, active = true }: Props) {
         if (!decoding && now - lastDecode > 110 && video && video.readyState >= 2 && !liveHitRef.current) {
           decoding = true;
           lastDecode = now;
-          void decoder.decodeFrame(video).then((frame) => {
-            decoding = false;
-            if (cancelled || liveHitRef.current) return;
-            liveHintsRef.current = frame.hints;
-            if (!frame.hit) {
-              if (frame.hints.length && statusRef.current.startsWith("Buscando")) {
-                setStatus(
-                  frame.hints.some((h) => h.kind === "pdf417")
-                    ? "Código de barras a la vista. Acercá el dorso…"
-                    : "QR a la vista. Mantené el frente estable…",
-                );
+          void decoder
+            .decodeFrame(video)
+            .then((frame) => {
+              decoding = false;
+              if (cancelled || liveHitRef.current) return;
+              liveHintsRef.current = frame.hints;
+              if (!frame.hit) {
+                if (frame.hints.some((h) => h.kind === "qr")) {
+                  setStatus("QR detectado. Lo estoy leyendo…");
+                } else if (frame.hints.some((h) => h.kind === "pdf417")) {
+                  setStatus("Código de barras a la vista. Acercá el dorso…");
+                }
+                return;
               }
-              return;
-            }
-            if (applyIfParsed(frame.hit.text)) {
-              liveHitRef.current = frame.hit;
-              setLocked(true);
-              setStatus(frame.hit.format === "qr" ? "QR del frente leído" : "PDF417 del dorso leído");
-              window.setTimeout(() => {
-                if (cancelled) return;
-                stopCamera();
-                setOpen(false);
-              }, 700);
-              return;
-            }
-            setStatus("Código visto, no es el DNI. Probá el dorso (PDF417) o el QR de datos del frente.");
-          });
+              if (applyIfParsed(frame.hit.text)) {
+                liveHitRef.current = frame.hit;
+                setLocked(true);
+                setStatus(frame.hit.format === "qr" ? "QR leído" : "PDF417 del dorso leído");
+                window.setTimeout(() => {
+                  if (cancelled) return;
+                  stopCamera();
+                  setOpen(false);
+                }, 700);
+                return;
+              }
+              const preview = frame.hit.text.replace(/\s+/g, " ").slice(0, 48);
+              setStatus(`QR leído, no es el DNI (${preview}). Usá el PDF417 del dorso.`);
+            })
+            .catch(() => {
+              decoding = false;
+            });
         }
 
         raf = window.requestAnimationFrame(draw);
@@ -291,7 +295,7 @@ export function DniScanPanel({ onScan, active = true }: Props) {
           >
             <video
               ref={videoRef}
-              className="absolute inset-0 h-full w-full object-cover"
+              className="absolute inset-0 h-full w-full object-contain"
               muted
               playsInline
               autoPlay

@@ -51,6 +51,12 @@ export function parseDniScan(raw: string): ParsedDniScan | null {
   if (text.includes("@")) {
     const parsed = fromAtFields(text);
     if (parsed) return parsed;
+    const embedded = text.match(/@[^@\n]+@[^@\n]+@[MFX]@\d{7,8}@/i);
+    if (embedded) {
+      const start = text.lastIndexOf("@", text.indexOf(embedded[0]));
+      const parsedEmbedded = fromAtFields(text.slice(Math.max(0, start)));
+      if (parsedEmbedded) return parsedEmbedded;
+    }
   }
 
   try {
@@ -65,6 +71,34 @@ export function parseDniScan(raw: string): ParsedDniScan | null {
 
   if (/^\d{7,8}$/.test(text)) {
     return { dni: text, tramite: "", lastName: "", firstName: "", gender: "", birthDate: "", raw: text };
+  }
+
+  try {
+    const json = JSON.parse(text) as Record<string, unknown>;
+    const dni = String(json.dni ?? json.documento ?? json.nroDocumento ?? json.number ?? "");
+    if (/^\d{7,8}$/.test(dni)) {
+      return {
+        dni,
+        tramite: String(json.tramite ?? json.idTramite ?? ""),
+        lastName: String(json.apellido ?? json.lastName ?? ""),
+        firstName: String(json.nombre ?? json.firstName ?? ""),
+        gender: genderCode(String(json.sexo ?? json.gender ?? "")),
+        birthDate: toIsoDate(String(json.fechaNacimiento ?? json.birthDate ?? "")),
+        raw: text.slice(0, 400),
+      };
+    }
+  } catch {
+    /* no es JSON */
+  }
+
+  const idarg = text.match(/IDARG(\d{7,8})/i);
+  if (idarg) {
+    return { dni: idarg[1], tramite: "", lastName: "", firstName: "", gender: "", birthDate: "", raw: text.slice(0, 400) };
+  }
+
+  const labeled = text.match(/(?:dni|documento|nro_?doc(?:umento)?)[^\d]{0,12}(\d{7,8})\b/i);
+  if (labeled) {
+    return { dni: labeled[1], tramite: "", lastName: "", firstName: "", gender: "", birthDate: "", raw: text.slice(0, 400) };
   }
 
   return null;

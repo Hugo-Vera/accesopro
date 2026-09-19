@@ -1,4 +1,4 @@
-/** Lectura en vivo de QR (frente DNI nuevo) y PDF417 (dorso, tarjeta vieja y nueva). */
+/** Lectura en vivo de QR (frente / credencial digital) y PDF417 (dorso). */
 
 export type ScanBox = { x: number; y: number; w: number; h: number };
 export type ScanHint = ScanBox & { kind: "qr" | "pdf417"; score: number };
@@ -20,6 +20,7 @@ type NativeDetector = {
 };
 
 type ZxingBundle = typeof import("@zxing/library");
+type FinderHit = { x: number; y: number; unit: number };
 
 function clamp(n: number, a: number, b: number) {
   return Math.max(a, Math.min(b, n));
@@ -34,7 +35,10 @@ function formatOf(raw: string): ScanHit["format"] {
 
 function looksLikeDni(text: string) {
   const t = text.trim();
-  return t.includes("@") || /^\d{7,8}$/.test(t);
+  if (t.includes("@") && t.split("@").length >= 5) return true;
+  if (/^\d{7,8}$/.test(t)) return true;
+  if (/\b\d{7,8}\b/.test(t) && /dni|documento|apellido|renaper|idarg|tramite/i.test(t)) return true;
+  return false;
 }
 
 function downGray(gray: Uint8ClampedArray, w: number, h: number, maxW: number) {
@@ -64,8 +68,8 @@ function boxFromPoints(points: { x: number; y: number }[], vw: number, vh: numbe
     if (p.x > x1) x1 = p.x;
     if (p.y > y1) y1 = p.y;
   }
-  const padX = (x1 - x0) * 0.08;
-  const padY = (y1 - y0) * 0.08;
+  const padX = (x1 - x0) * 0.12;
+  const padY = (y1 - y0) * 0.12;
   return {
     x: clamp((x0 - padX) / vw, 0, 1),
     y: clamp((y0 - padY) / vh, 0, 1),
@@ -88,12 +92,12 @@ function boxFromRect(
   };
 }
 
-function toGray(data: Uint8ClampedArray, w: number, h: number) {
+function toGray(data: Uint8ClampedArray, w: number, h: number, boost = false) {
   const g = new Uint8ClampedArray(w * h);
   for (let i = 0; i < w * h; i++) {
     const o = i * 4;
     let v = data[o] * 0.299 + data[o + 1] * 0.587 + data[o + 2] * 0.114;
-    v = (v - 14) * 1.38;
+    if (boost) v = (v - 14) * 1.38;
     g[i] = v < 0 ? 0 : v > 255 ? 255 : v;
   }
   return g;
@@ -109,7 +113,7 @@ function cropGray(src: Uint8ClampedArray, sw: number, sh: number, box: ScanBox) 
     const row = (y0 + y) * sw + x0;
     out.set(src.subarray(row, row + w), y * w);
   }
-  return { gray: out, w, h, ox: x0, oy: y0 };
+  return { gray: out, w, h };
 }
 
 /** Bandas anchas con mucha transición horizontal = PDF417 del dorso. */
@@ -166,11 +170,10 @@ export function findPdf417Hint(gray: Uint8ClampedArray, w: number, h: number): S
   return best;
 }
 
-/** Patrones 1:1:3:1:1 de los ojos del QR (frente del DNI nuevo). */
-export function findQrHint(gray: Uint8ClampedArray, w: number, h: number): ScanHint | null {
-  if (w < 40 || h < 40) return null;
-  const hits: { x: number; y: number }[] = [];
-  const maxModule = Math.max(2, Math.floor(w / 18));
+function collectFinderHits(gray: Uint8ClampedArray, w: number, h: number): FinderHit[] {
+  if (w < 40 || h < 40) return [];
+  const hits: FinderHit[] = [];
+  const maxModule = Math.max(2, Math.floor(w / 12));
   for (let y = 2; y < h - 2; y += 2) {
     const row = y * w;
     let x = 1;
@@ -204,40 +207,89 @@ export function findQrHint(gray: Uint8ClampedArray, w: number, h: number): ScanH
         Math.abs(e - unit) <= unit * 0.7 &&
         gray[row + start] < 110
       ) {
-        hits.push({ x: start + a + b + c / 2, y });
+        hits.push({ x: start + a + b + c / 2, y, unit });
       }
       x = start + Math.max(1, a);
     }
   }
-  if (hits.length < 4) return null;
+  return hits;
+}
+
+function hintFromCluster(group: FinderHit[], w: number, h: number): ScanHint | null {
+  if (group.length < 3) return null;
   let x0 = w;
   let y0 = h;
   let x1 = 0;
   let y1 = 0;
-  for (const p of hits) {
+  let unit = 0;
+  for (const p of group) {
     if (p.x < x0) x0 = p.x;
     if (p.y < y0) y0 = p.y;
     if (p.x > x1) x1 = p.x;
     if (p.y > y1) y1 = p.y;
+    unit += p.unit;
   }
+  unit /= group.length;
   const bw = x1 - x0;
   const bh = y1 - y0;
-  if (bw < w * 0.08 || bh < h * 0.08) return null;
-  if (bw / w > 0.62 || bh / h > 0.62) return null;
+  if (bw < unit * 6 || bh < unit * 6) return null;
   const ratio = bw / Math.max(1, bh);
-  if (ratio < 0.55 || ratio > 1.8) return null;
-  const side = Math.max(x1 - x0, y1 - y0, w * 0.18);
+  if (ratio < 0.35 || ratio > 2.8) return null;
+  const side = Math.max(bw, bh, unit * 18);
   const cx = (x0 + x1) / 2;
   const cy = (y0 + y1) / 2;
-  const pad = side * 0.55;
+  const pad = side * 0.42;
   return {
     kind: "qr",
     x: clamp((cx - pad) / w, 0, 1),
     y: clamp((cy - pad) / h, 0, 1),
     w: clamp((pad * 2) / w, 0, 1),
     h: clamp((pad * 2) / h, 0, 1),
-    score: hits.length,
+    score: group.length,
   };
+}
+
+/** Un recuadro por QR. Si hay dos códigos en el mismo frame no se mezclan. */
+export function findQrHints(gray: Uint8ClampedArray, w: number, h: number): ScanHint[] {
+  const hits = collectFinderHits(gray, w, h);
+  if (hits.length < 3) return [];
+  const used = new Uint8Array(hits.length);
+  const hints: ScanHint[] = [];
+  for (let i = 0; i < hits.length; i++) {
+    if (used[i]) continue;
+    const seed = hits[i];
+    const group = [seed];
+    used[i] = 1;
+    let grew = true;
+    while (grew) {
+      grew = false;
+      const gx = group.reduce((s, p) => s + p.x, 0) / group.length;
+      const gy = group.reduce((s, p) => s + p.y, 0) / group.length;
+      const reach = Math.max(
+        seed.unit * 24,
+        ...group.map((p) => Math.hypot(p.x - gx, p.y - gy) * 1.4),
+        Math.min(w, h) * 0.18,
+      );
+      for (let j = 0; j < hits.length; j++) {
+        if (used[j]) continue;
+        const other = hits[j];
+        if (other.unit > seed.unit * 3 || seed.unit > other.unit * 3) continue;
+        if (Math.hypot(other.x - gx, other.y - gy) <= reach) {
+          group.push(other);
+          used[j] = 1;
+          grew = true;
+        }
+      }
+    }
+    const hint = hintFromCluster(group, w, h);
+    if (hint) hints.push(hint);
+  }
+  hints.sort((a, b) => b.w * b.h - a.w * a.h);
+  return hints.slice(0, 3);
+}
+
+export function findQrHint(gray: Uint8ClampedArray, w: number, h: number): ScanHint | null {
+  return findQrHints(gray, w, h)[0] || null;
 }
 
 function tryNativeDetector(): NativeDetector | null {
@@ -262,10 +314,13 @@ export function createDniLiveDecoder() {
   let qrReader: InstanceType<ZxingBundle["QRCodeReader"]> | null = null;
   let pdfReader: InstanceType<ZxingBundle["PDF417Reader"]> | null = null;
   let qrHints: Map<unknown, unknown> | null = null;
+  let qrPureHints: Map<unknown, unknown> | null = null;
   let pdfHints: Map<unknown, unknown> | null = null;
   const detector = typeof window !== "undefined" ? tryNativeDetector() : null;
   const work = document.createElement("canvas");
   const workCtx = work.getContext("2d", { willReadFrequently: true });
+  const crop = document.createElement("canvas");
+  const cropCtx = crop.getContext("2d", { willReadFrequently: true, alpha: false });
 
   async function loadZxing() {
     if (zxing) return zxing;
@@ -274,127 +329,187 @@ export function createDniLiveDecoder() {
     pdfReader = new zxing.PDF417Reader();
     qrHints = new Map();
     qrHints.set(zxing.DecodeHintType.POSSIBLE_FORMATS, [zxing.BarcodeFormat.QR_CODE]);
-    qrHints.set(zxing.DecodeHintType.TRY_HARDER, true);
     qrHints.set(zxing.DecodeHintType.CHARACTER_SET, "ISO-8859-1");
+    qrPureHints = new Map(qrHints);
+    qrPureHints.set(zxing.DecodeHintType.PURE_BARCODE, true);
     pdfHints = new Map();
     pdfHints.set(zxing.DecodeHintType.POSSIBLE_FORMATS, [zxing.BarcodeFormat.PDF_417]);
-    pdfHints.set(zxing.DecodeHintType.TRY_HARDER, true);
     pdfHints.set(zxing.DecodeHintType.CHARACTER_SET, "ISO-8859-1");
     return zxing;
   }
 
-  function decodeGray(
-    reader: { decode: (bmp: unknown, hints?: unknown) => { getText: () => string; getBarcodeFormat: () => unknown; getResultPoints: () => { getX: () => number; getY: () => number }[] } },
-    hints: Map<unknown, unknown> | null,
-    lib: ZxingBundle,
-    gray: Uint8ClampedArray,
-    w: number,
-    h: number,
-  ) {
-    const source = new lib.RGBLuminanceSource(gray, w, h);
-    try {
-      const bmp = new lib.BinaryBitmap(new lib.HybridBinarizer(source));
-      return reader.decode(bmp, hints);
-    } catch {
-      try {
-        const bmp = new lib.BinaryBitmap(new lib.HybridBinarizer(source.invert()));
-        return reader.decode(bmp, hints);
-      } catch {
-        return null;
+  let pass = 0;
+
+  type ZxingResult = {
+    getText: () => string;
+    getResultPoints: () => { getX: () => number; getY: () => number }[] | null;
+  };
+  type LuminanceSourceLike = ConstructorParameters<ZxingBundle["HybridBinarizer"]>[0];
+
+  function decodeQrSource(lib: ZxingBundle, source: LuminanceSourceLike, extra?: Map<unknown, unknown> | null) {
+    if (!qrReader) return null;
+    const bins = [lib.HybridBinarizer, lib.GlobalHistogramBinarizer];
+    const hintSets = extra ? [extra, qrHints] : [qrHints, qrPureHints];
+    for (const hints of hintSets) {
+      for (const Binarizer of bins) {
+        try {
+          return qrReader.decode(new lib.BinaryBitmap(new Binarizer(source)), hints as never);
+        } catch {
+          try {
+            return qrReader.decode(new lib.BinaryBitmap(new Binarizer(source.invert())), hints as never);
+          } catch {
+            /* siguiente */
+          }
+        }
       }
     }
+    return null;
+  }
+
+  function paintCrop(video: HTMLVideoElement, box: ScanBox) {
+    if (!cropCtx) return null;
+    const vw = video.videoWidth;
+    const vh = video.videoHeight;
+    const sx = box.x * vw;
+    const sy = box.y * vh;
+    const sw = Math.max(16, box.w * vw);
+    const sh = Math.max(16, box.h * vh);
+    const maxSide = 720;
+    const scale = Math.min(1, maxSide / Math.max(sw, sh));
+    const dw = Math.max(24, Math.round(sw * scale));
+    const dh = Math.max(24, Math.round(sh * scale));
+    const pad = Math.max(28, Math.round(Math.min(dw, dh) * 0.18));
+    crop.width = dw + pad * 2;
+    crop.height = dh + pad * 2;
+    cropCtx.fillStyle = "#ffffff";
+    cropCtx.fillRect(0, 0, crop.width, crop.height);
+    cropCtx.imageSmoothingEnabled = true;
+    cropCtx.imageSmoothingQuality = "high";
+    cropCtx.drawImage(video, sx, sy, sw, sh, pad, pad, dw, dh);
+    return crop;
+  }
+
+  function collectNative(codes: Awaited<ReturnType<NativeDetector["detect"]>>, vw: number, vh: number) {
+    const hits: ScanHit[] = [];
+    for (const c of codes) {
+      if (!c.rawValue?.trim()) continue;
+      const pts = c.cornerPoints || [];
+      hits.push({
+        text: c.rawValue,
+        format: formatOf(c.format),
+        box:
+          boxFromPoints(pts, vw, vh) ||
+          boxFromRect(
+            { x: c.boundingBox.x, y: c.boundingBox.y, width: c.boundingBox.width, height: c.boundingBox.height },
+            vw,
+            vh,
+          ),
+      });
+    }
+    return hits;
   }
 
   async function decodeFrame(video: HTMLVideoElement): Promise<{ hit: ScanHit | null; hints: ScanHint[] }> {
     const vw = video.videoWidth;
     const vh = video.videoHeight;
-    if (!vw || !vh || !workCtx) return { hit: null, hints: [] };
+    if (!vw || !vh || !workCtx || !cropCtx) return { hit: null, hints: [] };
+    pass += 1;
 
-    let nativeMiss: ScanHit | null = null;
-    if (detector) {
-      try {
-        const codes = await detector.detect(video);
-        for (const c of codes) {
-          if (!c.rawValue?.trim()) continue;
-          const pts = c.cornerPoints || [];
-          const hit: ScanHit = {
-            text: c.rawValue,
-            format: formatOf(c.format),
-            box:
-              boxFromPoints(pts, vw, vh) ||
-              boxFromRect(
-                {
-                  x: c.boundingBox.x,
-                  y: c.boundingBox.y,
-                  width: c.boundingBox.width,
-                  height: c.boundingBox.height,
-                },
-                vw,
-                vh,
-              ),
-          };
-          if (looksLikeDni(hit.text)) return { hit, hints: [] };
-          if (!nativeMiss) nativeMiss = hit;
-        }
-      } catch {
-        /* seguir con ZXing */
-      }
-    }
-
-    const scale = Math.min(1, 1280 / vw);
+    const scale = Math.min(1, 720 / vw);
     work.width = Math.max(32, Math.round(vw * scale));
     work.height = Math.max(32, Math.round(vh * scale));
     workCtx.drawImage(video, 0, 0, work.width, work.height);
     const image = workCtx.getImageData(0, 0, work.width, work.height);
-    const gray = toGray(image.data, work.width, work.height);
-    const small = downGray(gray, work.width, work.height, 360);
-    const hints: ScanHint[] = [];
-    const qrHint = findQrHint(small.gray, small.w, small.h);
-    const pdfHint = findPdf417Hint(small.gray, small.w, small.h);
-    if (qrHint) hints.push(qrHint);
+    const gray = toGray(image.data, work.width, work.height, false);
+    const small = downGray(gray, work.width, work.height, 320);
+    const qrBoxes = findQrHints(small.gray, small.w, small.h);
+    const pdfHint = qrBoxes.length ? null : findPdf417Hint(small.gray, small.w, small.h);
+    const hints: ScanHint[] = [...qrBoxes];
     if (pdfHint) hints.push(pdfHint);
 
-    const lib = await loadZxing();
-    if (!qrReader || !pdfReader) return { hit: null, hints };
+    let leftover: ScanHit | null = null;
+    const take = (hit: ScanHit) => {
+      if (looksLikeDni(hit.text)) return true;
+      leftover = leftover || hit;
+      return false;
+    };
 
-    const crops: { box: ScanBox; target: "qr" | "pdf417" }[] = [
-      { box: { x: 0.18, y: 0.12, w: 0.64, h: 0.64 }, target: "qr" },
-      { box: { x: 0.05, y: 0.55, w: 0.9, h: 0.4 }, target: "pdf417" },
-      { box: { x: 0.04, y: 0.28, w: 0.92, h: 0.44 }, target: "pdf417" },
-      { box: { x: 0, y: 0, w: 1, h: 1 }, target: "qr" },
-      { box: { x: 0, y: 0, w: 1, h: 1 }, target: "pdf417" },
-    ];
-    if (qrHint) crops.unshift({ box: qrHint, target: "qr" });
-    if (pdfHint) crops.unshift({ box: pdfHint, target: "pdf417" });
-
-    for (const crop of crops) {
-      const padded = {
-        x: clamp(crop.box.x - 0.04, 0, 1),
-        y: clamp(crop.box.y - 0.04, 0, 1),
-        w: clamp(crop.box.w + 0.08, 0, 1),
-        h: clamp(crop.box.h + 0.08, 0, 1),
-      };
-      const piece = cropGray(gray, work.width, work.height, padded);
-      const reader = crop.target === "qr" ? qrReader : pdfReader;
-      const hintMap = crop.target === "qr" ? qrHints : pdfHints;
-      const result = decodeGray(reader, hintMap, lib, piece.gray, piece.w, piece.h);
-      if (!result) continue;
-      const pts = (result.getResultPoints() || [])
-        .filter((p): p is { getX: () => number; getY: () => number } => Boolean(p))
-        .map((p) => ({
-          x: (p.getX() + piece.ox) / scale,
-          y: (p.getY() + piece.oy) / scale,
-        }));
-      const hit: ScanHit = {
-        text: result.getText(),
-        format: crop.target,
-        box: boxFromPoints(pts, vw, vh) || padded,
-      };
-      if (looksLikeDni(hit.text)) return { hit, hints };
-      if (!nativeMiss) nativeMiss = hit;
+    if (detector) {
+      try {
+        for (const hit of collectNative(await detector.detect(video), vw, vh)) {
+          if (take(hit)) return { hit, hints };
+        }
+      } catch {
+        /* ZXing */
+      }
     }
 
-    return { hit: nativeMiss, hints };
+    const lib = await loadZxing();
+    if (!qrReader || !pdfReader) return { hit: leftover, hints };
+
+    const crops: ScanBox[] = [
+      ...qrBoxes,
+      { x: 0.08, y: 0.02, w: 0.84, h: 0.7 },
+      { x: 0.16, y: 0.08, w: 0.68, h: 0.62 },
+      { x: 0, y: 0, w: 1, h: 1 },
+    ];
+
+    for (const box of crops) {
+      const canvas = paintCrop(video, box);
+      if (!canvas) continue;
+      if (detector) {
+        try {
+          for (const hit of collectNative(await detector.detect(canvas), canvas.width, canvas.height)) {
+            const mapped = { ...hit, box };
+            if (take(mapped)) return { hit: mapped, hints };
+          }
+        } catch {
+          /* ZXing */
+        }
+      }
+      try {
+        const CanvasSource = lib.HTMLCanvasElementLuminanceSource;
+        const source = CanvasSource
+          ? new CanvasSource(canvas)
+          : new lib.RGBLuminanceSource(
+              toGray(cropCtx.getImageData(0, 0, canvas.width, canvas.height).data, canvas.width, canvas.height),
+              canvas.width,
+              canvas.height,
+            );
+        const result = decodeQrSource(lib, source) as ZxingResult | null;
+        if (result?.getText()) {
+          const hit: ScanHit = { text: result.getText(), format: "qr", box };
+          if (take(hit)) return { hit, hints };
+        }
+      } catch {
+        /* recorte siguiente */
+      }
+    }
+
+    if (!qrBoxes.length && pass % 3 === 0) {
+      const pdfCrops: ScanBox[] = pdfHint
+        ? [pdfHint, { x: 0.04, y: 0.55, w: 0.92, h: 0.4 }]
+        : [{ x: 0.04, y: 0.55, w: 0.92, h: 0.4 }];
+      const grayBoost = toGray(image.data, work.width, work.height, true);
+      for (const box of pdfCrops) {
+        const piece = cropGray(grayBoost, work.width, work.height, box);
+        const source = new lib.RGBLuminanceSource(piece.gray, piece.w, piece.h);
+        try {
+          const result = pdfReader.decode(
+            new lib.BinaryBitmap(new lib.HybridBinarizer(source)),
+            pdfHints as never,
+          );
+          if (result?.getText()) {
+            const hit: ScanHit = { text: result.getText(), format: "pdf417", box };
+            if (take(hit)) return { hit, hints };
+          }
+        } catch {
+          /* dorso no cerrado */
+        }
+      }
+    }
+
+    return { hit: leftover, hints };
   }
 
   return { decodeFrame, hasNativeDetector: Boolean(detector) };
