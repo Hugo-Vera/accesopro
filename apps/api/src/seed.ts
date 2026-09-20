@@ -12,9 +12,17 @@ const DEMO_PASSWORD = "AccesoPro!2026";
 const DEMO_TENANT = "tenant_las_acacias";
 const DEMO_PLAN = "plan_acceso_pro";
 
+function skipDemoPredio() {
+  return Boolean((process.env.ACCESOPRO_HUB_TOKEN ?? "").trim() || (process.env.ACCESOPRO_TENANT_NAME ?? "").trim());
+}
+
 export async function seedIfEmpty() {
   await ensureSchema();
   await syncPlansFromCatalog();
+  if (skipDemoPredio()) {
+    console.log("Predio nuevo: sin seed Las Acacias (ACCESOPRO_HUB_TOKEN / ACCESOPRO_TENANT_NAME). Esperando bootstrap del concentrador.");
+    return;
+  }
   const existing = await db.select().from(users).limit(1).get();
   if (!existing) {
     const now = new Date();

@@ -13,10 +13,10 @@ No es un sistema contra incendio certificado. El módulo `fire` supervisa un con
 
 ## Cuentas
 
-- **Plataforma:** tenants, planes comerciales y catálogo de módulos.
-- **Admin del barrio:** plano, actuadores, equipos, personas (dentro del plan contratado).
+- **Plataforma** (`admin@accesopro.local`): directorio de predios remotos (**Sistema → Barrios**), planes comerciales y catálogo de módulos. No es el padrón unificado de personas: cada Ubuntu tiene su SQLite.
+- **Admin del barrio:** entra en la URL de **ese** predio (usuario/clave que le diste al dar de alta). Plano, actuadores, equipos, personas (dentro del plan contratado).
 - **Guardia / portería:** plano + live + relés (plantilla `guard`); el admin puede quitar/agregar grants.
-- **Vecino:** invite (email + WhatsApp) → `/activar` clave definitiva; portal `/portal` (ficha, familia, servicios, QR si el pack está on).
+- **Vecino:** invite (email + WhatsApp) → `/activar` clave definitiva; portal `/portal` (ficha, familia, servicios, QR si el pack está on). El lote es de solo lectura: `PATCH /api/residents/me` ignora `lote` / `propertyId`.
 - **Guardia:** puede **invitar propietario** (`access.owners.invite`) sin crear lotes.
 - **Visita:** solo su QR.
 
@@ -48,6 +48,7 @@ API: `GET/PATCH /api/tenants/:id/features`. UI: Configuración → Módulos (blo
 
 ## Arquitectura
 
+- **Una SQLite por predio.** Cada Ubuntu/garita corre AccesoPro con `apps/api/data/accesopro.db` propio. El **concentrador** solo guarda el directorio `hub_sites` (nombre, plan, URLs, token) y consulta en vivo `GET /api/hub/snapshot` (LAN ~2 s, si no URL pública). Alta de barrio = registrar predio + `POST /api/hub/bootstrap` remoto, no una fila más en Las Acacias. UI: `/dashboard/barrios`. Token: header `X-AccesoPro-Hub-Token`. Predio nuevo: `ACCESOPRO_HUB_TOKEN` o `ACCESOPRO_TENANT_NAME` en el `.env` para **no** sembrar Las Acacias. Detalle: `docs/DATABASE.md`. Código: `apps/api/src/hub.ts`.
 - **AccesoPro:** dashboard Next (`apps/web`), API módulos (`apps/api`), Dahua CGI agent (`apps/agent`).
 - Eventos faciales: sync incremental ASI → SQLite (`GET /agent/sync-state` + stream; sin dump del historial del lector al arrancar). La foto del pase la copia el agent una vez (FileManager) a `apps/api/data/evidence`; toast/historial leen `GET /api/events/:id/photo`. Live/toast: `docs/PLAN_PORTERIA.md`.
 - Padrón maestro de credenciales (`person_credentials`): AccesoPro replica cara/PIN/tarjeta al ASI para que decida offline. El QR en el ASI-6214S **no** se compara contra `CardNo` (attach: `QRCode` + `ErrorCode` 96). Propietarios: AccesoPro valida y manda `openDoor`. Visitas/proveedores: el QR solo identifica; **no se enrola la cara del invitado** en el ASI (si no, el relé local abre sin el guardia). Tampoco se enrola la cara de un **familiar menor de 18**. El guardia aprueba en dashboard o app Android y recién ahí hay `openDoor`. En modo local el `CardNo` de tarjeta es **hexadecimal** (0-9 A-F, largo par). Un texto como un nombre el lector lo marca código QR inválido. `QRCode.TransmissionEnable` es pass-through nativo Dahua (Back-end Comparison). Huella: se enrola en el lector. Códigos de método: `packages/catalog` `METHOD_CODE_ROWS`. Detalle: `docs/ASI_CGI.md`.

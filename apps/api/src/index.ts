@@ -16,6 +16,7 @@ import {
   type AuthUser,
 } from "./auth.js";
 import { agentRoutes } from "./agent.js";
+import { hubApi } from "./hub.js";
 import { startRosterReconcilePoller } from "./rosterReconcile.js";
 import { isUnlockMethodPack, syncAsiUnlockMethods } from "./dahuaUnlock.js";
 import { db } from "./db/client.js";
@@ -77,7 +78,7 @@ app.use(
   cors({
     origin: corsOrigin,
     credentials: true,
-    allowHeaders: ["Content-Type", "Authorization"],
+    allowHeaders: ["Content-Type", "Authorization", "X-AccesoPro-Hub-Token"],
     allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
   }),
 );
@@ -194,7 +195,12 @@ app.get("/auth/me", async (c) => {
   return c.json({ user: { ...user, capabilities } });
 });
 
-app.use("/api/*", requireAuth);
+app.route("/api/hub", hubApi);
+
+app.use("/api/*", async (c, next) => {
+  if (c.req.path.startsWith("/api/hub")) return next();
+  return requireAuth(c, next);
+});
 
 app.route("/api", eventStreamRoutes);
 

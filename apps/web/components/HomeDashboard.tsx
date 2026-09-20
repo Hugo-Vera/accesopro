@@ -290,8 +290,8 @@ export function HomeDashboard() {
           {dashError
             ? dashError
             : tenants.length
-              ? "Elegí un barrio para ver el panel operativo."
-              : "No hay barrios cargados. Revisá que la API esté en línea."}
+              ? "Elegí un barrio local o abrí el concentrador de predios remotos."
+              : "No hay barrios locales. Registrá un predio en Sistema → Barrios."}
         </p>
         {tenants.length > 0 ? (
           <label className="mt-6 block text-sm">
@@ -315,9 +315,14 @@ export function HomeDashboard() {
             </select>
           </label>
         ) : null}
-        <Link href="/dashboard/modulos" className="btn-primary mt-6 inline-flex">
-          Planes y módulos
-        </Link>
+        <div className="mt-6 flex flex-wrap gap-3">
+          <Link href="/dashboard/barrios" className="btn-primary inline-flex">
+            Nuevo barrio
+          </Link>
+          <Link href="/dashboard/modulos" className="btn-ghost inline-flex">
+            Planes y módulos
+          </Link>
+        </div>
       </div>
     );
   }

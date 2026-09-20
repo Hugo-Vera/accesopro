@@ -807,5 +807,24 @@ async function backfillAccessPointsFromLegacy() {
     )
   `);
   await addColumn("users", "guard_code", "TEXT");
+  await addColumn("sites", "hub_token", "TEXT");
+  await db.run(sql`
+    CREATE TABLE IF NOT EXISTS hub_sites (
+      id TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      slug TEXT NOT NULL UNIQUE,
+      plan_id TEXT NOT NULL,
+      base_url TEXT NOT NULL,
+      cloud_url TEXT,
+      hub_token TEXT NOT NULL UNIQUE,
+      admin_name TEXT NOT NULL,
+      admin_email TEXT NOT NULL,
+      admin_password_hash TEXT,
+      status TEXT NOT NULL DEFAULT 'pending',
+      last_seen_at INTEGER,
+      last_snapshot_json TEXT,
+      created_at INTEGER NOT NULL
+    )
+  `);
 }
 

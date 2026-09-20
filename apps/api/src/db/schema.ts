@@ -101,6 +101,25 @@ export const tenantFeatures = sqliteTable(
   }),
 );
 
+/** Directorio del concentrador: cada fila apunta a un Ubuntu/predio con su propia SQLite. */
+export const hubSites = sqliteTable("hub_sites", {
+  id: text("id").primaryKey(),
+  name: text("name").notNull(),
+  slug: text("slug").notNull().unique(),
+  planId: text("plan_id").notNull(),
+  baseUrl: text("base_url").notNull(),
+  cloudUrl: text("cloud_url"),
+  hubToken: text("hub_token").notNull().unique(),
+  adminName: text("admin_name").notNull(),
+  adminEmail: text("admin_email").notNull(),
+  /** bcrypt; solo para reintentar bootstrap si el predio estaba offline. */
+  adminPasswordHash: text("admin_password_hash"),
+  status: text("status").notNull().default("pending"),
+  lastSeenAt: integer("last_seen_at", { mode: "timestamp_ms" }),
+  lastSnapshotJson: text("last_snapshot_json"),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+});
+
 export const sites = sqliteTable("sites", {
   id: text("id").primaryKey(),
   tenantId: text("tenant_id")
@@ -108,6 +127,8 @@ export const sites = sqliteTable("sites", {
     .references(() => tenants.id),
   name: text("name").notNull(),
   agentToken: text("agent_token"),
+  /** Token del concentrador para snapshot/bootstrap (distinto del agent Dahua). */
+  hubToken: text("hub_token"),
   lastSeenAt: integer("last_seen_at", { mode: "timestamp_ms" }),
   /** Centro del plano OSM (lat/lng WGS84). */
   mapLat: text("map_lat"),

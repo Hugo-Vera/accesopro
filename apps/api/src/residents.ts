@@ -429,7 +429,11 @@ residents.patch("/me", async (c) => {
     emergencyName?: string;
     emergencyPhone?: string;
     photoBase64?: string;
+    lote?: string;
+    lotNumber?: string;
+    propertyId?: string;
   }>();
+  // Lote inmutable: el titular no puede cambiar de parcela (el body se ignora).
 
   const dahuaUserId = ctx.profile.dahuaUserId || `own_${ctx.profile.id.slice(-8)}`;
 

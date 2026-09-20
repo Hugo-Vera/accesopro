@@ -1,16 +1,24 @@
 # Base de datos AccesoPro
 
-Una base por predio: **SQLite AccesoPro** (`apps/api/data/accesopro.db`).
+**Una SQLite por Ubuntu/predio** (`apps/api/data/accesopro.db`). El concentrador no mete lotes ni eventos de un barrio en la base de otro: lista en vivo preguntándole a cada API.
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  AccesoPro API — SQLite (apps/api/data/accesopro.db)        │
-│  Usuarios, módulos, actuadores, propiedades, visitas,       │
-│  eventos faciales y de chapa, lista de patentes             │
-└─────────────────────────────────────────────────────────────┘
+│  Concentrador (admin@accesopro.local)                       │
+│  hub_sites = directorio (URLs, plan, token, último snapshot)│
+└──────────────────────────┬──────────────────────────────────┘
+                           │ GET /api/hub/snapshot (token)
+           ┌───────────────┴───────────────┐
+           ▼                               ▼
+┌─────────────────────┐         ┌─────────────────────┐
+│ Ubuntu predio A     │         │ Ubuntu predio B     │
+│ accesopro.db (A)    │         │ accesopro.db (B)    │
+└─────────────────────┘         └─────────────────────┘
 ```
 
-Variable API: `DATABASE_URL=file:./data/accesopro.db` (relativo a `apps/api`).
+Alta de barrio = registrar el predio en `hub_sites` + bootstrap remoto (`POST /api/hub/bootstrap`) si esa SQLite está vacía. El predio nuevo **no hereda** Las Acacias. Consulta dual-host: LAN ~2 s y, si no, URL pública. Si no responde: estado «sin enlace» y se muestra el último snapshot (hora).
+
+Variable API: `DATABASE_URL=file:./data/accesopro.db` (relativo a `apps/api`). Predio nuevo: `ACCESOPRO_HUB_TOKEN` o `ACCESOPRO_TENANT_NAME` para saltear el seed demo. El concentrador **no** debe setear `ACCESOPRO_HUB_TOKEN` (si no, no se crea `admin@accesopro.local`).
 
 La API **hoy** usa SQLite (libsql + Drizzle). El esquema SQL para copiar a un server externo (Postgres / MySQL Laragon) está en [`docs/sql/`](sql/README.md). Fechas = epoch en milisegundos. Booleanos = `0` / `1`.
 
@@ -24,7 +32,8 @@ Fuente viva de columnas: `apps/api/src/db/schema.ts` + `migrate.ts`.
 
 | Tabla | Uso |
 |-------|-----|
-| `tenants` | Barrios (clientes) |
+| `hub_sites` | **Solo en el concentrador:** directorio de predios remotos (URL LAN/pública, plan, token, último snapshot JSON). No es el padrón de personas. |
+| `tenants` | Barrio **de esta SQLite** (un predio = un tenant típico). El concentrador no lista barrios por esta tabla. |
 | `users` | Login: `platform_admin`, `tenant_admin`, `resident`, `guard`. `guard_code`: PIN 4–8 dígitos (autorización por llamada en portería). |
 | `sessions` | Sesión cookie JWT |
 | `plans` | Catálogo comercial (sync desde `PLAN_CATALOG`) |
@@ -37,6 +46,7 @@ Fuente viva de columnas: `apps/api/src/db/schema.ts` + `migrate.ts`.
 
 | Tabla | Columnas clave |
 |-------|----------------|
+| `hub_sites` | `name`, `slug`, `plan_id`, `base_url`, `cloud_url`, `hub_token`, `admin_email`, `status` (`pending`/`online`/`offline`), `last_seen_at`, `last_snapshot_json` |
 | `tenants` | `id`, `name`, `slug` (único), `created_at` |
 | `users` | `id`, `tenant_id` (null = plataforma), `email`, `password_hash`, `name`, `role` |
 | `sessions` | `id`, `user_id`, `token`, `expires_at` |
@@ -50,7 +60,7 @@ Fuente viva de columnas: `apps/api/src/db/schema.ts` + `migrate.ts`.
 
 | Tabla | Uso |
 |-------|-----|
-| `sites` | Predio LAN (token del agent Dahua) |
+| `sites` | Predio LAN (`agent_token` Dahua, `hub_token` del concentrador) |
 | `access_points` | Topología: entrada/salida/peatonal/servicio (sin mezclar módulos) |
 | `access_point_actuators` | Cableado punto ↔ relé (`primary` / `aux`) |
 | `access_point_devices` | Cableado punto ↔ Dahua (`validator` / `live` / `both`) |
@@ -67,7 +77,7 @@ Fuente viva de columnas: `apps/api/src/db/schema.ts` + `migrate.ts`.
 
 | Tabla | Columnas clave |
 |-------|----------------|
-| `sites` | `id`, `tenant_id`, `name`, `agent_token`, `last_seen_at`, `map_lat`/`map_lng`/`map_zoom`/`map_bearing` (vista del plano), `map_view_saved` (1 si el admin guardó la cámara), `map_overlays` (capas KML) |
+| `sites` | `id`, `tenant_id`, `name`, `agent_token`, `hub_token` (snapshot/bootstrap del concentrador), `last_seen_at`, `map_lat`/`map_lng`/`map_zoom`/`map_bearing` (vista del plano), `map_view_saved` (1 si el admin guardó la cámara), `map_overlays` (capas KML) |
 | `dahua_devices` | `host`, `port` (HTTP/CGI), `rtsp_port`, `pss_port` (SmartPSS 37777), `username`, `password`, `device_type` (`asi_facial` / `camera_ip` / …), `sentido` (`in`/`out`), `lane_sector` (`vehicular`/`peatonal`), `use_live`, `use_local_relay` |
 | `actuators` | `name`, `kind`, `driver` (`dahua` / `ip`), `dahua_device_id`, `dahua_channel`, `pulse_ms`, `trigger_alpr`/`dahua`/`qr`/`manual` |
 | `cameras` | `rtsp_url`, `actuator_id` (legacy), `enabled` |
@@ -102,7 +112,7 @@ Visita: ingreso en carril 1 (`visit_passes.scanned_in_at`) y egreso en carril 2 
 | Tabla | Uso |
 |-------|-----|
 | `properties` | Lote, label, GPS casa (`map_lat`, `map_lng`), polígono GeoJSON (`lot_polygon`), dirección. Único `(site_id, lot_number)` |
-| `owner_profiles` | Vecino ↔ `users` ↔ `properties` (DNI, WhatsApp, foto, sync Dahua) |
+| `owner_profiles` | Vecino ↔ `users` ↔ `properties` (DNI, WhatsApp, foto, sync Dahua). El lote queda fijo en `property_id`; `PATCH /api/residents/me` ignora `lote` / `lotNumber` / `propertyId`. |
 | `property_family_members` | Grupo familiar del lote (foto / Dahua / vigencia) |
 | `property_services` | Jardinero, empleada, horarios, fechas, foto |
 | `dahua_period_slots` | Huella de horario → índice `AccessTimeSchedule` por ASI |
@@ -166,9 +176,11 @@ La API **no** lee todavía Postgres/MySQL: `client.ts` abre libsql. El SQL deja 
 4. El guardia aprueba o deniega en dashboard o app Android → recién ahí `openDoor`.
 5. Propietarios / familia / servicios permanentes siguen abriendo solos.
 
+`GET /api/hub/snapshot` (token de hub) cuenta **esta** SQLite: lotes, propietarios pendientes (`must_change_password`) vs activos, familiares activos, visitas `in_site`, cola de guardia, eventos de hoy.
+
 ## Demo (seed)
 
-Barrio Las Acacias con plan **Acceso Pro**. Se crea solo si la SQLite está vacía (`seedIfEmpty`).
+Barrio Las Acacias con plan **Acceso Pro**. Se crea solo si la SQLite está vacía (`seedIfEmpty`) **y** no hay `ACCESOPRO_HUB_TOKEN` ni `ACCESOPRO_TENANT_NAME` (predio nuevo espera el bootstrap del concentrador).
 
 | Email | Rol | Lote |
 |-------|-----|------|
