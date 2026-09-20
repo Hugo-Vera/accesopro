@@ -25,36 +25,30 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.AccountBox
+import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowDropDown
+import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Email
+import androidx.compose.material.icons.filled.ExitToApp
+import androidx.compose.material.icons.filled.Face
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Lock
+import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Warning
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.Checkbox
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ElevatedCard
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.rememberUpdatedState
-import androidx.compose.runtime.setValue
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalInspectionMode
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -63,6 +57,7 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
@@ -107,6 +102,7 @@ class MainActivity : ComponentActivity() {
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun GuardApp(prefs: android.content.SharedPreferences) {
     var token by remember { mutableStateOf(prefs.getString("token", "") ?: "") }
@@ -203,6 +199,18 @@ fun GuardApp(prefs: android.content.SharedPreferences) {
             error = error,
             busy = isLoading,
             onBack = { selected = null; error = null },
+            onPhoneAuth = { code ->
+                scope.launch {
+                    isLoading = true
+                    error = null
+                    runCatching {
+                        api.phoneAuth(current.id, code)
+                        items = api.listApprovals()
+                        selected = items.find { it.id == current.id } ?: selected
+                    }.onFailure { error = it.message }
+                    isLoading = false
+                }
+            },
             onDecide = { decision, comment, trunk, dni, company, policy, until, plate ->
                 scope.launch {
                     isLoading = true
@@ -219,46 +227,226 @@ fun GuardApp(prefs: android.content.SharedPreferences) {
         return
     }
 
-    Column(Modifier.padding(16.dp)) {
-        Text("Aprobaciones de visita", style = MaterialTheme.typography.titleLarge)
-        Text("LAN primero (2 s). Si apoyan el QR en el ASI, suena acá y se abre la ficha. El QR identifica; vos abrís.", style = MaterialTheme.typography.bodySmall)
-        if (error != null) Text(error!!, color = MaterialTheme.colorScheme.error)
-        Row(Modifier.padding(top = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = {
-                scope.launch {
-                    runCatching {
-                        census = api.census()
-                        showCensus = true
-                    }.onFailure { error = it.message }
-                }
-            }) { Text("Censo") }
-            OutlinedButton(onClick = {
-                scope.launch {
-                    runCatching {
-                        api.panicSos()
-                        error = "SOS enviado a portería"
-                    }.onFailure { error = it.message }
-                }
-            }) { Text("SOS") }
+    // Main Approvals Dashboard Screen
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = {
+                    Column {
+                        Text(
+                            text = "AccesoPro Guardia",
+                            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
+                        )
+                        Text(
+                            text = "Aprobaciones de visita pendientes",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                },
+                actions = {
+                    IconButton(onClick = {
+                        prefs.edit().remove("token").apply()
+                        token = ""
+                    }) {
+                        Icon(Icons.Default.ExitToApp, contentDescription = "Cerrar Sesión")
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
+            )
         }
-        if (items.isEmpty()) {
-            Text("Nada pendiente.", modifier = Modifier.padding(top = 24.dp))
-        }
-        LazyColumn(verticalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.padding(top = 12.dp)) {
-            items(items, key = { it.id }) { row ->
-                Card(modifier = Modifier.fillMaxWidth().clickable { selected = row }) {
-                    Column(Modifier.padding(12.dp)) {
-                        Text(row.guestName, style = MaterialTheme.typography.titleMedium)
-                        Text("${if (row.sentido == "out") "Salida" else "Entrada"} · Lote ${row.lotNumber ?: "—"}")
-                        if (row.reason == "expired") Text("Pase vencido")
+    ) { paddingValues ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            // Action Buttons Row (Censo & SOS)
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                OutlinedButton(
+                    onClick = {
+                        scope.launch {
+                            runCatching {
+                                census = api.census()
+                                showCensus = true
+                            }.onFailure { error = it.message }
+                        }
+                    },
+                    modifier = Modifier.weight(1f).height(48.dp),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(Icons.Default.AccountBox, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Censo Evacuación")
+                }
+
+                Button(
+                    onClick = {
+                        scope.launch {
+                            runCatching {
+                                api.panicSos()
+                                error = "SOS enviado a portería"
+                            }.onFailure { error = it.message }
+                        }
+                    },
+                    modifier = Modifier.weight(1f).height(48.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.error,
+                        contentColor = MaterialTheme.colorScheme.onError
+                    )
+                ) {
+                    Icon(Icons.Default.Warning, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Alarma SOS", fontWeight = FontWeight.Bold)
+                }
+            }
+
+            if (error != null) {
+                Surface(
+                    color = MaterialTheme.colorScheme.errorContainer,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.onErrorContainer)
+                        Text(error!!, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onErrorContainer)
+                    }
+                }
+            }
+
+            if (items.isEmpty()) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                            modifier = Modifier.size(72.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.Lock,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(36.dp)
+                                )
+                            }
+                        }
+                        Text(
+                            text = "Sin aprobaciones pendientes",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold)
+                        )
+                        Text(
+                            text = "Cuando escaneen un QR en la garita, la ficha aparecerá automáticamente aquí.",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 32.dp),
+                            textAlign = TextAlign.Center
+                        )
+                    }
+                }
+            } else {
+                LazyColumn(
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    items(items, key = { it.id }) { row ->
+                        Card(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { selected = row },
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = if (row.sentido == "out") MaterialTheme.colorScheme.tertiaryContainer else MaterialTheme.colorScheme.primaryContainer,
+                                    modifier = Modifier.size(48.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Default.Person,
+                                            contentDescription = null,
+                                            tint = if (row.sentido == "out") MaterialTheme.colorScheme.onTertiaryContainer else MaterialTheme.colorScheme.onPrimaryContainer
+                                        )
+                                    }
+                                }
+
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = row.guestName,
+                                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                                    )
+                                    Spacer(Modifier.height(4.dp))
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Surface(
+                                            shape = RoundedCornerShape(6.dp),
+                                            color = if (row.sentido == "out") MaterialTheme.colorScheme.tertiaryContainer else MaterialTheme.colorScheme.secondaryContainer
+                                        ) {
+                                            Text(
+                                                text = if (row.sentido == "out") "SALIDA" else "ENTRADA",
+                                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                                color = if (row.sentido == "out") MaterialTheme.colorScheme.onTertiaryContainer else MaterialTheme.colorScheme.onSecondaryContainer,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+
+                                        Text(
+                                            text = "· Lote ${row.lotNumber ?: "—"}",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+
+                                    if (row.reason == "expired") {
+                                        Text(
+                                            text = "Pase vencido",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.error,
+                                            modifier = Modifier.padding(top = 2.dp)
+                                        )
+                                    }
+                                }
+
+                                Icon(
+                                    imageVector = Icons.Default.KeyboardArrowRight,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.outline
+                                )
+                            }
+                        }
                     }
                 }
             }
         }
-        OutlinedButton(onClick = {
-            prefs.edit().remove("token").apply()
-            token = ""
-        }, modifier = Modifier.padding(top = 16.dp)) { Text("Salir") }
     }
 }
 
@@ -524,6 +712,7 @@ fun LoginScreen(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun CensusScreen(
     snapshot: CensusSnapshot?,
@@ -531,34 +720,259 @@ fun CensusScreen(
     onBack: () -> Unit,
     onRefresh: () -> Unit,
 ) {
-    Column(Modifier.padding(16.dp).fillMaxSize(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text("Censo de evacuación", style = MaterialTheme.typography.titleLarge)
-        if (error != null) Text(error, color = MaterialTheme.colorScheme.error)
-        if (snapshot == null) {
-            Text("Cargando…")
-        } else {
-            Text("${snapshot.total} vidas · ${snapshot.adults} adultas · ${snapshot.minors} menores · ${snapshot.lotsWithPeople} lotes")
-            snapshot.lots.forEach { lot ->
-                Card(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(12.dp)) {
-                        Text("Lote ${lot.lotNumber} · ${lot.label}", fontWeight = FontWeight.Bold)
-                        Text("${lot.adults} ad. / ${lot.minors} men. · ${lot.ownerName ?: "—"}")
-                        Text("Tel. ${lot.phone ?: "—"} · emerg. ${lot.emergencyPhone ?: "—"}")
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = {
+                    Column {
+                        Text(
+                            text = "Censo de Evacuación",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                        )
+                        Text(
+                            text = "Control de personas en predio",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.Default.ArrowBack, contentDescription = "Volver")
+                    }
+                },
+                actions = {
+                    IconButton(onClick = onRefresh) {
+                        Icon(Icons.Default.Refresh, contentDescription = "Actualizar")
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
+            )
+        }
+    ) { paddingValues ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            if (!error.isNullOrBlank()) {
+                Surface(
+                    color = MaterialTheme.colorScheme.errorContainer,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.onErrorContainer)
+                        Text(error, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onErrorContainer)
+                    }
+                }
+            }
+
+            if (snapshot == null) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
+                        Text("Cargando censo de evacuación…", style = MaterialTheme.typography.bodyMedium)
+                    }
+                }
+            } else {
+                // Metric Cards Grid
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    MetricCard(
+                        title = "Total Personas",
+                        value = "${snapshot.total}",
+                        icon = Icons.Default.AccountBox,
+                        containerColor = MaterialTheme.colorScheme.primaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier.weight(1f)
+                    )
+                    MetricCard(
+                        title = "Lotes con Gente",
+                        value = "${snapshot.lotsWithPeople}",
+                        icon = Icons.Default.Home,
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    MetricCard(
+                        title = "Adultos",
+                        value = "${snapshot.adults}",
+                        icon = Icons.Default.Person,
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        contentColor = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f)
+                    )
+                    MetricCard(
+                        title = "Menores",
+                        value = "${snapshot.minors}",
+                        icon = Icons.Default.Face,
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                        contentColor = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+
+                Text(
+                    text = "Detalle por Lote",
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                    modifier = Modifier.padding(top = 8.dp)
+                )
+
+                LazyColumn(
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    items(snapshot.lots, key = { it.lotNumber }) { lot ->
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(14.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(14.dp),
+                                verticalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = "Lote ${lot.lotNumber} · ${lot.label}",
+                                        style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
+                                    )
+                                    Surface(
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = MaterialTheme.colorScheme.primaryContainer
+                                    ) {
+                                        Text(
+                                            text = "${lot.adults} ad. / ${lot.minors} men.",
+                                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                        )
+                                    }
+                                }
+
+                                Text(
+                                    text = "Titular: ${lot.ownerName ?: "Sin registrar"}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+
+                                if (!lot.phone.isNullOrBlank() || !lot.emergencyPhone.isNullOrBlank()) {
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                        modifier = Modifier.padding(top = 4.dp)
+                                    ) {
+                                        val ctx = LocalContext.current
+                                        lot.phone?.let { p ->
+                                            OutlinedButton(
+                                                onClick = { ctx.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$p"))) },
+                                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                                modifier = Modifier.height(32.dp)
+                                            ) {
+                                                Icon(Icons.Default.Call, contentDescription = null, modifier = Modifier.size(14.dp))
+                                                Spacer(Modifier.width(4.dp))
+                                                Text("Tel: $p", style = MaterialTheme.typography.labelSmall)
+                                            }
+                                        }
+                                        lot.emergencyPhone?.let { ep ->
+                                            OutlinedButton(
+                                                onClick = { ctx.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$ep"))) },
+                                                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                                                modifier = Modifier.height(32.dp)
+                                            ) {
+                                                Icon(Icons.Default.Warning, contentDescription = null, modifier = Modifier.size(14.dp))
+                                                Spacer(Modifier.width(4.dp))
+                                                Text("Emerg: $ep", style = MaterialTheme.typography.labelSmall)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
-        OutlinedButton(onClick = onRefresh) { Text("Actualizar") }
-        OutlinedButton(onClick = onBack) { Text("Volver") }
     }
 }
 
+@Composable
+private fun MetricCard(
+    title: String,
+    value: String,
+    icon: ImageVector,
+    containerColor: Color,
+    contentColor: Color,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(16.dp),
+        color = containerColor
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = contentColor,
+                modifier = Modifier.size(28.dp)
+            )
+            Column {
+                Text(
+                    text = value,
+                    style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
+                    color = contentColor
+                )
+                Text(
+                    text = title,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = contentColor.copy(alpha = 0.8f)
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ApprovalDetail(
     item: ApprovalItem,
     error: String? = null,
     busy: Boolean = false,
     onBack: () -> Unit,
+    onPhoneAuth: (String) -> Unit = {},
     onDecide: (String, String, Boolean, String, String, String, String, String) -> Unit,
 ) {
     val ctx = LocalContext.current
@@ -569,67 +983,532 @@ fun ApprovalDetail(
     var company by remember { mutableStateOf("") }
     var policy by remember { mutableStateOf("") }
     var until by remember { mutableStateOf("") }
+    var guardCode by remember { mutableStateOf("") }
 
-    Column(
-        Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-        Text(item.guestName, style = MaterialTheme.typography.headlineSmall)
-        Text("${if (item.sentido == "out") "Salida" else "Entrada"} · Lote ${item.lotNumber ?: "—"}")
-        if (item.reason == "expired") Text("Fuera de horario o vencido")
-        if (item.missing.isNotEmpty()) Text("Falta: ${item.missing.joinToString()}")
-        OutlinedTextField(
-            value = dni,
-            onValueChange = { dni = it },
-            label = { Text("DNI (pistola HID o teclado)") },
-            modifier = Modifier.fillMaxWidth(),
-            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-        )
-        if (item.goodsAlert) {
-            Text(if (item.goodsAuthorized) "Bien autorizado por el lote" else if (item.goodsCallReady) "Sin respuesta: llamá al titular" else "Bien no registrado: barrera retenida")
-        }
-        if (item.needsTrunk) {
-            OutlinedTextField(value = plate, onValueChange = { plate = it }, label = { Text("Patente") }, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(value = company, onValueChange = { company = it }, label = { Text("Compañía seguro") }, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(value = policy, onValueChange = { policy = it }, label = { Text("Póliza") }, modifier = Modifier.fillMaxWidth())
-            OutlinedTextField(value = until, onValueChange = { until = it }, label = { Text("Vencimiento (AAAA-MM-DD)") }, modifier = Modifier.fillMaxWidth())
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Checkbox(checked = trunk, onCheckedChange = { trunk = it })
-                Text("Baúl revisado", modifier = Modifier.padding(start = 8.dp))
-            }
-        }
-        OutlinedTextField(value = comment, onValueChange = { comment = it }, label = { Text("Comentario") }, modifier = Modifier.fillMaxWidth())
-        item.emergencies.forEach { e ->
-            OutlinedButton(onClick = {
-                ctx.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:${e.phone}")))
-            }) { Text("${e.label} ${e.phone}") }
-        }
-        item.ownerPhone?.let { phone ->
-            Button(onClick = {
-                ctx.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$phone")))
-            }) { Text("Llamar al lote (${item.ownerName})") }
-        }
-        if (error != null) Text(error, color = MaterialTheme.colorScheme.error)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Button(
-                onClick = { onDecide("approved", comment, trunk, dni, company, policy, until, plate) },
-                enabled = !busy,
-                modifier = Modifier.weight(1f),
+    Scaffold(
+        topBar = {
+            TopAppBar(
+                title = {
+                    Column {
+                        Text(
+                            text = "Detalle de Visita",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                        )
+                        Text(
+                            text = "Lote ${item.lotNumber ?: "S/D"}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                },
+                navigationIcon = {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.Default.ArrowBack, contentDescription = "Volver")
+                    }
+                },
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface)
+            )
+        },
+        bottomBar = {
+            Surface(
+                tonalElevation = 8.dp,
+                shadowElevation = 8.dp,
+                color = MaterialTheme.colorScheme.surface
             ) {
-                Text(if (busy) "Abriendo…" else "Aprobar")
-            }
-            OutlinedButton(
-                onClick = { onDecide("denied", comment, trunk, dni, company, policy, until, plate) },
-                enabled = !busy,
-                modifier = Modifier.weight(1f),
-            ) {
-                Text("Denegar")
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (error != null) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.errorContainer,
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Warning,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onErrorContainer
+                                )
+                                Text(
+                                    text = error,
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onErrorContainer
+                                )
+                            }
+                        }
+                    }
+
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        OutlinedButton(
+                            onClick = { onDecide("denied", comment, trunk, dni, company, policy, until, plate) },
+                            enabled = !busy,
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(50.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.outlinedButtonColors(
+                                contentColor = MaterialTheme.colorScheme.error
+                            )
+                        ) {
+                            Icon(Icons.Default.Close, contentDescription = null)
+                            Spacer(Modifier.width(6.dp))
+                            Text("Denegar", fontWeight = FontWeight.Bold)
+                        }
+
+                        Button(
+                            onClick = { onDecide("approved", comment, trunk, dni, company, policy, until, plate) },
+                            enabled = !busy,
+                            modifier = Modifier
+                                .weight(1f)
+                                .height(50.dp),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.primary
+                            )
+                        ) {
+                            if (busy) {
+                                CircularProgressIndicator(
+                                    modifier = Modifier.size(20.dp),
+                                    color = MaterialTheme.colorScheme.onPrimary,
+                                    strokeWidth = 2.dp
+                                )
+                                Spacer(Modifier.width(8.dp))
+                                Text("Abriendo…")
+                            } else {
+                                Icon(Icons.Default.CheckCircle, contentDescription = null)
+                                Spacer(Modifier.width(6.dp))
+                                Text("Aprobar", fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
             }
         }
-        OutlinedButton(onClick = onBack) { Text("Volver") }
+    ) { paddingValues ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(paddingValues)
+                .verticalScroll(rememberScrollState())
+                .padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            // Visitor Hero Banner Card
+            ElevatedCard(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(20.dp),
+                colors = CardDefaults.elevatedCardColors(
+                    containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f)
+                )
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(20.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(14.dp)
+                    ) {
+                        Surface(
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(52.dp)
+                        ) {
+                            Box(contentAlignment = Alignment.Center) {
+                                Icon(
+                                    imageVector = Icons.Default.Person,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onPrimary,
+                                    modifier = Modifier.size(30.dp)
+                                )
+                            }
+                        }
+
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = item.guestName,
+                                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Row(
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                // Direction Badge
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = if (item.sentido == "out") MaterialTheme.colorScheme.tertiaryContainer else MaterialTheme.colorScheme.secondaryContainer
+                                ) {
+                                    Text(
+                                        text = if (item.sentido == "out") "SALIDA" else "ENTRADA",
+                                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
+                                        color = if (item.sentido == "out") MaterialTheme.colorScheme.onTertiaryContainer else MaterialTheme.colorScheme.onSecondaryContainer,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                    )
+                                }
+
+                                // Lot Badge
+                                Surface(
+                                    shape = RoundedCornerShape(8.dp),
+                                    color = MaterialTheme.colorScheme.surfaceVariant
+                                ) {
+                                    Text(
+                                        text = "Lote ${item.lotNumber ?: "—"}",
+                                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+
+                    // Alerts inside Hero Banner
+                    if (item.reason == "expired") {
+                        Surface(
+                            color = MaterialTheme.colorScheme.errorContainer,
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Warning,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onErrorContainer,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Text(
+                                    text = "Pase vencido o fuera de horario permitido",
+                                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
+                                    color = MaterialTheme.colorScheme.onErrorContainer
+                                )
+                            }
+                        }
+                    }
+
+                    if (item.missing.isNotEmpty()) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.tertiaryContainer,
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Info,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onTertiaryContainer,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Text(
+                                    text = "Falta documentación: ${item.missing.joinToString(", ")}",
+                                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
+                                    color = MaterialTheme.colorScheme.onTertiaryContainer
+                                )
+                            }
+                        }
+                    }
+
+                    if (item.goodsAlert) {
+                        Surface(
+                            color = if (item.goodsAuthorized) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.errorContainer,
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(10.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Info,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(20.dp)
+                                )
+                                Text(
+                                    text = if (item.goodsAuthorized) "Bien autorizado por el lote"
+                                           else if (item.goodsCallReady) "Sin respuesta: llamá al titular"
+                                           else "Bien no registrado: barrera retenida",
+                                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium)
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Card 1: Identificación
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = "Identificación del Visitante",
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                        color = MaterialTheme.colorScheme.primary
+                    )
+
+                    OutlinedTextField(
+                        value = dni,
+                        onValueChange = { dni = it },
+                        label = { Text("DNI") },
+                        leadingIcon = {
+                            Icon(Icons.Default.AccountBox, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                }
+            }
+
+            // Card 2: Vehículo e Inspección
+            if (item.needsTrunk) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Home,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Text(
+                                text = "Vehículo e Inspección de Baúl",
+                                style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+
+                        OutlinedTextField(
+                            value = plate,
+                            onValueChange = { plate = it },
+                            label = { Text("Patente Vehículo") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp)
+                        )
+
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            OutlinedTextField(
+                                value = company,
+                                onValueChange = { company = it },
+                                label = { Text("Aseguradora") },
+                                singleLine = true,
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(12.dp)
+                            )
+                            OutlinedTextField(
+                                value = policy,
+                                onValueChange = { policy = it },
+                                label = { Text("N° Póliza") },
+                                singleLine = true,
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(12.dp)
+                            )
+                        }
+
+                        OutlinedTextField(
+                            value = until,
+                            onValueChange = { until = it },
+                            label = { Text("Vencimiento Póliza (AAAA-MM-DD)") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp)
+                        )
+
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (trunk) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f) else MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { trunk = !trunk }
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                Checkbox(
+                                    checked = trunk,
+                                    onCheckedChange = { trunk = it }
+                                )
+                                Text(
+                                    text = "Baúl / Carga revisada por la guardia",
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
+                                    color = MaterialTheme.colorScheme.onSurface
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+
+            // Card 3: Contactos & Verificación
+            if (item.ownerPhone != null || item.emergencies.isNotEmpty()) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text(
+                            text = "Llamados de Confirmación",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                            color = MaterialTheme.colorScheme.primary
+                        )
+
+                        item.ownerPhone?.let { phone ->
+                            Button(
+                                onClick = {
+                                    ctx.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$phone")))
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(12.dp),
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                                    contentColor = MaterialTheme.colorScheme.onSecondaryContainer
+                                )
+                            ) {
+                                Icon(Icons.Default.Call, contentDescription = null)
+                                Spacer(Modifier.width(8.dp))
+                                Text("Llamar al lote (${item.ownerName})", fontWeight = FontWeight.Bold)
+                            }
+                        }
+
+                        item.emergencies.forEach { e ->
+                            OutlinedButton(
+                                onClick = {
+                                    ctx.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:${e.phone}")))
+                                },
+                                modifier = Modifier.fillMaxWidth(),
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Icon(Icons.Default.Call, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text("${e.label}: ${e.phone}")
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (item.needsPhoneAuth) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.tertiaryContainer)
+                ) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth().padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Text(
+                            "Autorización por llamada",
+                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold)
+                        )
+                        Text(
+                            "Si el titular autorizó por teléfono, ingresá tu código de guardia y confirmá. Después abrís.",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                        OutlinedTextField(
+                            value = guardCode,
+                            onValueChange = { guardCode = it.filter { ch -> ch.isDigit() }.take(8) },
+                            label = { Text("Código de guardia") },
+                            modifier = Modifier.fillMaxWidth(),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                            visualTransformation = PasswordVisualTransformation(),
+                        )
+                        Button(
+                            onClick = { onPhoneAuth(guardCode) },
+                            enabled = !busy && guardCode.length >= 4,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text("Confirmar autorización por llamada")
+                        }
+                    }
+                }
+            }
+
+            // Card 4: Observaciones
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(16.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+            ) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Text(
+                        text = "Observaciones",
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+                        color = MaterialTheme.colorScheme.primary
+                    )
+
+                    OutlinedTextField(
+                        value = comment,
+                        onValueChange = { comment = it },
+                        label = { Text("Comentarios o notas de la guardia") },
+                        leadingIcon = {
+                            Icon(Icons.Default.Edit, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp)
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -686,5 +1565,229 @@ fun LoginScreenPreview() {
             isLoading = false,
             onLogin = {}
         )
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+fun ApprovalDetailPreview() {
+    val sampleItem = ApprovalItem(
+        id = "1",
+        passId = "p123",
+        sentido = "in",
+        reason = "",
+        guestName = "Carlos Gómez",
+        guestDni = "32984102",
+        patente = "AA 123 BB",
+        needsTrunk = true,
+        missing = listOf("Seguro al día"),
+        lotNumber = "42",
+        ownerName = "Juan Pérez",
+        ownerPhone = "+5491155551234",
+        ownerAuthStatus = "authorized",
+        goodsAlert = false,
+        goodsAuthorized = true,
+        goodsCallReady = false,
+        needsPhoneAuth = false,
+        emergencies = listOf(Emergency("Bomberos", "100"))
+    )
+
+    MaterialTheme {
+        ApprovalDetail(
+            item = sampleItem,
+            error = null,
+            busy = false,
+            onBack = {},
+            onDecide = { _, _, _, _, _, _, _, _ -> }
+        )
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+fun CensusScreenPreview() {
+    val sampleCensus = CensusSnapshot(
+        total = 28,
+        adults = 20,
+        minors = 8,
+        lotsWithPeople = 12,
+        lots = listOf(
+            CensusLot("42", "Lote 42", 2, 2, "Juan Pérez", "1155551234", "100"),
+            CensusLot("105", "Lote 105", 3, 0, "María López", "1144449876", "107")
+        )
+    )
+
+    MaterialTheme {
+        CensusScreen(
+            snapshot = sampleCensus,
+            error = null,
+            onBack = {},
+            onRefresh = {}
+        )
+    }
+}
+
+@Preview(showBackground = true)
+@Composable
+fun DashboardScreenPreview() {
+    val sampleItems = listOf(
+        ApprovalItem(
+            id = "1",
+            passId = "p1",
+            sentido = "in",
+            reason = "",
+            guestName = "María Fernández",
+            guestDni = "35123456",
+            patente = "AB 987 CD",
+            needsTrunk = false,
+            missing = emptyList(),
+            lotNumber = "12",
+            ownerName = "Roberto Carlos",
+            ownerPhone = "1122334455",
+            ownerAuthStatus = "authorized",
+            goodsAlert = false,
+            goodsAuthorized = true,
+            goodsCallReady = false,
+            needsPhoneAuth = false,
+            emergencies = emptyList()
+        ),
+        ApprovalItem(
+            id = "2",
+            passId = "p2",
+            sentido = "out",
+            reason = "expired",
+            guestName = "Esteban Quito",
+            guestDni = "28999888",
+            patente = "AA 456 BB",
+            needsTrunk = true,
+            missing = listOf("Seguro"),
+            lotNumber = "105",
+            ownerName = "Laura Pausini",
+            ownerPhone = "1199887766",
+            ownerAuthStatus = "pending",
+            goodsAlert = true,
+            goodsAuthorized = false,
+            goodsCallReady = true,
+            needsPhoneAuth = true,
+            emergencies = emptyList()
+        )
+    )
+
+    MaterialTheme {
+        Surface(modifier = Modifier.fillMaxSize()) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(16.dp),
+                verticalArrangement = Arrangement.spacedBy(16.dp)
+            ) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    OutlinedButton(
+                        onClick = {},
+                        modifier = Modifier.weight(1f).height(48.dp),
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Icon(Icons.Default.AccountBox, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Censo Evacuación")
+                    }
+
+                    Button(
+                        onClick = {},
+                        modifier = Modifier.weight(1f).height(48.dp),
+                        shape = RoundedCornerShape(12.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = MaterialTheme.colorScheme.error,
+                            contentColor = MaterialTheme.colorScheme.onError
+                        )
+                    ) {
+                        Icon(Icons.Default.Warning, contentDescription = null)
+                        Spacer(Modifier.width(8.dp))
+                        Text("Alarma SOS", fontWeight = FontWeight.Bold)
+                    }
+                }
+
+                LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    items(sampleItems) { row ->
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(16.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+                        ) {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(16.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                            ) {
+                                Surface(
+                                    shape = CircleShape,
+                                    color = if (row.sentido == "out") MaterialTheme.colorScheme.tertiaryContainer else MaterialTheme.colorScheme.primaryContainer,
+                                    modifier = Modifier.size(48.dp)
+                                ) {
+                                    Box(contentAlignment = Alignment.Center) {
+                                        Icon(
+                                            imageVector = Icons.Default.Person,
+                                            contentDescription = null,
+                                            tint = if (row.sentido == "out") MaterialTheme.colorScheme.onTertiaryContainer else MaterialTheme.colorScheme.onPrimaryContainer
+                                        )
+                                    }
+                                }
+
+                                Column(modifier = Modifier.weight(1f)) {
+                                    Text(
+                                        text = row.guestName,
+                                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
+                                    )
+                                    Spacer(Modifier.height(4.dp))
+                                    Row(
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Surface(
+                                            shape = RoundedCornerShape(6.dp),
+                                            color = if (row.sentido == "out") MaterialTheme.colorScheme.tertiaryContainer else MaterialTheme.colorScheme.secondaryContainer
+                                        ) {
+                                            Text(
+                                                text = if (row.sentido == "out") "SALIDA" else "ENTRADA",
+                                                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                                color = if (row.sentido == "out") MaterialTheme.colorScheme.onTertiaryContainer else MaterialTheme.colorScheme.onSecondaryContainer,
+                                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                                            )
+                                        }
+
+                                        Text(
+                                            text = "· Lote ${row.lotNumber ?: "—"}",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+
+                                    if (row.reason == "expired") {
+                                        Text(
+                                            text = "Pase vencido",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.error,
+                                            modifier = Modifier.padding(top = 2.dp)
+                                        )
+                                    }
+                                }
+
+                                Icon(
+                                    imageVector = Icons.Default.KeyboardArrowRight,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.outline
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 }

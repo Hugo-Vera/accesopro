@@ -27,6 +27,7 @@ data class ApprovalItem(
     val goodsAlert: Boolean,
     val goodsAuthorized: Boolean,
     val goodsCallReady: Boolean,
+    val needsPhoneAuth: Boolean,
     val emergencies: List<Emergency>,
 )
 
@@ -126,6 +127,11 @@ class GuardApi(
         Unit
     }
 
+    suspend fun phoneAuth(id: String, guardCode: String) = withContext(Dispatchers.IO) {
+        post("/api/visitors/approvals/$id/phone-auth", JSONObject().put("guardCode", guardCode))
+        Unit
+    }
+
     private fun parseItem(o: JSONObject): ApprovalItem {
         val missing = o.optJSONArray("missing") ?: JSONArray()
         val em = o.optJSONArray("emergencies") ?: JSONArray()
@@ -146,6 +152,7 @@ class GuardApi(
             goodsAlert = o.optBoolean("goodsAlert"),
             goodsAuthorized = o.optBoolean("goodsAuthorized"),
             goodsCallReady = o.optBoolean("goodsCallReady"),
+            needsPhoneAuth = o.optBoolean("needsPhoneAuth"),
             emergencies = (0 until em.length()).map {
                 val e = em.getJSONObject(it)
                 Emergency(e.optString("label"), e.optString("phone"))

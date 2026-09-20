@@ -14,6 +14,7 @@ type StaffUser = {
   name: string;
   role: string;
   capabilities?: string[];
+  guardCode?: string | null;
 };
 
 const ROLE_LABEL: Record<string, string> = {
@@ -34,13 +35,17 @@ export default function UsuariosPage() {
   const [editCaps, setEditCaps] = useState<string[]>([]);
   const [msg, setMsg] = useState<string | null>(null);
   const [showModal, setShowModal] = useState(false);
+  const [codeModal, setCodeModal] = useState(false);
+  const [guardCodeDraft, setGuardCodeDraft] = useState("");
   const [busy, setBusy] = useState(false);
   useEscapeKey(() => setShowModal(false), showModal);
+  useEscapeKey(() => setCodeModal(false), codeModal);
   const [form, setForm] = useState({
     name: "",
     email: "",
     password: "",
     role: "guard" as "guard" | "resident",
+    guardCode: "4846",
   });
 
   const packByCap = new Map(
@@ -83,10 +88,11 @@ export default function UsuariosPage() {
           email: form.email.trim(),
           password: form.password,
           role: form.role,
+          guardCode: form.role === "guard" ? form.guardCode : undefined,
           capabilities: form.role === "guard" ? templates.guard : templates.resident,
         }),
       });
-      setForm({ name: "", email: "", password: "", role: "guard" });
+      setForm({ name: "", email: "", password: "", role: "guard", guardCode: "4846" });
       setShowModal(false);
       setMsg("Usuario creado exitosamente.");
       await reload();
@@ -109,6 +115,25 @@ export default function UsuariosPage() {
       await reload();
     } catch (err) {
       setMsg(err instanceof Error ? err.message : "No se pudo guardar");
+    }
+  }
+
+  async function saveGuardCode() {
+    if (!selected || !can("core.users.write")) return;
+    setBusy(true);
+    setMsg(null);
+    try {
+      await api(`/api/users/${selected}/guard-code`, {
+        method: "PUT",
+        body: JSON.stringify({ guardCode: guardCodeDraft }),
+      });
+      setCodeModal(false);
+      setMsg("Código de guardia actualizado.");
+      await reload();
+    } catch (err) {
+      setMsg(err instanceof Error ? err.message : "No se pudo guardar el código");
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -226,14 +251,29 @@ export default function UsuariosPage() {
                   </p>
                 </div>
                 {can("tenant.grants") ? (
-                  <button
-                    type="button"
-                    onClick={resetTemplate}
-                    className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800 transition"
-                  >
-                    <RotateCcw className="h-3.5 w-3.5" />
-                    Restaurar plantilla
-                  </button>
+                  <div className="flex gap-2">
+                    {can("core.users.write") && selectedUser.role !== "resident" ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setGuardCodeDraft(selectedUser.guardCode || "");
+                          setCodeModal(true);
+                        }}
+                        className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800 transition"
+                      >
+                        <Key className="h-3.5 w-3.5" />
+                        Código de guardia
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      onClick={resetTemplate}
+                      className="flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs text-slate-600 hover:bg-slate-50 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800 transition"
+                    >
+                      <RotateCcw className="h-3.5 w-3.5" />
+                      Restaurar plantilla
+                    </button>
+                  </div>
                 ) : null}
               </div>
 
@@ -379,6 +419,25 @@ export default function UsuariosPage() {
                 </select>
               </div>
 
+              {form.role === "guard" ? (
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                    Código de guardia
+                  </label>
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    required
+                    minLength={4}
+                    maxLength={8}
+                    value={form.guardCode}
+                    onChange={(e) => setForm({ ...form, guardCode: e.target.value.replace(/\D/g, "").slice(0, 8) })}
+                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-900 focus:border-blue-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800/80 dark:text-white"
+                  />
+                  <p className="mt-1 text-[11px] text-slate-500">Lo usa en portería si el titular autoriza por teléfono.</p>
+                </div>
+              ) : null}
+
               <div className="mt-6 flex items-center justify-end gap-2 pt-4 border-t border-slate-100 dark:border-slate-800">
                 <button
                   type="button"
@@ -396,6 +455,43 @@ export default function UsuariosPage() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      ) : null}
+
+      {codeModal && selectedUser ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setCodeModal(false)}>
+          <div
+            className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="font-bold text-slate-900 dark:text-white">Código de guardia · {selectedUser.name}</h3>
+            <p className="mt-1 text-xs text-slate-500">
+              Si el titular autoriza por teléfono, el guardia confirma con este código y después abre.
+            </p>
+            <label className="mt-4 block text-xs font-semibold text-slate-700 dark:text-slate-300">
+              Código (4 a 8 dígitos)
+              <input
+                type="text"
+                inputMode="numeric"
+                value={guardCodeDraft}
+                onChange={(e) => setGuardCodeDraft(e.target.value.replace(/\D/g, "").slice(0, 8))}
+                className="mt-1 w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm dark:border-slate-700 dark:bg-slate-800 dark:text-white"
+              />
+            </label>
+            <div className="mt-5 flex justify-end gap-2">
+              <button type="button" onClick={() => setCodeModal(false)} className="rounded-xl px-4 py-2 text-xs font-medium">
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void saveGuardCode()}
+                className="rounded-xl bg-blue-600 px-5 py-2 text-xs font-semibold text-white disabled:opacity-50"
+              >
+                Guardar código
+              </button>
+            </div>
           </div>
         </div>
       ) : null}

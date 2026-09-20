@@ -25,7 +25,7 @@ Fuente viva de columnas: `apps/api/src/db/schema.ts` + `migrate.ts`.
 | Tabla | Uso |
 |-------|-----|
 | `tenants` | Barrios (clientes) |
-| `users` | Login: `platform_admin`, `tenant_admin`, `resident`, `guard` |
+| `users` | Login: `platform_admin`, `tenant_admin`, `resident`, `guard`. `guard_code`: PIN 4–8 dígitos (autorización por llamada en portería). |
 | `sessions` | Sesión cookie JWT |
 | `plans` | Catálogo comercial (sync desde `PLAN_CATALOG`) |
 | `tenant_subscriptions` | Plan asignado a cada barrio |

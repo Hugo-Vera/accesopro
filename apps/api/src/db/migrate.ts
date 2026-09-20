@@ -806,5 +806,6 @@ async function backfillAccessPointsFromLegacy() {
       updated_at INTEGER NOT NULL
     )
   `);
+  await addColumn("users", "guard_code", "TEXT");
 }
 

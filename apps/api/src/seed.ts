@@ -73,6 +73,9 @@ async function ensureDemoGuard() {
   const email = "guardia@lasacacias.local";
   const existing = await db.select().from(users).where(eq(users.email, email)).get();
   if (existing) {
+    if (!existing.guardCode) {
+      await db.update(users).set({ guardCode: "4846" }).where(eq(users.id, existing.id));
+    }
     const grants = await listUserGrants(existing.id);
     if (!grants.length) {
       await applyRoleTemplate(existing.id, "guard", null);
@@ -81,6 +84,9 @@ async function ensureDemoGuard() {
     const have = new Set(grants.map((g) => g.capabilityKey));
     if (!have.has("dahua.evidence") || !have.has("dahua.live") || !have.has("access.owners.invite")) {
       await applyRoleTemplate(existing.id, "guard", null);
+    }
+    if (!existing.guardCode) {
+      await db.update(users).set({ guardCode: "4846" }).where(eq(users.id, existing.id));
     }
     return;
   }
@@ -95,6 +101,7 @@ async function ensureDemoGuard() {
     passwordHash: hash,
     name: "Guardia Las Acacias",
     role: "guard",
+    guardCode: "4846",
     createdAt: new Date(),
   });
   await applyRoleTemplate(id, "guard", null);

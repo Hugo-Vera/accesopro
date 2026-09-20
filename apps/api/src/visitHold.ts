@@ -5,12 +5,12 @@ import {
   guardApprovals,
   ownerProfiles,
   properties,
-  users,
   vehicleInsurances,
   vehicles,
   visitCompanions,
   visitPasses,
   visitRecords,
+  ownerNotices,
 } from "./db/schema.js";
 import { fireActuator } from "./actuatorExec.js";
 import { actuatorsForDahuaDevice, actuatorsForSentido, laneCodeOf } from "./accessPoints.js";
@@ -20,6 +20,7 @@ import { parseVisitQrPayload } from "./visitPass.js";
 import { companionIsMinor, isMinorBirthDate } from "./age.js";
 import { createOwnerNotice, expireOwnerNotices } from "./ownerNotices.js";
 import { saveEventPhoto } from "./eventPhotos.js";
+import { verifyUserGuardCode } from "./users.js";
 
 export type ArrivalMode = "peatonal" | "plataforma" | "vehiculo";
 export type VisitKind = "social" | "service" | "contractor" | "delivery";
@@ -320,6 +321,18 @@ export async function decideGuardApproval(input: {
     return { ok: true };
   }
 
+  if (row.reason === "walk_in") {
+    if (row.ownerAuthStatus === "owner_denied") {
+      return { ok: false, error: "El titular rechazó. Denegá el paso o pedí otra autorización." };
+    }
+    if (row.ownerAuthStatus !== "owner_approved") {
+      return {
+        ok: false,
+        error: "El titular tiene que autorizar en el portal o por llamada, con tu código de guardia",
+      };
+    }
+  }
+
   const missing = await missingVisitFields(pass.id);
   if (missing.length) return { ok: false, error: "Faltan datos obligatorios", missing };
   if (needsVehicleDocs(pass.arrivalMode) && !input.trunkChecked) {
@@ -475,6 +488,16 @@ export async function serializePassFicha(
     exitMinorsCount: row?.exitMinorsCount ?? null,
     originPropertyId: row?.originPropertyId ?? null,
     minorTransferAuthorized: Boolean(row?.minorTransferAuthorizedByUserId),
+    needsPhoneAuth: Boolean(
+      row &&
+        row.status === "pending" &&
+        (row.ownerAuthStatus === "pending_owner" ||
+          row.ownerAuthStatus === "owner_expired" ||
+          (row.goodsAlert && !row.goodsAuthorizedByUserId) ||
+          (Number(row.exitMinorsCount ?? 0) >
+            companions.filter((x) => companionIsMinor(x)).length &&
+            !row.minorTransferAuthorizedByUserId)),
+    ),
     minorsIn: companions.filter((x) => companionIsMinor(x)).length,
     adultsIn: 1 + companions.filter((x) => !companionIsMinor(x)).length,
     emergencies: [
@@ -739,6 +762,59 @@ export async function requestMinorTransfer(input: {
       extraDni: input.extraDni || null,
     },
     ttlMs: 30 * 60 * 1000,
+  });
+  return { ok: true };
+}
+
+export async function confirmPhoneAuth(input: {
+  site: { id: string; tenantId: string };
+  approvalId: string;
+  guardUserId: string;
+  guardCode: string;
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  const valid = await verifyUserGuardCode(input.guardUserId, input.guardCode);
+  if (!valid) return { ok: false, error: "Código de guardia incorrecto" };
+  const row = await db
+    .select()
+    .from(guardApprovals)
+    .where(and(eq(guardApprovals.id, input.approvalId), eq(guardApprovals.siteId, input.site.id)))
+    .get();
+  if (!row || row.status !== "pending") return { ok: false, error: "No hay una solicitud pendiente" };
+  const pass = await db.select().from(visitPasses).where(eq(visitPasses.id, row.passId)).get();
+  if (!pass) return { ok: false, error: "El pase ya no existe" };
+  const comps = await listCompanions(pass.id);
+  const minorsIn = comps.filter((x) => companionIsMinor(x)).length;
+  const extraMinors =
+    Number(row.exitMinorsCount ?? 0) > minorsIn && !row.minorTransferAuthorizedByUserId;
+  const patch: Partial<typeof guardApprovals.$inferInsert> = {};
+  if (row.ownerAuthStatus === "pending_owner" || row.ownerAuthStatus === "owner_expired") {
+    patch.ownerAuthStatus = "owner_approved";
+    patch.ownerAuthorizedByUserId = input.guardUserId;
+  }
+  if (row.goodsAlert && !row.goodsAuthorizedByUserId) {
+    patch.goodsAuthorizedByUserId = input.guardUserId;
+  }
+  if (extraMinors) patch.minorTransferAuthorizedByUserId = input.guardUserId;
+  if (!Object.keys(patch).length) {
+    return { ok: false, error: "No hay una autorización de titular pendiente" };
+  }
+  const now = new Date();
+  await db.update(guardApprovals).set(patch).where(eq(guardApprovals.id, row.id));
+  await db
+    .update(ownerNotices)
+    .set({
+      status: "approved",
+      decidedAt: now,
+      decidedByUserId: input.guardUserId,
+    })
+    .where(and(eq(ownerNotices.approvalId, row.id), eq(ownerNotices.status, "pending")));
+  broadcastRealtimeEvent({
+    id: nid(),
+    siteId: input.site.id,
+    tenantId: input.site.tenantId,
+    type: "visit_hold",
+    payload: { approvalId: row.id, passId: pass.id, phoneAuth: true },
+    createdAt: now.getTime(),
   });
   return { ok: true };
 }

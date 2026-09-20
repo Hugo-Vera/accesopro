@@ -15,6 +15,8 @@ export const users = sqliteTable("users", {
   name: text("name").notNull(),
   role: text("role").notNull(),
   mustChangePassword: integer("must_change_password", { mode: "boolean" }).notNull().default(false),
+  /** PIN de portería: autorizar por llamada al titular. Editable en Usuarios. */
+  guardCode: text("guard_code"),
   inviteToken: text("invite_token"),
   inviteExpiresAt: integer("invite_expires_at", { mode: "timestamp_ms" }),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),

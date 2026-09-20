@@ -97,7 +97,7 @@ Aprobar en app o web dispara `openDoor` **antes** de cerrar el ticket. Si el age
 
 Walk-up portería (`VisitorCheckinModal.tsx`): mismo `visit_passes` + hold de entrada. El wizard **no** abre barrera ni enrola cara. `visit_records.status` sigue al pase (`awaiting_entry` hasta que el guardia aprueba).
 
-Walk-in desde el plano: **Anunciar visita** → aviso al portal del lote (120 s). El titular autoriza o rechaza; **abrir** sigue siendo el guardia.
+Walk-in desde el plano: **Anunciar visita** → aviso al portal del lote (120 s). El titular autoriza en el portal o **por teléfono**; el guardia confirma con su **código de guardia** (Usuarios) y recién ahí abre.
 
 Egreso: baúl si hay vehículo. Bien no registrado: foto + aviso al lote; la barrera no abre hasta que el titular autoriza. Menor de más: hay que pedir traslado al lote de procedencia.
 

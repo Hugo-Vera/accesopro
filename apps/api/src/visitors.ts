@@ -35,6 +35,7 @@ import {
   announceWalkIn,
   attachGoodsAlert,
   requestMinorTransfer,
+  confirmPhoneAuth,
 } from "./visitHold.js";
 import { readEventPhoto } from "./eventPhotos.js";
 
@@ -565,6 +566,22 @@ visitorsApi.post("/visitors/announce", async (c) => {
   });
   if (!result.ok) return c.json({ error: result.error }, 400);
   return c.json(result);
+});
+
+visitorsApi.post("/visitors/approvals/:id/phone-auth", async (c) => {
+  const denied = await denyUnlessCapability(c.get("user"), "access.visitors.manage");
+  if (denied) return denied;
+  const scoped = await scopedSiteWithModule(c, "visitors");
+  if ("error" in scoped) return scoped.error;
+  const body = await c.req.json<{ guardCode?: string }>();
+  const result = await confirmPhoneAuth({
+    site: scoped.site,
+    approvalId: c.req.param("id"),
+    guardUserId: c.get("user").id,
+    guardCode: body.guardCode || "",
+  });
+  if (!result.ok) return c.json({ error: result.error }, 400);
+  return c.json({ ok: true });
 });
 
 visitorsApi.post("/visitors/approvals/:id/goods", async (c) => {

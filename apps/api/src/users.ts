@@ -26,8 +26,22 @@ function publicUser(u: typeof users.$inferSelect, capabilities?: string[]) {
     name: u.name,
     role: u.role,
     createdAt: u.createdAt,
+    guardCode: u.guardCode || null,
     capabilities,
   };
+}
+
+function normalizeGuardCode(raw: unknown) {
+  return String(raw ?? "").replace(/\D/g, "");
+}
+
+function parseGuardCode(raw: unknown): string | null {
+  const digits = normalizeGuardCode(raw);
+  if (!digits) return null;
+  if (digits.length < 4 || digits.length > 8) {
+    throw new Error("El código de guardia tiene que tener entre 4 y 8 dígitos");
+  }
+  return digits;
 }
 
 usersApi.get("/capabilities", async (c) => {
@@ -90,6 +104,7 @@ usersApi.post("/users", async (c) => {
     password?: string;
     role?: string;
     capabilities?: string[];
+    guardCode?: string;
   }>();
   const email = String(body.email ?? "")
     .trim()
@@ -114,6 +129,13 @@ usersApi.post("/users", async (c) => {
     }
   }
 
+  let guardCode: string | null = null;
+  try {
+    guardCode = role === "guard" ? parseGuardCode(body.guardCode) ?? "4846" : parseGuardCode(body.guardCode);
+  } catch (err) {
+    return c.json({ error: err instanceof Error ? err.message : "Código inválido" }, 400);
+  }
+
   const id = nid();
   const now = new Date();
   await db.insert(users).values({
@@ -123,6 +145,7 @@ usersApi.post("/users", async (c) => {
     name,
     role,
     passwordHash: await bcrypt.hash(password, 10),
+    guardCode,
     createdAt: now,
   });
 
@@ -181,4 +204,36 @@ usersApi.post("/users/:id/reset-template", async (c) => {
   return c.json({ ok: true, capabilities: caps });
 });
 
+usersApi.put("/users/:id/guard-code", async (c) => {
+  const user = c.get("user");
+  const denied = await denyUnlessCapability(user, "core.users.write");
+  if (denied) return denied;
+  const id = c.req.param("id");
+  const target = await db.select().from(users).where(eq(users.id, id)).get();
+  if (!target) return c.json({ error: "Usuario no encontrado" }, 404);
+  if (user.role !== "platform_admin" && user.tenantId !== target.tenantId) {
+    return c.json({ error: "Sin acceso a este barrio" }, 403);
+  }
+  if (target.role === "resident") {
+    return c.json({ error: "El portal del vecino no usa código de guardia" }, 400);
+  }
+  const body = await c.req.json<{ guardCode?: string }>();
+  let guardCode: string | null;
+  try {
+    guardCode = parseGuardCode(body.guardCode);
+  } catch (err) {
+    return c.json({ error: err instanceof Error ? err.message : "Código inválido" }, 400);
+  }
+  if (!guardCode) return c.json({ error: "Indicá el código de 4 a 8 dígitos" }, 400);
+  await db.update(users).set({ guardCode }).where(eq(users.id, id));
+  return c.json({ ok: true, userId: id, guardCode });
+});
+
 export { usersApi };
+
+export async function verifyUserGuardCode(userId: string, code: string) {
+  const row = await db.select().from(users).where(eq(users.id, userId)).get();
+  const stored = normalizeGuardCode(row?.guardCode);
+  const given = normalizeGuardCode(code);
+  return Boolean(stored && given && stored === given);
+}

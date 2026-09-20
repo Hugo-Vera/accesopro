@@ -36,6 +36,7 @@ export type GuardApprovalItem = {
   adultsIn?: number;
   originPropertyId?: string | null;
   minorTransferAuthorized?: boolean;
+  needsPhoneAuth?: boolean;
 };
 
 type Props = { tenantId: string; enabled: boolean };
@@ -55,6 +56,7 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
   const [goodsPhoto, setGoodsPhoto] = useState<string | null>(null);
   const [exitMinors, setExitMinors] = useState("");
   const [originLot, setOriginLot] = useState("");
+  const [guardCode, setGuardCode] = useState("");
   const [lots, setLots] = useState<{ id: string; lotNumber: string }[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -130,6 +132,7 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
     setPlate(current.patente || "");
     setGoodsDesc(current.goodsDescription || "");
     setExitMinors(String(current.minorsIn ?? ""));
+    setGuardCode("");
     setError(null);
   }, [current?.id]);
 
@@ -392,6 +395,48 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
             </div>
 
             {error ? <p className="mt-2 text-[11px] text-rose-600">{error}</p> : null}
+
+            {canDecide && current.needsPhoneAuth ? (
+              <div className="mt-3 space-y-2 rounded-lg border border-amber-300 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-950/40">
+                <p className="text-[11px] font-semibold text-amber-900 dark:text-amber-200">
+                  Si el titular autorizó por teléfono, confirmá con tu código de guardia. Después abrís.
+                </p>
+                <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300">
+                  Código de guardia
+                  <input
+                    type="password"
+                    inputMode="numeric"
+                    autoComplete="off"
+                    value={guardCode}
+                    onChange={(e) => setGuardCode(e.target.value.replace(/\D/g, "").slice(0, 8))}
+                    className="mt-0.5 w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+                  />
+                </label>
+                <button
+                  type="button"
+                  disabled={busy || guardCode.length < 4}
+                  className="rounded-lg bg-slate-900 px-3 py-1.5 text-[11px] font-bold text-white dark:bg-white dark:text-slate-900 disabled:opacity-50"
+                  onClick={async () => {
+                    setBusy(true);
+                    setError(null);
+                    try {
+                      await api(withTenant(`/api/visitors/approvals/${current.id}/phone-auth`, tenantId), {
+                        method: "POST",
+                        body: JSON.stringify({ guardCode }),
+                      });
+                      setGuardCode("");
+                      load();
+                    } catch (err) {
+                      setError(err instanceof Error ? err.message : "Código rechazado");
+                    } finally {
+                      setBusy(false);
+                    }
+                  }}
+                >
+                  Confirmar autorización por llamada
+                </button>
+              </div>
+            ) : null}
 
             {!canDecide ? (
               <p className="mt-3 rounded-lg bg-slate-100 px-3 py-2 text-[11px] text-slate-600 dark:bg-slate-800 dark:text-slate-300">
