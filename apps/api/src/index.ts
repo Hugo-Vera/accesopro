@@ -20,7 +20,7 @@ import { hubApi } from "./hub.js";
 import { startRosterReconcilePoller } from "./rosterReconcile.js";
 import { isUnlockMethodPack, syncAsiUnlockMethods } from "./dahuaUnlock.js";
 import { db } from "./db/client.js";
-import { properties, ownerProfiles, sites, tenantModules, tenants, users, events } from "./db/schema.js";
+import { properties, ownerProfiles, propertyFamilyMembers, sites, tenantModules, tenants, users, events } from "./db/schema.js";
 import { accessPointsApi } from "./accessPoints.js";
 import { planApi } from "./plan.js";
 import { hardware } from "./hardware.js";
@@ -50,6 +50,8 @@ import {
 } from "./features.js";
 import { systemApi } from "./systemUpdate.js";
 import { APP_VERSION } from "./version.js";
+import { startHubSyncLoop } from "./hubSync.js";
+import { pushApi } from "./pushNotify.js";
 
 type Env = { Variables: { user: AuthUser } };
 
@@ -118,9 +120,13 @@ app.get("/auth/invite/:token", async (c) => {
     return c.json({ error: "El enlace venció o no es válido" }, 404);
   }
   const profile = await db.select().from(ownerProfiles).where(eq(ownerProfiles.userId, row.id)).get();
-  const property = profile
+  let property = profile
     ? await db.select().from(properties).where(eq(properties.id, profile.propertyId)).get()
     : null;
+  if (!property) {
+    const fam = await db.select().from(propertyFamilyMembers).where(eq(propertyFamilyMembers.userId, row.id)).get();
+    property = fam ? await db.select().from(properties).where(eq(properties.id, fam.propertyId)).get() : null;
+  }
   return c.json({
     email: row.email,
     name: row.name,
@@ -196,9 +202,11 @@ app.get("/auth/me", async (c) => {
 });
 
 app.route("/api/hub", hubApi);
+app.route("/api", pushApi);
 
 app.use("/api/*", async (c, next) => {
   if (c.req.path.startsWith("/api/hub")) return next();
+  if (c.req.path === "/api/push/config") return next();
   return requireAuth(c, next);
 });
 
@@ -450,6 +458,7 @@ const host = process.env.HOST ?? "0.0.0.0";
 await seedIfEmpty();
 startRosterReconcilePoller();
 startRetentionPoller();
+startHubSyncLoop();
 
 serve({ fetch: app.fetch, port, hostname: host }, () => {
   console.log(`AccesoPro API en http://${host}:${port}`);

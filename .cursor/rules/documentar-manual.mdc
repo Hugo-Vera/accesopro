@@ -1,0 +1,11 @@
+---
+description: Documentar tests AccesoPro en el archivo web imprimible (Sistema → Manual)
+alwaysApply: true
+---
+
+Cuando el usuario pida **documentar** un test, manual, capturas o impresión: leer `.cursor/skills/documentar-manual/SKILL.md` y **seguir el archivo web**.
+
+- Vista: **Sistema → Manual** (`/dashboard/manual`). Imprimir / PDF desde el botón de esa página.
+- Texto: append en `apps/web/lib/manual.ts` (`MANUAL_CHAPTERS`).
+- Capturas: `apps/web/public/manual/<capitulo>/` (src `/manual/<capitulo>/…png`).
+- No crear otro markdown o PDF como archivo principal. `docs/MANUAL_BARRIOS.md` solo enlaza a la web.

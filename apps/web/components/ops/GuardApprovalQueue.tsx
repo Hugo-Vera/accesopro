@@ -28,6 +28,7 @@ export type GuardApprovalItem = {
   validUntil: string | number;
   passStatus?: string;
   ownerAuthStatus?: string;
+  ownerAuthorizedByName?: string | null;
   goodsAlert?: boolean;
   goodsDescription?: string | null;
   goodsAuthorized?: boolean;
@@ -203,11 +204,11 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
                         ? "Todavía no pasó el QR por el lector"
                         : current.reason === "walk_in"
                       ? current.ownerAuthStatus === "owner_approved"
-                        ? "El titular autorizó. Completá la inspección y abrí."
+                        ? `Autorizó ${current.ownerAuthorizedByName || "el lote"}. Completá la inspección y abrí.`
                         : current.ownerAuthStatus === "owner_denied"
-                          ? "El titular rechazó. Podés denegar o hacer excepción."
+                          ? `${current.ownerAuthorizedByName || "El lote"} rechazó. Podés denegar o hacer excepción.`
                           : current.ownerAuthStatus === "owner_expired"
-                            ? "El titular no contestó a tiempo. Podés excepción."
+                            ? "El lote no contestó a tiempo. Podés excepción."
                             : "Walk-in: avisamos al lote (2 min). La barrera la abrís vos."
                     : "Identificado en el lector"}
                 </p>

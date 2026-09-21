@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { useEscapeKey } from "@/hooks/useEscapeKey";
 import { LocalQr } from "@/components/LocalQr";
+import { PortalPush } from "@/components/owner/PortalPush";
 import {
   User,
   Users,
@@ -27,6 +28,7 @@ import {
   MapPin,
   LogOut,
   X,
+  Mail,
   ScanFace,
   Siren,
   AlertTriangle,
@@ -63,6 +65,8 @@ type FamilyMember = {
   photoBase64: string | null;
   dahuaSynced: boolean;
   active: boolean;
+  userId?: string | null;
+  birthDate?: string | null;
 };
 
 type Service = {
@@ -175,6 +179,10 @@ export function OwnerPortal() {
 
   // Modales
   const [showFamilyModal, setShowFamilyModal] = useState(false);
+  const [inviteFamily, setInviteFamily] = useState<FamilyMember | null>(null);
+  const [inviteShare, setInviteShare] = useState<{ waUrl: string; shareText: string; activateUrl: string } | null>(null);
+  const [canManageFamily, setCanManageFamily] = useState(true);
+  const [isTitular, setIsTitular] = useState(true);
   const [showServiceModal, setShowServiceModal] = useState(false);
   const [showVisitModal, setShowVisitModal] = useState(false);
   const [panicEnabled, setPanicEnabled] = useState(false);
@@ -188,13 +196,23 @@ export function OwnerPortal() {
   const [sosBusy, setSosBusy] = useState(false);
   const [sosMsg, setSosMsg] = useState<string | null>(null);
   const [notices, setNotices] = useState<
-    { id: string; kind: string; status: string; title: string; message: string; expiresAt: string | number | null }[]
+    {
+      id: string;
+      kind: string;
+      status: string;
+      title: string;
+      message: string;
+      expiresAt: string | number | null;
+      decidedByName?: string | null;
+    }[]
   >([]);
   useEscapeKey(() => {
-    if (showFamilyModal) setShowFamilyModal(false);
+    if (inviteShare) setInviteShare(null);
+    else if (inviteFamily) setInviteFamily(null);
+    else if (showFamilyModal) setShowFamilyModal(false);
     else if (showServiceModal) setShowServiceModal(false);
     else if (showVisitModal) setShowVisitModal(false);
-  }, showFamilyModal || showServiceModal || showVisitModal);
+  }, showFamilyModal || showServiceModal || showVisitModal || Boolean(inviteFamily) || Boolean(inviteShare));
 
   const load = useCallback(async () => {
     try {
@@ -206,6 +224,8 @@ export function OwnerPortal() {
         familyMembers?: FamilyMember[];
         panicEnabled?: boolean;
         features?: PortalFeatures;
+        isTitular?: boolean;
+        canManageFamily?: boolean;
       }>("/api/residents/me");
 
       setUserName(me.profile?.fullName || me.user.name);
@@ -214,6 +234,8 @@ export function OwnerPortal() {
       setServices(me.services);
       setFamily(me.familyMembers || []);
       setPanicEnabled(Boolean(me.panicEnabled));
+      setIsTitular(me.isTitular !== false);
+      setCanManageFamily(me.canManageFamily !== false);
       if (me.features) setFeatures(me.features);
 
       if (me.features?.qr !== false) {
@@ -348,6 +370,7 @@ export function OwnerPortal() {
 
   return (
     <div className="mx-auto max-w-5xl space-y-6 pb-16">
+      <PortalPush />
       {/* Cabecera Principal de la App del Propietario */}
       <header className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
         <div className="flex items-center gap-4">
@@ -366,7 +389,7 @@ export function OwnerPortal() {
                 {profile?.fullName || userName}
               </h1>
               <span className="rounded-md bg-blue-100 px-2 py-0.5 text-xs font-bold text-blue-800 dark:bg-blue-950/80 dark:text-blue-300">
-                Lote {property.lotNumber}
+                Lote {property.lotNumber} · {isTitular ? "Titular" : "Familiar"}
               </span>
             </div>
             <p className="text-xs text-slate-500 dark:text-slate-400">
@@ -465,12 +488,24 @@ export function OwnerPortal() {
                 </div>
               </article>
             ))}
+          {notices
+            .filter((n) => n.status !== "pending" && n.decidedByName)
+            .slice(0, 3)
+            .map((n) => (
+              <p key={n.id} className="text-[11px] text-slate-500">
+                {n.status === "approved" ? "Autorizó" : "Denegó"} {n.decidedByName}: {n.title}
+              </p>
+            ))}
         </div>
       ) : null}
 
       {/* Navegación por Solapas */}
       <nav className="flex flex-wrap gap-2 rounded-xl border border-slate-200 bg-white p-1.5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
-        {ALL_TABS.filter((t) => !("needQr" in t && t.needQr) || features.qr).map((t) => {
+        {ALL_TABS.filter((t) => {
+          if ("needQr" in t && t.needQr && !features.qr) return false;
+          if (!canManageFamily && (t.key === "familia" || t.key === "servicios")) return false;
+          return true;
+        }).map((t) => {
           const Icon = t.icon;
           const active = tab === t.key;
           return (
@@ -684,14 +719,16 @@ export function OwnerPortal() {
                 Empadroná a los miembros de tu familia para habilitarles reconocimiento facial automático
               </p>
             </div>
-            <button
-              type="button"
-              onClick={() => setShowFamilyModal(true)}
-              className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-3.5 py-2 text-xs font-bold text-white hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 transition-colors shadow-sm"
-            >
-              <Plus className="h-4 w-4" />
-              <span>Agregar Familiar</span>
-            </button>
+            {canManageFamily ? (
+              <button
+                type="button"
+                onClick={() => setShowFamilyModal(true)}
+                className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-3.5 py-2 text-xs font-bold text-white hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 transition-colors shadow-sm"
+              >
+                <Plus className="h-4 w-4" />
+                <span>Agregar Familiar</span>
+              </button>
+            ) : null}
           </div>
 
           {family.length === 0 ? (
@@ -765,19 +802,38 @@ export function OwnerPortal() {
                       )}
                     </span>
 
-                    <button
-                      type="button"
-                      onClick={async () => {
-                        if (confirm(`¿Quitar a ${f.name} del grupo familiar?`)) {
-                          await api(`/api/residents/me/family/${f.id}`, { method: "DELETE" });
-                          load();
-                        }
-                      }}
-                      className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/40 dark:hover:text-rose-400 transition-colors"
-                      title="Quitar familiar"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </button>
+                    {canManageFamily ? (
+                      <div className="flex items-center gap-1">
+                        {!f.userId ? (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setInviteFamily(f);
+                              setInviteShare(null);
+                            }}
+                            className="rounded-lg p-1.5 text-slate-400 hover:bg-sky-50 hover:text-sky-700 dark:hover:bg-sky-950/40 dark:hover:text-sky-300"
+                            title="Invitar a la app"
+                          >
+                            <Mail className="h-4 w-4" />
+                          </button>
+                        ) : (
+                          <span className="text-[10px] font-semibold text-emerald-700 dark:text-emerald-300">Con cuenta</span>
+                        )}
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            if (confirm(`¿Quitar a ${f.name} del grupo familiar?`)) {
+                              await api(`/api/residents/me/family/${f.id}`, { method: "DELETE" });
+                              load();
+                            }
+                          }}
+                          className="rounded-lg p-1.5 text-slate-400 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/40 dark:hover:text-rose-400 transition-colors"
+                          title="Quitar familiar"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                    ) : null}
                   </div>
                 </div>
               ))}
@@ -1094,6 +1150,74 @@ export function OwnerPortal() {
       )}
 
       {/* MODAL 1: AGREGAR FAMILIAR (CENTRADOS LIMPIOS) */}
+      {inviteFamily ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900">
+            <div className="flex items-center justify-between border-b border-slate-100 pb-3 dark:border-slate-800">
+              <h3 className="text-base font-bold text-slate-900 dark:text-white">Invitar a {inviteFamily.name}</h3>
+              <button
+                type="button"
+                onClick={() => {
+                  setInviteFamily(null);
+                  setInviteShare(null);
+                }}
+                className="rounded-lg p-1 text-slate-400"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            {inviteShare ? (
+              <div className="mt-4 space-y-3">
+                <p className="text-xs text-slate-600 dark:text-slate-300">{inviteShare.shareText}</p>
+                <a
+                  href={inviteShare.waUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-3 py-2 text-xs font-bold text-white"
+                >
+                  Abrir WhatsApp
+                </a>
+              </div>
+            ) : (
+              <form
+                className="mt-4 space-y-3"
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  const fd = new FormData(e.currentTarget);
+                  try {
+                    const d = await api<{ waUrl: string; shareText: string; activateUrl: string }>(
+                      `/api/residents/me/family/${inviteFamily.id}/invite`,
+                      {
+                        method: "POST",
+                        body: JSON.stringify({
+                          email: String(fd.get("email") || "").trim(),
+                          whatsapp: String(fd.get("whatsapp") || "").trim(),
+                        }),
+                      },
+                    );
+                    setInviteShare(d);
+                    load();
+                  } catch (err) {
+                    alert(err instanceof Error ? err.message : "No se pudo invitar");
+                  }
+                }}
+              >
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  Email
+                  <input name="email" type="email" required className="cfg-input mt-1" />
+                </label>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  WhatsApp
+                  <input name="whatsapp" type="tel" defaultValue={inviteFamily.phone || ""} required className="cfg-input mt-1" />
+                </label>
+                <button type="submit" className="rounded-lg bg-blue-600 px-3 py-2 text-xs font-bold text-white">
+                  Generar enlace
+                </button>
+              </form>
+            )}
+          </div>
+        </div>
+      ) : null}
       {showFamilyModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
           <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900">

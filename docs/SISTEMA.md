@@ -14,8 +14,8 @@ Mapa del monorepo: `docs/ARCHITECTURE.md`. Pendientes vivos: `docs/PENDING.md`. 
 ASI (lector) ←CGI/RTSP→ agent :8790 ←POST /agent/events→ API :8787 SQLite
                                       ←cola openDoor←
 web :3000 ──REST + SSE── API
-app Android guardia ──poll 3 s REST── API
-portal /portal ──pases QR / cara / familia── API
+app Android ──poll REST (+ FCM si hay Firebase)── API pública del concentrador (titular/familiar) o LAN (guardia)
+portal /portal ──pases QR / cara / familia / avisos FCM── API del concentrador (WAN)
 ```
 
 Tres procesos:
@@ -181,6 +181,7 @@ App Android: poll 1 s a la misma API; ticket nuevo suena y abre la ficha. Dual-h
 - UI portal para `visit_authorizations` recurrentes (empleada sin QR); el caso vivo es `property_services`.
 - Intercom SIP real (FreePBX LAN); el softphone del home es stub.
 - Medir código `Method` del QR (`ASI_QR_METHOD_CODE` sigue null).
+- FCM nativo en el APK: el token se registra en `push_devices` cuando hay `google-services.json` (no bumpear Play hasta pedido). Hoy el titular/familiar en 4G usa el portal HTTPS + poll en la app.
 
 ### Sitio / infra
 

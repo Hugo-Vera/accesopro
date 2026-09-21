@@ -22,16 +22,17 @@ export function newInviteToken() {
   return randomBytes(24).toString("hex");
 }
 
-export function newTempPassword() {
-  return `${randomBytes(4).toString("hex")}A1`;
-}
-
 export function inviteExpiresAt() {
   return new Date(Date.now() + 14 * 24 * 60 * 60 * 1000);
 }
 
 export async function hashPassword(password: string) {
   return bcrypt.hash(password, 10);
+}
+
+/** Hash interno: el vecino no lo ve ni lo usa. La clave la arma en /activar. */
+export async function unusableInviteHash() {
+  return hashPassword(randomBytes(32).toString("hex"));
 }
 
 export function activationUrl(base: string, token: string) {
@@ -42,10 +43,8 @@ export function activationUrl(base: string, token: string) {
 export function inviteShareText(opts: {
   name: string;
   lotNumber: string;
-  email: string;
-  tempPassword: string;
   url: string;
 }) {
   const who = opts.name || "vecino";
-  return `Hola ${who}, te invitamos al portal de AccesoPro (lote ${opts.lotNumber}). Entrá con ${opts.email} y esta clave temporal: ${opts.tempPassword}. Luego armá tu clave definitiva: ${opts.url}`;
+  return `Hola ${who}, te invitamos al portal de AccesoPro (lote ${opts.lotNumber}). Armá tu clave en este enlace: ${opts.url}`;
 }

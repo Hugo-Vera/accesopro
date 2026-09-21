@@ -7,6 +7,11 @@ export function apiUrl(path: string) {
   return `${API}${path}`;
 }
 
+export function publicAsset(path: string) {
+  const p = path.startsWith("/") ? path : `/${path}`;
+  return `${BASE}${p}`;
+}
+
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(apiUrl(path), {
     ...init,

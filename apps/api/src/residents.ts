@@ -1,6 +1,5 @@
 import { and, desc, eq } from "drizzle-orm";
 import { Hono } from "hono";
-import bcrypt from "bcryptjs";
 import type { AuthUser } from "./auth.js";
 import { requireAuth } from "./auth.js";
 import { db } from "./db/client.js";
@@ -30,12 +29,11 @@ import { isMinorBirthDate } from "./age.js";
 import { decideOwnerNotice, listOwnerNoticesForProperty } from "./ownerNotices.js";
 import {
   activationUrl,
-  hashPassword,
   inviteExpiresAt,
   inviteShareText,
   newInviteToken,
-  newTempPassword,
   normalizeArWhatsapp,
+  unusableInviteHash,
 } from "./ownerInvite.js";
 
 type Env = { Variables: { user: AuthUser } };
@@ -53,6 +51,13 @@ function parseDateInput(raw: string | undefined, fallback?: Date): Date {
 async function ownerContext(user: AuthUser) {
   let profile = await db.select().from(ownerProfiles).where(eq(ownerProfiles.userId, user.id)).get();
   let property = profile ? await db.select().from(properties).where(eq(properties.id, profile.propertyId)).get() : null;
+  let familyMember = !profile
+    ? await db.select().from(propertyFamilyMembers).where(eq(propertyFamilyMembers.userId, user.id)).get()
+    : null;
+  if (familyMember && !property) {
+    property = await db.select().from(properties).where(eq(properties.id, familyMember.propertyId)).get();
+  }
+  const isTitular = Boolean(profile);
 
   if ((!profile || !property) && isAdmin(user) && user.tenantId) {
     property = await db.select().from(properties).where(eq(properties.tenantId, user.tenantId)).limit(1).get();
@@ -74,8 +79,32 @@ async function ownerContext(user: AuthUser) {
     }
   }
 
+  if (familyMember && property && !profile) {
+    return {
+      profile: {
+        id: familyMember.id,
+        userId: user.id,
+        propertyId: property.id,
+        fullName: familyMember.name,
+        dni: familyMember.dni,
+        phone: familyMember.phone,
+        whatsapp: familyMember.phone,
+        phoneAlt: null,
+        emergencyName: null,
+        emergencyPhone: null,
+        photoBase64: familyMember.photoBase64,
+        dahuaUserId: familyMember.dahuaUserId,
+        dahuaSynced: familyMember.dahuaSynced,
+        createdAt: familyMember.createdAt,
+      },
+      property,
+      isTitular: false,
+      canManageFamily: false,
+    };
+  }
+
   if (!profile || !property) return null;
-  return { profile, property };
+  return { profile, property, isTitular, canManageFamily: isTitular };
 }
 
 function isAdmin(user: AuthUser) {
@@ -88,8 +117,21 @@ async function canInvite(user: AuthUser) {
 }
 
 function publicWebBase(c: { req: { header: (n: string) => string | undefined } }) {
-  const env = (process.env.WEB_ORIGIN ?? "http://localhost:3000").split(",")[0]?.trim();
-  return c.req.header("origin") || env || "http://localhost:3000";
+  const env = (process.env.WEB_ORIGIN ?? "http://localhost:3000").split(",")[0]?.trim().replace(/\/$/, "");
+  if (env && /^https:\/\//i.test(env) && !/localhost|127\.0\.0\.1/i.test(env)) return env;
+  const raw = (c.req.header("origin") || env || "http://localhost:3000").replace(/\/$/, "");
+  try {
+    const u = new URL(raw);
+    // El dashboard en :3443 es HTTPS para cámara DNI; el vecino activa en :3000.
+    if (u.port === "3443") {
+      u.protocol = "http:";
+      u.port = "3000";
+      return u.origin;
+    }
+  } catch {
+    /* origin malformado: devolver raw */
+  }
+  return raw;
 }
 
 async function featureMap(tenantId: string) {
@@ -196,51 +238,10 @@ residents.patch("/properties/:id", async (c) => {
 });
 
 residents.post("/properties/:id/owners", async (c) => {
-  const scoped = await scopedSiteWithModule(c, "visitors");
-  if ("error" in scoped) return scoped.error;
-  if (!isAdmin(c.get("user"))) return c.json({ error: "Solo administración del barrio" }, 403);
-  const property = await db
-    .select()
-    .from(properties)
-    .where(and(eq(properties.id, c.req.param("id")), eq(properties.tenantId, scoped.tenantId)))
-    .get();
-  if (!property) return c.json({ error: "Propiedad no encontrada" }, 404);
-  const body = await c.req.json<{
-    email?: string;
-    password?: string;
-    name?: string;
-    dni?: string;
-    phone?: string;
-  }>();
-  const email = body.email?.trim().toLowerCase();
-  const name = body.name?.trim();
-  const password = body.password ?? "";
-  if (!email || !name || password.length < 8) {
-    return c.json({ error: "Email, nombre y clave (8+ caracteres) son obligatorios" }, 400);
-  }
-  const exists = await db.select().from(users).where(eq(users.email, email)).get();
-  if (exists) return c.json({ error: "Ya existe un usuario con ese email" }, 409);
-  const userId = nid();
-  const profileId = nid();
-  const hash = await bcrypt.hash(password, 10);
-  await db.insert(users).values({
-    id: userId,
-    tenantId: scoped.tenantId,
-    email,
-    passwordHash: hash,
-    name,
-    role: "resident",
-    createdAt: new Date(),
-  });
-  await db.insert(ownerProfiles).values({
-    id: profileId,
-    userId,
-    propertyId: property.id,
-    dni: body.dni?.trim() || null,
-    phone: body.phone?.trim() || null,
-    createdAt: new Date(),
-  });
-  return c.json({ ok: true, userId, profileId });
+  return c.json(
+    { error: "El propietario se invita con POST /api/residents/properties/:id/invite (sin clave). El vecino arma la clave en /activar." },
+    400,
+  );
 });
 
 residents.post("/properties/:id/invite", async (c) => {
@@ -271,14 +272,13 @@ residents.post("/properties/:id/invite", async (c) => {
 
   const userId = nid();
   const profileId = nid();
-  const tempPassword = newTempPassword();
   const token = newInviteToken();
   const displayName = name || `Lote ${property.lotNumber}`;
   await db.insert(users).values({
     id: userId,
     tenantId: scoped.tenantId,
     email,
-    passwordHash: await hashPassword(tempPassword),
+    passwordHash: await unusableInviteHash(),
     name: displayName,
     role: "resident",
     mustChangePassword: true,
@@ -301,8 +301,6 @@ residents.post("/properties/:id/invite", async (c) => {
   const shareText = inviteShareText({
     name: displayName,
     lotNumber: property.lotNumber,
-    email,
-    tempPassword,
     url,
   });
   return c.json({
@@ -310,7 +308,6 @@ residents.post("/properties/:id/invite", async (c) => {
     userId,
     profileId,
     email,
-    tempPassword,
     activateUrl: url,
     whatsapp,
     waUrl: `https://wa.me/${whatsapp}?text=${encodeURIComponent(shareText)}`,
@@ -332,12 +329,11 @@ residents.post("/invites/:userId/resend", async (c) => {
     ? await db.select().from(properties).where(eq(properties.id, profile.propertyId)).get()
     : null;
   if (!property) return c.json({ error: "Lote no encontrado" }, 404);
-  const tempPassword = newTempPassword();
   const token = newInviteToken();
   await db
     .update(users)
     .set({
-      passwordHash: await hashPassword(tempPassword),
+      passwordHash: await unusableInviteHash(),
       mustChangePassword: true,
       inviteToken: token,
       inviteExpiresAt: inviteExpiresAt(),
@@ -348,13 +344,10 @@ residents.post("/invites/:userId/resend", async (c) => {
   const shareText = inviteShareText({
     name: u.name,
     lotNumber: property.lotNumber,
-    email: u.email,
-    tempPassword,
     url,
   });
   return c.json({
     ok: true,
-    tempPassword,
     activateUrl: url,
     whatsapp,
     waUrl: whatsapp ? `https://wa.me/${whatsapp}?text=${encodeURIComponent(shareText)}` : null,
@@ -413,6 +406,8 @@ residents.get("/me", async (c) => {
     familyMembers: familyOut,
     panicEnabled: Boolean(panicRow?.enabled),
     features,
+    isTitular: ctx.isTitular !== false,
+    canManageFamily: ctx.canManageFamily !== false && (await userHasCapability(c.get("user"), "access.family.manage")),
   });
 });
 
@@ -421,6 +416,7 @@ residents.patch("/me", async (c) => {
   if ("error" in scoped) return scoped.error;
   const ctx = await ownerContext(c.get("user"));
   if (!ctx) return c.json({ error: "Perfil de propietario no encontrado" }, 404);
+  if (ctx.isTitular === false) return c.json({ error: "Solo el titular edita la ficha del lote" }, 403);
   const body = await c.req.json<{
     fullName?: string;
     dni?: string;
@@ -523,6 +519,9 @@ residents.post("/me/family", async (c) => {
   if ("error" in scoped) return scoped.error;
   const ctx = await ownerContext(c.get("user"));
   if (!ctx) return c.json({ error: "Perfil de propietario no encontrado" }, 404);
+  if (!(await userHasCapability(c.get("user"), "access.family.manage"))) {
+    return c.json({ error: "Sin permiso para cargar familia" }, 403);
+  }
 
   const body = await c.req.json<{
     name?: string;
@@ -604,11 +603,80 @@ residents.post("/me/family", async (c) => {
   return c.json({ ok: true, id, dahuaUserId, deviceSync, minor });
 });
 
+residents.post("/me/family/:id/invite", async (c) => {
+  const scoped = await scopedSiteWithModule(c, "visitors");
+  if ("error" in scoped) return scoped.error;
+  const ctx = await ownerContext(c.get("user"));
+  if (!ctx) return c.json({ error: "Perfil de propietario no encontrado" }, 404);
+  if (!(await userHasCapability(c.get("user"), "access.family.manage"))) {
+    return c.json({ error: "Sin permiso para invitar familia" }, 403);
+  }
+  const member = await db
+    .select()
+    .from(propertyFamilyMembers)
+    .where(and(eq(propertyFamilyMembers.id, c.req.param("id")), eq(propertyFamilyMembers.propertyId, ctx.property.id)))
+    .get();
+  if (!member) return c.json({ error: "Familiar no encontrado" }, 404);
+  if (isMinorBirthDate(member.birthDate)) {
+    return c.json({ error: "Un menor de 18 no tiene cuenta de app" }, 400);
+  }
+  const body = await c.req.json<{ email?: string; whatsapp?: string }>();
+  const email = body.email?.trim().toLowerCase();
+  const whatsapp = normalizeArWhatsapp(body.whatsapp || member.phone || "");
+  if (!email) return c.json({ error: "Falta el email del familiar" }, 400);
+  if (!whatsapp) return c.json({ error: "Falta un WhatsApp válido" }, 400);
+  const exists = await db.select().from(users).where(eq(users.email, email)).get();
+  if (exists && exists.id !== member.userId) return c.json({ error: "Ya existe un usuario con ese email" }, 409);
+  const token = newInviteToken();
+  let userId = member.userId;
+  if (!userId) {
+    userId = nid();
+    await db.insert(users).values({
+      id: userId,
+      tenantId: scoped.tenantId,
+      email,
+      passwordHash: await unusableInviteHash(),
+      name: member.name,
+      role: "resident",
+      mustChangePassword: true,
+      inviteToken: token,
+      inviteExpiresAt: inviteExpiresAt(),
+      createdAt: new Date(),
+    });
+    await applyRoleTemplate(userId, "family_adult", c.get("user").id);
+    await db.update(propertyFamilyMembers).set({ userId, phone: member.phone || whatsapp }).where(eq(propertyFamilyMembers.id, member.id));
+  } else {
+    await db
+      .update(users)
+      .set({
+        email,
+        inviteToken: token,
+        inviteExpiresAt: inviteExpiresAt(),
+        mustChangePassword: true,
+      })
+      .where(eq(users.id, userId));
+  }
+  const url = activationUrl(publicWebBase(c), token);
+  const shareText = inviteShareText({ name: member.name, lotNumber: ctx.property.lotNumber, url });
+  return c.json({
+    ok: true,
+    userId,
+    email,
+    activateUrl: url,
+    whatsapp,
+    waUrl: `https://wa.me/${whatsapp}?text=${encodeURIComponent(shareText)}`,
+    shareText,
+  });
+});
+
 residents.delete("/me/family/:id", async (c) => {
   const scoped = await scopedSiteWithModule(c, "visitors");
   if ("error" in scoped) return scoped.error;
   const ctx = await ownerContext(c.get("user"));
   if (!ctx) return c.json({ error: "Perfil de propietario no encontrado" }, 404);
+  if (!(await userHasCapability(c.get("user"), "access.family.manage"))) {
+    return c.json({ error: "Sin permiso para dar de baja un familiar" }, 403);
+  }
 
   const row = await db
     .select()
@@ -1017,8 +1085,12 @@ residents.get("/me/notices", async (c) => {
   const ctx = await ownerContext(c.get("user"));
   if (!ctx) return c.json({ error: "Perfil de propietario no encontrado" }, 404);
   const rows = await listOwnerNoticesForProperty(ctx.property.id);
-  return c.json({
-    notices: rows.map((n) => ({
+  const notices = [];
+  for (const n of rows) {
+    const who = n.decidedByUserId
+      ? await db.select({ name: users.name }).from(users).where(eq(users.id, n.decidedByUserId)).get()
+      : null;
+    notices.push({
       id: n.id,
       kind: n.kind,
       status: n.status,
@@ -1029,8 +1101,11 @@ residents.get("/me/notices", async (c) => {
       createdAt: n.createdAt,
       passId: n.passId,
       approvalId: n.approvalId,
-    })),
-  });
+      decidedByUserId: n.decidedByUserId,
+      decidedByName: who?.name ?? null,
+    });
+  }
+  return c.json({ notices });
 });
 
 residents.post("/me/notices/:id/decide", async (c) => {

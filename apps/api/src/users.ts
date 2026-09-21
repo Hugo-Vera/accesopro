@@ -111,7 +111,10 @@ usersApi.post("/users", async (c) => {
     .toLowerCase();
   const name = String(body.name ?? "").trim();
   const password = String(body.password ?? "");
-  const role = body.role === "resident" ? "resident" : "guard";
+  if (body.role === "resident") {
+    return c.json({ error: "El propietario se invita desde Personas → Lotes, no desde Usuarios" }, 400);
+  }
+  const role = "guard";
   if (!email || !name || password.length < 8) {
     return c.json({ error: "Email, nombre y clave (mín. 8) son obligatorios" }, 400);
   }

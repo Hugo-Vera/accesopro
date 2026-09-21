@@ -28,6 +28,7 @@ data class ApprovalItem(
     val goodsAuthorized: Boolean,
     val goodsCallReady: Boolean,
     val needsPhoneAuth: Boolean,
+    val ownerAuthorizedByName: String?,
     val emergencies: List<Emergency>,
 )
 
@@ -49,16 +50,79 @@ data class CensusSnapshot(
     val lots: List<CensusLot>,
 )
 
+data class OwnerNotice(
+    val id: String,
+    val title: String,
+    val message: String,
+    val status: String,
+    val decidedByName: String?,
+)
+
+data class LoginResult(
+    val token: String,
+    val role: String,
+    val name: String,
+    val capabilities: List<String>,
+)
+
 class GuardApi(
     private val lanUrl: String,
     private val cloudUrl: String,
     private var token: String,
 ) {
-    suspend fun login(email: String, password: String): String = withContext(Dispatchers.IO) {
+    suspend fun login(email: String, password: String): LoginResult = withContext(Dispatchers.IO) {
         val body = JSONObject().put("email", email).put("password", password)
         val json = post("/auth/login", body, auth = false)
         token = json.getString("token")
-        token
+        val user = json.optJSONObject("user") ?: JSONObject()
+        val caps = user.optJSONArray("capabilities") ?: JSONArray()
+        LoginResult(
+            token = token,
+            role = user.optString("role", "guard"),
+            name = user.optString("name"),
+            capabilities = (0 until caps.length()).map { caps.getString(it) },
+        )
+    }
+
+    suspend fun me(): LoginResult = withContext(Dispatchers.IO) {
+        val json = get("/auth/me")
+        val user = json.optJSONObject("user") ?: JSONObject()
+        val caps = user.optJSONArray("capabilities") ?: JSONArray()
+        LoginResult(
+            token = token,
+            role = user.optString("role", "guard"),
+            name = user.optString("name"),
+            capabilities = (0 until caps.length()).map { caps.getString(it) },
+        )
+    }
+
+    suspend fun listNotices(): List<OwnerNotice> = withContext(Dispatchers.IO) {
+        val json = get("/api/residents/me/notices")
+        val arr = json.optJSONArray("notices") ?: JSONArray()
+        buildList {
+            for (i in 0 until arr.length()) {
+                val o = arr.getJSONObject(i)
+                add(
+                    OwnerNotice(
+                        id = o.optString("id"),
+                        title = o.optString("title"),
+                        message = o.optString("message"),
+                        status = o.optString("status"),
+                        decidedByName = o.optString("decidedByName").ifBlank { null },
+                    ),
+                )
+            }
+        }
+    }
+
+    suspend fun decideNotice(id: String, decision: String) = withContext(Dispatchers.IO) {
+        post("/api/residents/me/notices/$id/decide", JSONObject().put("decision", decision))
+        Unit
+    }
+
+    suspend fun registerPush(fcmToken: String) = withContext(Dispatchers.IO) {
+        post("/api/push/register", JSONObject().put("token", fcmToken).put("platform", "android"))
+        Unit
     }
 
     suspend fun listApprovals(): List<ApprovalItem> = withContext(Dispatchers.IO) {
@@ -153,6 +217,7 @@ class GuardApi(
             goodsAuthorized = o.optBoolean("goodsAuthorized"),
             goodsCallReady = o.optBoolean("goodsCallReady"),
             needsPhoneAuth = o.optBoolean("needsPhoneAuth"),
+            ownerAuthorizedByName = o.optString("ownerAuthorizedByName").ifBlank { null },
             emergencies = (0 until em.length()).map {
                 val e = em.getJSONObject(it)
                 Emergency(e.optString("label"), e.optString("phone"))

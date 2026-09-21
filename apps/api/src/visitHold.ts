@@ -476,6 +476,10 @@ export async function serializePassFicha(
     ...contact,
     ownerAuthStatus: row?.ownerAuthStatus ?? "none",
     ownerAuthExpiresAt: row?.ownerAuthExpiresAt ?? null,
+    ownerAuthorizedByUserId: row?.ownerAuthorizedByUserId ?? null,
+    ownerAuthorizedByName: row?.ownerAuthorizedByUserId
+      ? ((await db.select({ name: users.name }).from(users).where(eq(users.id, row.ownerAuthorizedByUserId)).get())?.name ?? null)
+      : null,
     goodsAlert: Boolean(row?.goodsAlert),
     goodsDescription: row?.goodsDescription ?? null,
     goodsPhotoPath: row?.goodsPhotoPath ?? null,

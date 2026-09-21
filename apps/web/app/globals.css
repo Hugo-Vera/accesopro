@@ -1916,6 +1916,30 @@
   color: #075985;
 }
 
+@media print {
+  html,
+  body {
+    height: auto !important;
+    background: #fff !important;
+    color: #0f172a !important;
+  }
+  .manual-toolbar {
+    display: none !important;
+  }
+  .manual-chapter {
+    break-before: page;
+  }
+  .manual-chapter:first-of-type {
+    break-before: auto;
+  }
+  .manual-figure {
+    break-inside: avoid;
+  }
+  .manual-figure img {
+    max-width: 100%;
+  }
+}
+
 html,
 body {
   height: 100%;

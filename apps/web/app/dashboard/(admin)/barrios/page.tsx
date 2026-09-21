@@ -5,7 +5,8 @@ import { api } from "@/lib/api";
 import { useDash } from "@/components/DashboardProvider";
 import { CapabilityGate, PageHeader } from "@/components/PageHeader";
 import { useEscapeKey } from "@/hooks/useEscapeKey";
-import { Building2, Copy, ExternalLink, Pencil, Plus, RefreshCw, Trash2, X } from "lucide-react";
+import { Building2, Copy, ExternalLink, LayoutGrid, Pencil, Plus, RefreshCw, Trash2, X } from "lucide-react";
+import { useRouter } from "next/navigation";
 
 type Snapshot = {
   tenantName: string | null;
@@ -32,6 +33,15 @@ type HubSite = {
   status: string;
   lastSeenAt: string | number | null;
   snapshot: Snapshot | null;
+  replicaTenantId?: string | null;
+  lastSyncAt?: string | number | null;
+  sync?: {
+    lastPushAt?: number;
+    lastPullAt?: number;
+    lastRestoreAt?: number;
+    applied?: number;
+    at?: number;
+  } | null;
   createdAt: string | number;
 };
 
@@ -61,7 +71,8 @@ function fmtSeen(v: string | number | Date | null | undefined) {
 }
 
 export default function BarriosPage() {
-  const { isPlatform, plans } = useDash();
+  const { isPlatform, plans, setTenant } = useDash();
+  const router = useRouter();
   const [rows, setRows] = useState<HubSite[]>([]);
   const [catalog, setCatalog] = useState<PlanOpt[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -119,10 +130,6 @@ export default function BarriosPage() {
 
   async function onCreate(e: FormEvent) {
     e.preventDefault();
-    if (!form.baseUrl.trim() && !form.cloudUrl.trim()) {
-      setFormError("Indicá la URL LAN o la pública del Ubuntu de la garita (http://IP:3000).");
-      return;
-    }
     setBusy(true);
     setFormError(null);
     setError(null);
@@ -221,7 +228,7 @@ export default function BarriosPage() {
     <CapabilityGate capability="platform.tenants">
       <PageHeader
         title="Barrios"
-        subtitle="Concentrador: cada predio tiene su SQLite. Esta lista consulta en vivo lo que cada Ubuntu tiene cargado."
+        subtitle="Cada barrio tiene un tenant sombra acá (lotes e invitaciones) y replica lo que empuja la garita. La URL de la garita es opcional al alta."
         actions={
           <button
             type="button"
@@ -257,13 +264,14 @@ export default function BarriosPage() {
                 <th className="px-4 py-3">Propietarios</th>
                 <th className="px-4 py-3">Familia</th>
                 <th className="px-4 py-3">Visitas / eventos</th>
+                <th className="px-4 py-3">Replica</th>
                 <th className="px-4 py-3">Acciones</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
               {rows.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="px-4 py-12 text-center text-slate-500">
+                  <td colSpan={9} className="px-4 py-12 text-center text-slate-500">
                     <Building2 className="mx-auto mb-2 h-8 w-8 text-slate-300 dark:text-slate-600" />
                     <p className="text-sm font-medium">No hay predios en el concentrador</p>
                     <p className="mt-0.5 text-xs text-slate-400">Dá de alta el Ubuntu del barrio y su administrador.</p>
@@ -303,8 +311,28 @@ export default function BarriosPage() {
                       <td className="px-4 py-3 text-xs text-slate-600 dark:text-slate-300">
                         {snap ? `${snap.visitsInSite} en predio · ${snap.eventsToday} ev. hoy` : "—"}
                       </td>
+                      <td className="px-4 py-3 text-[11px] text-slate-600 dark:text-slate-300">
+                        {fmtSeen(r.lastSyncAt) ? <p>Sync {fmtSeen(r.lastSyncAt)}</p> : <p>Sin subida aún</p>}
+                        {r.sync?.lastRestoreAt ? (
+                          <p className="text-[10px] text-slate-400">Restore {fmtSeen(r.sync.lastRestoreAt)}</p>
+                        ) : null}
+                      </td>
                       <td className="px-4 py-3 text-right">
                         <div className="inline-flex items-center gap-1">
+                          {r.replicaTenantId ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setTenant(r.replicaTenantId!);
+                                router.push("/dashboard/propiedades");
+                              }}
+                              className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-1 text-[11px] font-semibold text-slate-700 hover:bg-slate-50 dark:border-slate-600 dark:text-slate-200"
+                              title="Precargar lotes en el tenant sombra"
+                            >
+                              <LayoutGrid className="h-3.5 w-3.5" />
+                              Lotes
+                            </button>
+                          ) : null}
                           <button
                             type="button"
                             onClick={() => refreshOne(r.id)}
@@ -367,7 +395,7 @@ export default function BarriosPage() {
                 <p className="text-xs text-slate-500">
                   {editing
                     ? "Cambia URLs, plan o admin. La SQLite de la garita no se pisa."
-                    : "Alta en el concentrador. La base vive en el Ubuntu del predio."}
+                    : "Alta en el concentrador. Queda un barrio sombra para precargar lotes aunque la garita todavía no exista."}
                 </p>
               </div>
               <button
@@ -451,7 +479,7 @@ export default function BarriosPage() {
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
                 URL LAN del Ubuntu de la garita
                 <span className="mt-0.5 block font-normal text-[11px] text-slate-500">
-                  http://IP:3000 de esa máquina. Si este Ubuntu es el predio, usá esta misma IP (no 114 si acá es 146).
+                  Opcional al alta. Sin URL igual se crea el barrio sombra para precargar lotes e invitaciones. Completala cuando exista la garita.
                 </span>
                 <input
                   className="cfg-input"

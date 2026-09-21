@@ -20,6 +20,7 @@ import {
 import { applyRoleTemplate } from "./grants.js";
 import { assignPlanToTenant } from "./plans.js";
 import { nid } from "./scope.js";
+import { hubSyncApi, restoreFromHubIfEmpty } from "./hubSync.js";
 
 type Env = { Variables: { user: AuthUser } };
 
@@ -243,6 +244,15 @@ function publicSite(row: typeof hubSites.$inferSelect, snapshot: HubSnapshot | n
     status: row.status,
     lastSeenAt: row.lastSeenAt,
     snapshot: snap,
+    replicaTenantId: row.replicaTenantId,
+    lastSyncAt: row.lastSyncAt,
+    sync: (() => {
+      try {
+        return row.lastSyncJson ? (JSON.parse(row.lastSyncJson) as Record<string, unknown>) : null;
+      } catch {
+        return null;
+      }
+    })(),
     createdAt: row.createdAt,
   };
 }
@@ -319,9 +329,36 @@ function isSelfHubRow(row: { baseUrl: string; cloudUrl: string | null }) {
 }
 
 async function pullAndStore(row: typeof hubSites.$inferSelect) {
+  if (row.replicaTenantId) {
+    const snapshot = await buildHubSnapshot(row.replicaTenantId);
+    const now = new Date();
+    const online = Boolean(row.baseUrl || row.cloudUrl) && !isSelfHubRow(row);
+    if (isSelfHubRow(row) || !row.baseUrl) {
+      await db
+        .update(hubSites)
+        .set({
+          status: "online",
+          lastSeenAt: now,
+          lastSnapshotJson: JSON.stringify(snapshot),
+        })
+        .where(eq(hubSites.id, row.id));
+      return {
+        ...row,
+        status: "online" as const,
+        lastSeenAt: now,
+        lastSnapshotJson: JSON.stringify(snapshot),
+      };
+    }
+    if (!online) {
+      await db
+        .update(hubSites)
+        .set({ lastSnapshotJson: JSON.stringify(snapshot) })
+        .where(eq(hubSites.id, row.id));
+    }
+  }
   if (isSelfHubRow(row)) {
     const site = await db.select().from(sites).where(eq(sites.hubToken, row.hubToken)).get();
-    const snapshot = await buildHubSnapshot(site?.tenantId ?? null);
+    const snapshot = await buildHubSnapshot(site?.tenantId ?? row.replicaTenantId ?? null);
     const now = new Date();
     await db
       .update(hubSites)
@@ -337,6 +374,10 @@ async function pullAndStore(row: typeof hubSites.$inferSelect) {
       lastSeenAt: site ? now : row.lastSeenAt,
       lastSnapshotJson: JSON.stringify(snapshot),
     };
+  }
+  if (!row.baseUrl && !row.cloudUrl) {
+    const snapshot = row.replicaTenantId ? await buildHubSnapshot(row.replicaTenantId) : null;
+    return { ...row, status: row.status || "pending", lastSnapshotJson: snapshot ? JSON.stringify(snapshot) : row.lastSnapshotJson };
   }
   const got = await fetchRemote(row.baseUrl, row.cloudUrl, "/api/hub/snapshot", { hubToken: row.hubToken });
   if (!got.ok) {
@@ -367,22 +408,26 @@ async function tryBootstrap(row: typeof hubSites.$inferSelect) {
     passwordHash: row.adminPasswordHash,
     hubToken: row.hubToken,
   };
-  if (isSelfHubRow(row)) {
-    try {
-      await bootstrapPredio(payload);
-      return { ok: true as const };
-    } catch (err) {
-      return { error: err instanceof Error ? err.message : "No se pudo iniciar el predio" };
+  let localTenantId = row.replicaTenantId;
+  try {
+    const local = await bootstrapPredio(payload);
+    localTenantId = local.tenantId;
+    if (local.tenantId !== row.replicaTenantId) {
+      await db.update(hubSites).set({ replicaTenantId: local.tenantId }).where(eq(hubSites.id, row.id));
     }
+  } catch (err) {
+    return { error: err instanceof Error ? err.message : "No se pudo iniciar el predio sombra" };
   }
+  if (!row.baseUrl && !row.cloudUrl) return { ok: true as const, tenantId: localTenantId };
+  if (isSelfHubRow(row)) return { ok: true as const, tenantId: localTenantId };
   const body = JSON.stringify(payload);
   const got = await fetchRemote(row.baseUrl, row.cloudUrl, "/api/hub/bootstrap", {
     method: "POST",
     hubToken: row.hubToken,
     body,
   });
-  if (!got.ok) return { error: got.error || "No se pudo iniciar el predio" };
-  return { ok: true as const };
+  if (!got.ok) return { ok: true as const, tenantId: localTenantId, error: got.error || "Garita offline; quedó la precarga local" };
+  return { ok: true as const, tenantId: localTenantId };
 }
 
 /** Rutas públicas del predio (token de hub, sin cookie). */
@@ -425,8 +470,12 @@ hubPredioApi.post("/bootstrap", async (c) => {
     return c.json({ error: "Faltan datos del barrio o del administrador" }, 400);
   }
   try {
+    const restored = await restoreFromHubIfEmpty().catch(() => ({ restored: false as const }));
+    if (restored && "restored" in restored && restored.restored) {
+      return c.json({ ok: true, already: true, restored: true });
+    }
     const out = await bootstrapPredio({ name, slug, planId, adminName, adminEmail, passwordHash, hubToken });
-    return c.json(out);
+    return c.json({ ...out, restored: false });
   } catch (err) {
     return c.json({ error: err instanceof Error ? err.message : "No se pudo iniciar" }, 409);
   }
@@ -470,7 +519,6 @@ hubAdminApi.post("/sites", async (c) => {
   if (!plan) return c.json({ error: "Elegí un plan comercial" }, 400);
   if (!adminName || !adminEmail) return c.json({ error: "Falta el administrador del predio" }, 400);
   if (adminPassword.length < 8) return c.json({ error: "La clave debe tener al menos 8 caracteres" }, 400);
-  if (!baseUrl && !cloudUrl) return c.json({ error: "Indicá la URL LAN o la pública del Ubuntu" }, 400);
   let slug = slugify(name);
   const clash = await db.select().from(hubSites).where(eq(hubSites.slug, slug)).get();
   if (clash) slug = `${slug}-${randomBytes(3).toString("hex")}`;
@@ -490,10 +538,12 @@ hubAdminApi.post("/sites", async (c) => {
     adminEmail,
     adminPasswordHash,
     status: "pending",
+    replicaTenantId: null,
     createdAt: now,
   });
   let row = (await db.select().from(hubSites).where(eq(hubSites.id, id)).get())!;
   const boot = await tryBootstrap(row);
+  row = (await db.select().from(hubSites).where(eq(hubSites.id, id)).get())!;
   if (boot.ok) {
     row = (await pullAndStore(row)) as typeof row;
   }
@@ -502,8 +552,9 @@ hubAdminApi.post("/sites", async (c) => {
     hubToken,
     adminEmail,
     adminPassword,
-    agentHint: "En el Ubuntu del predio: ACCESOPRO_HUB_TOKEN y SITE_AGENT_TOKEN del bootstrap.",
-    bootstrapError: boot.ok ? null : boot.error,
+    replicaTenantId: row.replicaTenantId,
+    agentHint: "En el Ubuntu del predio: ACCESOPRO_HUB_TOKEN, ACCESOPRO_HUB_URL (DNS del concentrador) y SITE_AGENT_TOKEN del bootstrap.",
+    bootstrapError: boot.ok ? boot.error ?? null : boot.error,
   });
 });
 
@@ -548,7 +599,6 @@ hubAdminApi.patch("/sites/:id", async (c) => {
   if (adminPassword && adminPassword.length < 8) {
     return c.json({ error: "La clave debe tener al menos 8 caracteres" }, 400);
   }
-  if (!baseUrl && !cloudUrl) return c.json({ error: "Indicá la URL LAN o la pública del Ubuntu" }, 400);
   const patch: Partial<typeof hubSites.$inferInsert> = {
     name,
     planId: plan.id,
@@ -576,7 +626,8 @@ hubAdminApi.delete("/sites/:id", async (c) => {
   return c.json({ ok: true });
 });
 
-/** Un solo árbol /api/hub: snapshot/bootstrap públicos; /sites con cookie. */
+/** Un solo árbol /api/hub: snapshot/bootstrap/sync públicos; /sites con cookie. */
 export const hubApi = new Hono<Env>();
 hubApi.route("/", hubPredioApi);
+hubApi.route("/", hubSyncApi);
 hubApi.route("/", hubAdminApi);

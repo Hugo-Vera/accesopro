@@ -11,6 +11,7 @@
     "@accesopro/catalog": "*",
     "@types/leaflet": "^1.9.22",
     "@zxing/library": "^0.21.3",
+    "firebase": "^10.13.2",
     "leaflet": "^1.9.4",
     "lucide-react": "^1.41.0",
     "next": "^15.5.2",

@@ -227,6 +227,13 @@ export const NAV_CATALOG: NavGroup[] = [
       { id: "usuarios", href: "/dashboard/usuarios", label: "Usuarios", capability: "core.users.read", adminOnly: true },
       { id: "config", href: "/dashboard/modulos", label: "Configuración", capability: "core.config", adminOnly: true },
       {
+        id: "manual",
+        href: "/dashboard/manual",
+        label: "Manual",
+        capability: "core.config",
+        adminOnly: true,
+      },
+      {
         id: "diagnostico",
         href: "/dashboard/diagnostico",
         label: "Diagnóstico",

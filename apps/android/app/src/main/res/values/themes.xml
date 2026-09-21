@@ -1,3 +1,8 @@
 <resources>
-    <style name="Theme.AccesoProGuard" parent="android:Theme.Material.Light.NoActionBar" />
+    <style name="Theme.AccesoProGuard" parent="android:Theme.Material.Light.NoActionBar">
+        <item name="android:statusBarColor">@android:color/transparent</item>
+        <item name="android:navigationBarColor">@android:color/transparent</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:windowBackground">#FFF1F5F9</item>
+    </style>
 </resources>

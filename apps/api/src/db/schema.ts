@@ -117,6 +117,10 @@ export const hubSites = sqliteTable("hub_sites", {
   status: text("status").notNull().default("pending"),
   lastSeenAt: integer("last_seen_at", { mode: "timestamp_ms" }),
   lastSnapshotJson: text("last_snapshot_json"),
+  /** Tenant sombra en esta SQLite (precarga / replica). */
+  replicaTenantId: text("replica_tenant_id").references(() => tenants.id),
+  lastSyncAt: integer("last_sync_at", { mode: "timestamp_ms" }),
+  lastSyncJson: text("last_sync_json"),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
 });
 
@@ -389,6 +393,8 @@ export const propertyFamilyMembers = sqliteTable("property_family_members", {
   horaHasta: text("hora_hasta"),
   diasSemana: text("dias_semana"),
   active: integer("active", { mode: "boolean" }).notNull().default(true),
+  /** Login de app/portal si el titular lo invitó (adultos). */
+  userId: text("user_id").references(() => users.id),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
 });
 
@@ -761,4 +767,20 @@ export const tenantSettings = sqliteTable("tenant_settings", {
   retentionDays: integer("retention_days").notNull().default(90),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
 });
+
+/** Tokens FCM (web / Android) por usuario del lote. */
+export const pushDevices = sqliteTable(
+  "push_devices",
+  {
+    id: text("id").primaryKey(),
+    userId: text("user_id")
+      .notNull()
+      .references(() => users.id),
+    platform: text("platform").notNull().default("web"),
+    token: text("token").notNull(),
+    lastSeenAt: integer("last_seen_at", { mode: "timestamp_ms" }).notNull(),
+    createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (t) => ({ tokenUq: uniqueIndex("push_devices_token_uq").on(t.token) }),
+);
 

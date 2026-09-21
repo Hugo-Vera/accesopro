@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
+import Link from "next/link";
 import { api, withTenant } from "@/lib/api";
 import { useDash } from "@/components/DashboardProvider";
 import { CapabilityGate, PageHeader } from "@/components/PageHeader";
@@ -20,7 +21,6 @@ type StaffUser = {
 const ROLE_LABEL: Record<string, string> = {
   tenant_admin: "Admin barrio",
   guard: "Guardia",
-  resident: "Propietario",
 };
 
 export default function UsuariosPage() {
@@ -44,7 +44,6 @@ export default function UsuariosPage() {
     name: "",
     email: "",
     password: "",
-    role: "guard" as "guard" | "resident",
     guardCode: "4846",
   });
 
@@ -87,12 +86,12 @@ export default function UsuariosPage() {
           name: form.name.trim(),
           email: form.email.trim(),
           password: form.password,
-          role: form.role,
-          guardCode: form.role === "guard" ? form.guardCode : undefined,
-          capabilities: form.role === "guard" ? templates.guard : templates.resident,
+          role: "guard",
+          guardCode: form.guardCode,
+          capabilities: templates.guard,
         }),
       });
-      setForm({ name: "", email: "", password: "", role: "guard", guardCode: "4846" });
+      setForm({ name: "", email: "", password: "", guardCode: "4846" });
       setShowModal(false);
       setMsg("Usuario creado exitosamente.");
       await reload();
@@ -144,7 +143,8 @@ export default function UsuariosPage() {
     await reload();
   }
 
-  const selectedUser = rows.find((r) => r.id === selected);
+  const staff = rows.filter((u) => u.role !== "resident");
+  const selectedUser = staff.find((r) => r.id === selected);
   const editable = selectedUser && selectedUser.role !== "tenant_admin";
   const groups = [...new Set(catalog.map((c) => c.group))];
 
@@ -152,7 +152,7 @@ export default function UsuariosPage() {
     <CapabilityGate capability="core.users.read">
       <PageHeader
         title="Usuarios y Permisos"
-        subtitle="Alta de personal de guardia, roles del predio y otorgamiento de permisos granulares."
+        subtitle="Personal de portería y permisos del predio. El propietario se invita en Personas → Lotes."
       />
 
       {msg ? (
@@ -171,7 +171,10 @@ export default function UsuariosPage() {
           <div>
             <h2 className="text-sm font-semibold text-slate-900 dark:text-white">Cuentas y Credenciales</h2>
             <p className="text-xs text-slate-500 dark:text-slate-400">
-              {rows.length} {rows.length === 1 ? "usuario registrado" : "usuarios registrados"} en este predio.
+              {staff.length} {staff.length === 1 ? "cuenta de staff" : "cuentas de staff"} en este predio.{" "}
+              <Link href="/dashboard/propiedades" className="font-semibold text-sky-700 hover:underline dark:text-sky-300">
+                Invitar propietario
+              </Link>
             </p>
           </div>
         </div>
@@ -194,7 +197,7 @@ export default function UsuariosPage() {
             Personal y Operadores
           </p>
           <ul className="divide-y divide-slate-100 dark:divide-slate-800">
-            {rows.map((u) => {
+            {staff.map((u) => {
               const isSel = selected === u.id;
               return (
                 <li key={u.id}>
@@ -252,7 +255,7 @@ export default function UsuariosPage() {
                 </div>
                 {can("tenant.grants") ? (
                   <div className="flex gap-2">
-                    {can("core.users.write") && selectedUser.role !== "resident" ? (
+                    {can("core.users.write") ? (
                       <button
                         type="button"
                         onClick={() => {
@@ -352,7 +355,7 @@ export default function UsuariosPage() {
                 </div>
                 <div>
                   <h3 className="font-bold text-slate-900 dark:text-white">Nuevo Usuario</h3>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">Alta de guardia u operador en el predio.</p>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">Alta de guardia. El vecino se invita en Lotes.</p>
                 </div>
               </div>
               <button
@@ -407,36 +410,20 @@ export default function UsuariosPage() {
 
               <div>
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                  Rol inicial
+                  Código de guardia
                 </label>
-                <select
-                  value={form.role}
-                  onChange={(e) => setForm({ ...form, role: e.target.value as "guard" | "resident" })}
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  required
+                  minLength={4}
+                  maxLength={8}
+                  value={form.guardCode}
+                  onChange={(e) => setForm({ ...form, guardCode: e.target.value.replace(/\D/g, "").slice(0, 8) })}
                   className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-900 focus:border-blue-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800/80 dark:text-white"
-                >
-                  <option value="guard">Guardia de Porteria</option>
-                  <option value="resident">Propietario / Residente</option>
-                </select>
+                />
+                <p className="mt-1 text-[11px] text-slate-500">Lo usa en portería si el titular autoriza por teléfono.</p>
               </div>
-
-              {form.role === "guard" ? (
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
-                    Código de guardia
-                  </label>
-                  <input
-                    type="text"
-                    inputMode="numeric"
-                    required
-                    minLength={4}
-                    maxLength={8}
-                    value={form.guardCode}
-                    onChange={(e) => setForm({ ...form, guardCode: e.target.value.replace(/\D/g, "").slice(0, 8) })}
-                    className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-900 focus:border-blue-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800/80 dark:text-white"
-                  />
-                  <p className="mt-1 text-[11px] text-slate-500">Lo usa en portería si el titular autoriza por teléfono.</p>
-                </div>
-              ) : null}
 
               <div className="mt-6 flex items-center justify-end gap-2 pt-4 border-t border-slate-100 dark:border-slate-800">
                 <button

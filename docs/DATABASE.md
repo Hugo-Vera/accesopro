@@ -1,28 +1,32 @@
 # Base de datos AccesoPro
 
-**Una SQLite por Ubuntu/predio** (`apps/api/data/accesopro.db`). El concentrador no mete lotes ni eventos de un barrio en la base de otro: lista en vivo preguntándole a cada API.
+**Una SQLite por Ubuntu.** Cada garita tiene `apps/api/data/accesopro.db`. El concentrador tiene **la suya**: directorio `hub_sites` **más un tenant sombra por barrio** (`replica_tenant_id`) para precargar lotes, invitaciones, portal WAN y replica (padrón, historial dentro de la retención, fotos de evidencia, topología).
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
 │  Concentrador (admin@accesopro.local)                       │
-│  hub_sites = directorio (URLs, plan, token, último snapshot)│
+│  hub_sites + tenants sombra (lotes, vecinos, replica)       │
+│  DNS público / HTTPS :443 → portal, activar, FCM            │
 └──────────────────────────┬──────────────────────────────────┘
-                           │ GET /api/hub/snapshot (token)
+                           │ garita EMPUJA replica (NAT-friendly)
            ┌───────────────┴───────────────┐
            ▼                               ▼
 ┌─────────────────────┐         ┌─────────────────────┐
 │ Ubuntu predio A     │         │ Ubuntu predio B     │
 │ accesopro.db (A)    │         │ accesopro.db (B)    │
+│ pull avisos 1–2 s   │         │ restore si está vacía│
 └─────────────────────┘         └─────────────────────┘
 ```
 
-Alta de barrio = registrar el predio en `hub_sites` + bootstrap remoto (`POST /api/hub/bootstrap`) si esa SQLite está vacía. El predio nuevo **no hereda** Las Acacias. Consulta dual-host: LAN ~2 s y, si no, URL pública. Si no responde: estado «sin enlace» y se muestra el último snapshot (hora). Paso a paso de operadores: [`docs/HUB_BARRIOS.md`](HUB_BARRIOS.md).
+Alta de barrio = fila en `hub_sites` + **bootstrap local del tenant sombra** (aunque no haya URL de garita). Si hay URL, también intenta `POST /api/hub/bootstrap` remoto. Ubuntu vacío con `ACCESOPRO_HUB_TOKEN` + `ACCESOPRO_HUB_URL` restaura el dump (`GET /api/hub/sync/restore`). Contrato: `apps/api/src/hubSync.ts`. Paso a paso: [`docs/HUB_BARRIOS.md`](HUB_BARRIOS.md).
 
 Variable API: `DATABASE_URL=file:./data/accesopro.db` (relativo a `apps/api`). Predio nuevo: `ACCESOPRO_HUB_TOKEN` o `ACCESOPRO_TENANT_NAME` para saltear el seed demo. El concentrador **no** debe setear `ACCESOPRO_HUB_TOKEN` (si no, no se crea `admin@accesopro.local`).
 
 La API **hoy** usa SQLite (libsql + Drizzle). El esquema SQL para copiar a un server externo (Postgres / MySQL Laragon) está en [`docs/sql/`](sql/README.md). Fechas = epoch en milisegundos. Booleanos = `0` / `1`.
 
 Fuente viva de columnas: `apps/api/src/db/schema.ts` + `migrate.ts`.
+
+Replica: `POST /api/hub/sync/push`, `GET /api/hub/sync/pull?since=`, `GET /api/hub/sync/restore`, `POST /api/hub/sync/notice` (walk-in inmediato), fotos `GET/POST /api/hub/sync/photo`. Auth: `X-AccesoPro-Hub-Token`. Conflicto: gana el `updated_at` / `decided_at` / `created_at` más nuevo.
 
 ---
 
@@ -32,7 +36,7 @@ Fuente viva de columnas: `apps/api/src/db/schema.ts` + `migrate.ts`.
 
 | Tabla | Uso |
 |-------|-----|
-| `hub_sites` | **Solo en el concentrador:** directorio de predios remotos (URL LAN/pública, plan, token, último snapshot JSON). No es el padrón de personas. |
+| `hub_sites` | **Concentrador:** directorio de predios (URL LAN/pública opcional, plan, token, snapshot, `replica_tenant_id`, último sync). |
 | `tenants` | Barrio **de esta SQLite** (un predio = un tenant típico). El concentrador no lista barrios por esta tabla. |
 | `users` | Login: `platform_admin`, `tenant_admin`, `resident`, `guard`. `guard_code`: PIN 4–8 dígitos (autorización por llamada en portería). |
 | `sessions` | Sesión cookie JWT |
@@ -113,7 +117,10 @@ Visita: ingreso en carril 1 (`visit_passes.scanned_in_at`) y egreso en carril 2 
 |-------|-----|
 | `properties` | Lote, label, GPS casa (`map_lat`, `map_lng`), polígono GeoJSON (`lot_polygon`), dirección. Único `(site_id, lot_number)` |
 | `owner_profiles` | Vecino ↔ `users` ↔ `properties` (DNI, WhatsApp, foto, sync Dahua). El lote queda fijo en `property_id`; `PATCH /api/residents/me` ignora `lote` / `lotNumber` / `propertyId`. |
-| `property_family_members` | Grupo familiar del lote (foto / Dahua / vigencia) |
+| `property_family_members` | Grupo familiar del lote (foto / Dahua / vigencia). `user_id` si el titular lo invitó a la app. |
+| `owner_notices` | Avisos al lote (walk-in 120 s, bien, traslado). `decided_by_user_id` = quién autorizó. |
+| `tenant_settings` | Retención comercial (días) |
+| `push_devices` | Tokens FCM (web / Android) por usuario |
 | `property_services` | Jardinero, empleada, horarios, fechas, foto |
 | `dahua_period_slots` | Huella de horario → índice `AccessTimeSchedule` por ASI |
 | `credential_device_sync` | Enroll OK/error por lector (ingreso/salida) |
@@ -121,8 +128,6 @@ Visita: ingreso en carril 1 (`visit_passes.scanned_in_at`) y egreso en carril 2 
 | `visit_passes` | QR de visita: vigencia, modalidad (`peatonal`/`plataforma`/`vehiculo`), estado de aprobación |
 | `visit_companions` | Acompañantes (nombre, DNI, menor, situación) |
 | `guard_approvals` | Cola del guardia: entrada/salida, baúl, bien no registrado, walk-in |
-| `owner_notices` | Avisos al titular (walk-in 120 s, bien, traslado de menor) |
-| `tenant_settings` | Retención comercial (días) |
 | `visitor_identities` | Persona filiatoria DNI (PDF417), lista negra |
 | `vehicles` | Parque automotor por patente |
 | `person_insurances` | Seguro de vida / ART de la persona + constancia en disco |

@@ -82,7 +82,7 @@ powershell -ExecutionPolicy Bypass -File scripts\start-server.ps1 -Native -Profi
 | Servicio | Puerto | Perfil | Datos |
 |----------|--------|--------|-------|
 | `web` | 3000 | core | — |
-| `web-tls` | 3443 | core | HTTPS para cámara DNI (certificado propio) |
+| `web-tls` | 3443 | core | HTTPS para cámara DNI (certificado propio). **No** es el HTTPS público del portal. |
 | `api` | 8787 | core | volumen `api_data` |
 | `agent` | 8790 | dahua | — |
 | `postgres` | 5432 | alpr | `pgdata` |
@@ -118,5 +118,7 @@ powershell -File scripts\start-server.ps1 -Profile dahua
 ```
 
 Datos persistentes: no se pierden con `up --build`. Wipe: `scripts\stop-server.ps1 -WipeVolumes`.
+
+Concentrador público: `WEB_ORIGIN=https://dns` y 443 con Let's Encrypt. El portal FCM no funciona en HTTP de LAN ni en `:3443`. Garita: `ACCESOPRO_HUB_URL` + `ACCESOPRO_HUB_TOKEN`. Detalle: [`HUB_BARRIOS.md`](HUB_BARRIOS.md).
 
 Ver también: [`DEPLOY_SITE.md`](DEPLOY_SITE.md).

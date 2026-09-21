@@ -1,6 +1,8 @@
 # Alta de barrios (concentrador + garita)
 
-Paso a paso probado en el dashboard. Dos instalaciones del **mismo** software: un Ubuntu concentrador y un Ubuntu por barrio.
+**Manual de prueba (web + imprimir):** dashboard **Sistema → Manual** (`/dashboard/manual`). Capturas: `apps/web/public/manual/`.
+
+Paso a paso técnico. Dos instalaciones del **mismo** software: un Ubuntu concentrador y un Ubuntu por barrio.
 
 Repo: `https://github.com/Hugo-Vera/accesopro`
 
@@ -8,15 +10,23 @@ Repo: `https://github.com/Hugo-Vera/accesopro`
 
 | | Concentrador | AccesoPro local (garita) |
 |---|---|---|
-| **Rol** | Directorio de predios. Lista en vivo lo que cada SQLite ya tiene. | El barrio: lotes, vecinos, ASI, portería. |
+| **Rol** | Directorio + tenant sombra (precarga, portal WAN, replica). | El barrio: portería LAN, ASI, copia del padrón. |
 | **Login** | `admin@accesopro.local` | El admin que definiste en el alta (`marcelo@gmail.com`, etc.) |
 | **Instalación** | `install-ubuntu.sh` | `install-ubuntu.sh` en **otro** Ubuntu |
-| **`.env`** | **No** pongas `ACCESOPRO_HUB_TOKEN` | **Sí:** el token del modal Barrios |
-| **URL** | `http://IP-concentrador:3000` o `https://IP:3443` | `http://IP-garita:3000` |
+| **`.env`** | **No** pongas `ACCESOPRO_HUB_TOKEN`. Sí: `WEB_ORIGIN=https://dns` | **Sí:** `ACCESOPRO_HUB_TOKEN` + `ACCESOPRO_HUB_URL=https://dns` |
+| **URL** | `https://dns` (443) o `http://IP-concentrador:3000` | `http://IP-garita:3000` (LAN). El titular **no** usa esta IP. |
 
-La base de un barrio **no** se crea en el concentrador. El concentrador solo guarda nombre, plan, URLs y token, y consulta `GET /api/hub/snapshot` en la garita.
+La precarga de lotes y dueños vive en el **tenant sombra** del concentrador. La garita, cuando está viva, empuja replica y baja avisos/autorizaciones. Si la máquina se pierde, un Ubuntu nuevo con el mismo token **restaura** padrón, topología, historial (retención) y fotos.
 
-El concentrador tiene que **alcanzar** la garita (LAN o URL pública). La garita no necesita hablar hacia el concentrador.
+El vecino (4G) entra a `https://dns/portal` y `/activar?token=`. Chrome pide el token FCM solo en HTTPS real (`:3443` de cámara DNI no sirve para push).
+
+## DNS y TLS (concentrador)
+
+1. Registro A del DNS a la IP pública del concentrador.
+2. Puerto **443** con certificado de verdad (Let's Encrypt). `:3443` sigue para cámara DNI en LAN.
+3. En `.env` del concentrador: `WEB_ORIGIN=https://ese-dns` (y CORS). Router: 443 → concentrador.
+4. La garita solo necesita **salida HTTPS** a ese DNS (NAT-friendly: el hub no entra a la LAN de la garita).
+5. Firebase (proyecto AccesoPro, aparte): `FIREBASE_PROJECT_ID`, `FIREBASE_CLIENT_EMAIL`, `FIREBASE_PRIVATE_KEY` en el host (no commitear). Web: `NEXT_PUBLIC_FIREBASE_*` + `FIREBASE_VAPID_KEY`. WhatsApp de respaldo: opcional `WHATSAPP_NOTIFY_URL`.
 
 ## 0. Actualizar código en cada Ubuntu
 
@@ -45,7 +55,7 @@ Si ves «No tenés permiso para esta sección», esa sesión no es de plataforma
 
 ## 2. Nuevo barrio (modal)
 
-Botón **Nuevo barrio**. Completá **todos** los datos operativos:
+Botón **Nuevo barrio**. Completá nombre, plan y admin. La **URL de la garita es opcional**: sin URL igual se crea el barrio sombra para precargar lotes e invitar dueños.
 
 | Campo | Qué poner | Ejemplo de la prueba |
 |-------|-----------|----------------------|
@@ -54,12 +64,10 @@ Botón **Nuevo barrio**. Completá **todos** los datos operativos:
 | Nombre del administrador | Quien va a administrar **ese** Ubuntu | Marcelo |
 | Email | Login del admin del predio | marcelo@gmail.com |
 | Clave inicial | Mínimo 8 caracteres. El vecino de plataforma no entra con esta clave. | (la que elijas) |
-| URL LAN del Ubuntu de la garita | `http://IP:3000` de **esa** máquina, no del concentrador | `http://192.168.190.114:3000` |
-| URL pública | Opcional. NAT / ZeroTier si la LAN no responde desde el concentrador. | vacío si hay LAN |
+| URL LAN del Ubuntu de la garita | Opcional. `http://IP:3000` de **esa** máquina cuando exista | `http://192.168.190.114:3000` |
+| URL pública | Opcional. NAT / ZeroTier | vacío |
 
-Sin URL LAN ni pública el alta no arranca: hace falta al menos una.
-
-**Crear.**
+**Crear.** En la fila: **Lotes** abre Personas → Lotes del tenant sombra. **Replica** muestra la última subida / restore.
 
 ## 3. Modal «Barrio registrado» (copiar ya)
 
@@ -105,9 +113,10 @@ Antes del primer arranque, o en `/opt/accesopro/.env` **de la garita**:
 
 ```bash
 ACCESOPRO_HUB_TOKEN=el-token-del-modal
+ACCESOPRO_HUB_URL=https://dns-del-concentrador
 ```
 
-Eso **evita** sembrar Las Acacias. En el concentrador **no** pongas esa variable.
+Eso **evita** sembrar Las Acacias y, si el tenant sombra ya tiene replica, **restaura** padrón y topología. En el concentrador **no** pongas `ACCESOPRO_HUB_TOKEN`.
 
 Reiniciá el stack de la garita (botón Actualizar servidor, o `docker compose up -d` en `/opt/accesopro`).
 

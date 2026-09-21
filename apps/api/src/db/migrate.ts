@@ -826,5 +826,31 @@ async function backfillAccessPointsFromLegacy() {
       created_at INTEGER NOT NULL
     )
   `);
+  await addColumn("hub_sites", "replica_tenant_id", "TEXT");
+  await addColumn("hub_sites", "last_sync_at", "INTEGER");
+  await addColumn("hub_sites", "last_sync_json", "TEXT");
+  await addColumn("property_family_members", "user_id", "TEXT");
+  await db.run(sql`
+    CREATE TABLE IF NOT EXISTS push_devices (
+      id TEXT PRIMARY KEY,
+      user_id TEXT NOT NULL REFERENCES users(id),
+      platform TEXT NOT NULL DEFAULT 'web',
+      token TEXT NOT NULL UNIQUE,
+      last_seen_at INTEGER NOT NULL,
+      created_at INTEGER NOT NULL
+    )
+  `);
+  await db.run(sql`
+    INSERT OR IGNORE INTO user_grants (user_id, capability_key, granted_at, granted_by_user_id)
+    SELECT id, 'access.lot.authorize', CAST(strftime('%s','now') AS INTEGER) * 1000, NULL
+    FROM users WHERE role = 'resident'
+  `);
+  await db.run(sql`
+    INSERT OR IGNORE INTO user_grants (user_id, capability_key, granted_at, granted_by_user_id)
+    SELECT u.id, 'access.family.manage', CAST(strftime('%s','now') AS INTEGER) * 1000, NULL
+    FROM users u
+    INNER JOIN owner_profiles p ON p.user_id = u.id
+    WHERE u.role = 'resident'
+  `);
 }
 

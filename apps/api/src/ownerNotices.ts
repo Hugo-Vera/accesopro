@@ -3,6 +3,8 @@ import { db } from "./db/client.js";
 import { guardApprovals, ownerNotices, properties } from "./db/schema.js";
 import { broadcastRealtimeEvent } from "./eventStream.js";
 import { nid } from "./scope.js";
+import { fanoutLotNotice } from "./pushNotify.js";
+import { publishNoticeToHub } from "./hubSync.js";
 
 export type OwnerNoticeKind = "walk_in" | "goods" | "minor_transfer";
 
@@ -70,6 +72,31 @@ export async function createOwnerNotice(input: {
     },
     createdAt: now.getTime(),
   });
+  const noticeRow = {
+    id,
+    site_id: input.siteId,
+    property_id: input.propertyId,
+    pass_id: input.passId || null,
+    approval_id: input.approvalId || null,
+    kind: input.kind,
+    status: "pending",
+    title: input.title,
+    message: input.message,
+    payload: input.payload ? JSON.stringify(input.payload) : null,
+    expires_at: now.getTime() + input.ttlMs,
+    created_at: now.getTime(),
+    decided_at: null,
+    decided_by_user_id: null,
+  };
+  void publishNoticeToHub(noticeRow);
+  if (!process.env.ACCESOPRO_HUB_URL) {
+    void fanoutLotNotice({
+      propertyId: input.propertyId,
+      title: input.title,
+      message: input.message,
+      noticeId: id,
+    });
+  }
   return id;
 }
 
@@ -139,8 +166,25 @@ export async function decideOwnerNotice(input: {
       decided: input.decision,
       approvalId: row.approvalId,
       passId: row.passId,
+      decidedByUserId: input.userId,
     },
     createdAt: now.getTime(),
+  });
+  void publishNoticeToHub({
+    id: row.id,
+    site_id: row.siteId,
+    property_id: row.propertyId,
+    pass_id: row.passId,
+    approval_id: row.approvalId,
+    kind: row.kind,
+    status: input.decision === "approved" ? "approved" : "denied",
+    title: row.title,
+    message: row.message,
+    payload: row.payload,
+    expires_at: row.expiresAt instanceof Date ? row.expiresAt.getTime() : row.expiresAt,
+    created_at: row.createdAt instanceof Date ? row.createdAt.getTime() : row.createdAt,
+    decided_at: now.getTime(),
+    decided_by_user_id: input.userId,
   });
   return { ok: true, kind: row.kind, approvalId: row.approvalId };
 }

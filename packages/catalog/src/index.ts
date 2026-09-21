@@ -153,6 +153,8 @@ export const PLAN_CATALOG: PlanDef[] = [
       "dahua.intercom",
       "access.visitors.manage",
       "access.owners.invite",
+      "access.lot.authorize",
+      "access.family.manage",
       "ops.census",
       "staff.employees",
       "tenant.grants",
@@ -192,6 +194,8 @@ export const PLAN_CATALOG: PlanDef[] = [
       "dahua.intercom",
       "access.visitors.manage",
       "access.owners.invite",
+      "access.lot.authorize",
+      "access.family.manage",
       "ops.census",
       "access.dni_enroll",
       "access.attendance",
@@ -252,6 +256,8 @@ export type CapabilityKey =
   | "dahua.intercom"
   | "access.visitors.manage"
   | "access.owners.invite"
+  | "access.lot.authorize"
+  | "access.family.manage"
   | "access.dni_enroll"
   | "access.attendance"
   | "staff.employees"
@@ -314,6 +320,8 @@ export const CAPABILITY_CATALOG: CapabilityDef[] = [
   },
   { key: "access.visitors.manage", group: "Acceso", name: "Visitas", summary: "Gestionar visitas y propiedades.", moduleKey: "visitors" },
   { key: "access.owners.invite", group: "Acceso", name: "Invitar propietario", summary: "Alta de vecino (email + WhatsApp) al lote.", moduleKey: "visitors" },
+  { key: "access.lot.authorize", group: "Acceso", name: "Autorizar lote", summary: "Aprobar o denegar avisos de portería del lote (titular y familiares adultos).", moduleKey: "visitors" },
+  { key: "access.family.manage", group: "Acceso", name: "Familia del lote", summary: "Cargar familiares e invitarlos a la app.", moduleKey: "visitors" },
   { key: "access.dni_enroll", group: "Acceso", name: "Alta DNI", summary: "Enrolar con DNI en portería.", moduleKey: "dni_enroll" },
   { key: "access.attendance", group: "Personal", name: "Fichadas", summary: "Asistencia a partir de eventos Dahua.", moduleKey: "attendance" },
   { key: "staff.employees", group: "Personal", name: "Empleados", summary: "Alta de personal del lote (portal)." },
@@ -530,6 +538,8 @@ export const ROLE_TEMPLATES: Record<string, CapabilityKey[]> = {
     "dahua.intercom",
     "access.visitors.manage",
     "access.owners.invite",
+    "access.lot.authorize",
+    "access.family.manage",
     "access.dni_enroll",
     "access.attendance",
     "staff.employees",
@@ -555,7 +565,9 @@ export const ROLE_TEMPLATES: Record<string, CapabilityKey[]> = {
     "access.dni_enroll",
     "access.attendance",
   ],
-  resident: ["staff.employees", "staff.schedules"],
+  resident: ["access.lot.authorize", "access.family.manage", "staff.employees", "staff.schedules"],
+  /** Familiar adulto con login: autoriza el lote, no invita dueños ni carga padrón. */
+  family_adult: ["access.lot.authorize"],
 };
 
 export function capabilityByKey(key: string): CapabilityDef | undefined {

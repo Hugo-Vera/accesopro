@@ -47,20 +47,20 @@ export function AppFrame({ children }: { children: React.ReactNode }) {
 
   return (
     <div
-      className={`flex h-screen overflow-hidden ${
+      className={`flex h-screen overflow-hidden print:h-auto print:overflow-visible ${
         opsHome
           ? "bg-slate-100 dark:bg-[#07131e] text-slate-900 dark:text-slate-100 transition-colors"
           : "bg-slate-100 dark:bg-[radial-gradient(ellipse_at_top,_#152433_0%,_#07121c_55%)] text-slate-900 dark:text-slate-100 transition-colors"
       }`}
     >
       {!opsHome ? (
-        <div className="hidden h-full lg:block">
+        <div className="hidden h-full lg:block print:hidden">
           <Sidebar />
         </div>
       ) : null}
 
       {open ? (
-        <div className="fixed inset-0 z-40">
+        <div className="fixed inset-0 z-40 print:hidden">
           <button className="absolute inset-0 bg-black/70" type="button" onClick={() => setOpen(false)} aria-label="Cerrar menú" />
           <div className="relative h-full w-[248px]">
             <Sidebar onNavigate={() => setOpen(false)} />
@@ -70,7 +70,7 @@ export function AppFrame({ children }: { children: React.ReactNode }) {
 
       <div className="flex min-w-0 flex-1 flex-col">
         {httpsCamUrl ? (
-          <div className="shrink-0 border-b border-amber-300 bg-amber-50 px-4 py-1.5 text-[11px] font-medium text-amber-950 dark:border-amber-800 dark:bg-amber-950/70 dark:text-amber-100">
+          <div className="shrink-0 border-b border-amber-300 bg-amber-50 px-4 py-1.5 text-[11px] font-medium text-amber-950 dark:border-amber-800 dark:bg-amber-950/70 dark:text-amber-100 print:hidden">
             La cámara del DNI no funciona en HTTP.{" "}
             <a className="font-semibold underline" href={httpsCamUrl}>
               Abrir por HTTPS
@@ -79,7 +79,7 @@ export function AppFrame({ children }: { children: React.ReactNode }) {
           </div>
         ) : null}
         {opsHome ? null : (
-          <header className="flex items-center gap-3 border-b border-slate-200 dark:border-line/80 bg-white/90 dark:bg-transparent px-4 py-3 backdrop-blur-sm lg:px-8 lg:py-4 transition-colors">
+          <header className="flex items-center gap-3 border-b border-slate-200 dark:border-line/80 bg-white/90 dark:bg-transparent px-4 py-3 backdrop-blur-sm lg:px-8 lg:py-4 transition-colors print:hidden">
             <button type="button" className="btn-ghost lg:hidden" onClick={() => setOpen(true)}>
               Menú
             </button>
@@ -142,7 +142,7 @@ export function AppFrame({ children }: { children: React.ReactNode }) {
           className={
             opsHome
               ? "flex min-h-0 flex-1 flex-col overflow-hidden p-1.5"
-              : "flex-1 overflow-auto px-4 py-6 lg:px-8 lg:py-8"
+              : "flex-1 overflow-auto px-4 py-6 lg:px-8 lg:py-8 print:overflow-visible"
           }
         >
           {error && !opsHome ? (
