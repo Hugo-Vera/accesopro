@@ -222,6 +222,8 @@ fi
 
 echo "==> Recreando contenedores (corte breve de :3000 hasta que el API esté healthy)"
 compose "${profile_args[@]}" up -d --no-build --remove-orphans
+# web-tls no se buildea: recrearlo para que el entrypoint renueve el cert si está vencido
+compose "${profile_args[@]}" up -d --no-build --force-recreate web-tls
 
 if [[ "${ACCESOPRO_SKIP_AUTOSTART:-}" != "1" && -f "$INSTALL_DIR/scripts/enable-autostart.sh" ]]; then
   need_root bash "$INSTALL_DIR/scripts/enable-autostart.sh" || true

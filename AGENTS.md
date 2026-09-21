@@ -78,7 +78,7 @@ Plano del predio = core (`/dashboard/plano`). Mapa OSM o Google (calles / satél
 
 Monorepo: `apps/web` (Next.js), `apps/api` (Hono), `apps/agent` (Dahua CGI). AccesoPro usa SQLite.
 
-Radiografía de accesos (ramas own/fam/svc/v_, hold de visita, portería): **`docs/SISTEMA.md`**. HTTPS + cámaras + menú: **`docs/PLAN_HTTPS_MENU.md`**. Mapa del monorepo: `docs/ARCHITECTURE.md`. Estado por módulo: `docs/MODULES.md`. Base de datos: `docs/DATABASE.md`. Pendientes: `docs/PENDING.md`. Inventario + plan punta a punta: `docs/ROADMAP.md`. Ops IN/OUT: `docs/OPS_LANES.md`. Sitio físico RB4011 + NAT ASI: `docs/SITE_RB4011.md`. CGI/RTSP ASI: `docs/ASI_CGI.md`. Intercom: `docs/INTERCOM.md`. Smoke: `docs/E2E_SMOKE.md`.
+Radiografía de accesos (ramas own/fam/svc/v_, hold de visita, portería): **`docs/SISTEMA.md`**. HTTPS + cámaras + menú: **`docs/PLAN_HTTPS_MENU.md`**. Mapa del monorepo: `docs/ARCHITECTURE.md`. Estado por módulo: `docs/MODULES.md`. Base de datos: `docs/DATABASE.md`. Alta concentrador + garita: **`docs/HUB_BARRIOS.md`**. Pendientes: `docs/PENDING.md`. Inventario + plan punta a punta: `docs/ROADMAP.md`. Ops IN/OUT: `docs/OPS_LANES.md`. Sitio físico RB4011 + NAT ASI: `docs/SITE_RB4011.md`. CGI/RTSP ASI: `docs/ASI_CGI.md`. Intercom: `docs/INTERCOM.md`. Smoke: `docs/E2E_SMOKE.md`.
 
 ## Convenciones
 

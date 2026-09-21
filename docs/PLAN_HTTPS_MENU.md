@@ -56,7 +56,7 @@ Revisión 2026-09-19. El dashboard en `http://IP:3000` **no puede** abrir webcam
 
 ## Cómo probar (guardia u otra PC)
 
-1. `https://192.168.190.114:3443` (aceptar certificado una vez).
+1. `https://IP:3443` (aceptar certificado una vez). Si Chrome dice que expiró: actualizar el Ubuntu; `web-tls` regenera el cert (10 años) y hay que aceptar el aviso de nuevo.
 2. Permitir cámara cuando el browser lo pida.
 3. Padrón → editar persona → Facial → Webcam → si hay dos, elegir en el combo → Capturar.
 4. Inicio → Registrar visita → escanear DNI con cámara.

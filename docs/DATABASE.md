@@ -16,7 +16,7 @@
 └─────────────────────┘         └─────────────────────┘
 ```
 
-Alta de barrio = registrar el predio en `hub_sites` + bootstrap remoto (`POST /api/hub/bootstrap`) si esa SQLite está vacía. El predio nuevo **no hereda** Las Acacias. Consulta dual-host: LAN ~2 s y, si no, URL pública. Si no responde: estado «sin enlace» y se muestra el último snapshot (hora).
+Alta de barrio = registrar el predio en `hub_sites` + bootstrap remoto (`POST /api/hub/bootstrap`) si esa SQLite está vacía. El predio nuevo **no hereda** Las Acacias. Consulta dual-host: LAN ~2 s y, si no, URL pública. Si no responde: estado «sin enlace» y se muestra el último snapshot (hora). Paso a paso de operadores: [`docs/HUB_BARRIOS.md`](HUB_BARRIOS.md).
 
 Variable API: `DATABASE_URL=file:./data/accesopro.db` (relativo a `apps/api`). Predio nuevo: `ACCESOPRO_HUB_TOKEN` o `ACCESOPRO_TENANT_NAME` para saltear el seed demo. El concentrador **no** debe setear `ACCESOPRO_HUB_TOKEN` (si no, no se crea `admin@accesopro.local`).
 

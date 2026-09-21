@@ -5,7 +5,7 @@ import { api } from "@/lib/api";
 import { useDash } from "@/components/DashboardProvider";
 import { CapabilityGate, PageHeader } from "@/components/PageHeader";
 import { useEscapeKey } from "@/hooks/useEscapeKey";
-import { Building2, Copy, ExternalLink, Plus, RefreshCw, X } from "lucide-react";
+import { Building2, Copy, ExternalLink, Pencil, Plus, RefreshCw, Trash2, X } from "lucide-react";
 
 type Snapshot = {
   tenantName: string | null;
@@ -65,8 +65,11 @@ export default function BarriosPage() {
   const [rows, setRows] = useState<HubSite[]>([]);
   const [catalog, setCatalog] = useState<PlanOpt[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [showNew, setShowNew] = useState(false);
+  const [editing, setEditing] = useState<HubSite | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<HubSite | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [created, setCreated] = useState<{
     hubToken: string;
@@ -78,8 +81,12 @@ export default function BarriosPage() {
 
   useEscapeKey(() => {
     if (created) setCreated(null);
-    else setShowNew(false);
-  }, showNew || Boolean(created));
+    else if (confirmDelete) setConfirmDelete(null);
+    else if (editing) {
+      setEditing(null);
+      setShowNew(false);
+    } else setShowNew(false);
+  }, showNew || Boolean(created) || Boolean(editing) || Boolean(confirmDelete));
 
   const load = useCallback(async () => {
     if (!isPlatform) return;
@@ -112,9 +119,33 @@ export default function BarriosPage() {
 
   async function onCreate(e: FormEvent) {
     e.preventDefault();
+    if (!form.baseUrl.trim() && !form.cloudUrl.trim()) {
+      setFormError("Indicá la URL LAN o la pública del Ubuntu de la garita (http://IP:3000).");
+      return;
+    }
     setBusy(true);
+    setFormError(null);
     setError(null);
     try {
+      if (editing) {
+        await api(`/api/hub/sites/${editing.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({
+            name: form.name,
+            planId: form.planId,
+            adminName: form.adminName,
+            adminEmail: form.adminEmail,
+            adminPassword: form.adminPassword || undefined,
+            baseUrl: form.baseUrl,
+            cloudUrl: form.cloudUrl,
+          }),
+        });
+        setEditing(null);
+        setShowNew(false);
+        setForm(emptyForm);
+        await load();
+        return;
+      }
       const d = await api<{
         site: HubSite;
         hubToken: string;
@@ -133,7 +164,7 @@ export default function BarriosPage() {
       setForm(emptyForm);
       await load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "No se pudo crear");
+      setFormError(err instanceof Error ? err.message : editing ? "No se pudo guardar" : "No se pudo crear");
     } finally {
       setBusy(false);
     }
@@ -151,6 +182,35 @@ export default function BarriosPage() {
     }
   }
 
+  async function removeSite() {
+    if (!confirmDelete) return;
+    setBusy(true);
+    try {
+      await api(`/api/hub/sites/${confirmDelete.id}`, { method: "DELETE" });
+      setConfirmDelete(null);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo borrar");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function openEdit(row: HubSite) {
+    setEditing(row);
+    setFormError(null);
+    setForm({
+      name: row.name,
+      planId: row.planId,
+      adminName: row.adminName,
+      adminEmail: row.adminEmail,
+      adminPassword: "",
+      baseUrl: row.baseUrl,
+      cloudUrl: row.cloudUrl || "",
+    });
+    setShowNew(true);
+  }
+
   function copy(text: string) {
     void navigator.clipboard.writeText(text);
   }
@@ -165,7 +225,12 @@ export default function BarriosPage() {
         actions={
           <button
             type="button"
-            onClick={() => setShowNew(true)}
+            onClick={() => {
+              setEditing(null);
+              setForm(emptyForm);
+              setShowNew(true);
+              setFormError(null);
+            }}
             className="inline-flex items-center gap-2 rounded-lg bg-blue-600 px-3.5 py-2 text-xs font-semibold text-white hover:bg-blue-700"
           >
             <Plus className="h-4 w-4" />
@@ -192,7 +257,7 @@ export default function BarriosPage() {
                 <th className="px-4 py-3">Propietarios</th>
                 <th className="px-4 py-3">Familia</th>
                 <th className="px-4 py-3">Visitas / eventos</th>
-                <th className="px-4 py-3" />
+                <th className="px-4 py-3">Acciones</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
@@ -249,6 +314,22 @@ export default function BarriosPage() {
                           >
                             <RefreshCw className="h-3.5 w-3.5" />
                           </button>
+                          <button
+                            type="button"
+                            onClick={() => openEdit(r)}
+                            className="rounded-lg border border-slate-200 p-1.5 text-slate-500 hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800"
+                            title="Editar"
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setConfirmDelete(r)}
+                            className="rounded-lg border border-slate-200 p-1.5 text-rose-600 hover:bg-rose-50 dark:border-slate-700 dark:hover:bg-rose-950/40"
+                            title="Borrar del directorio"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
                           {openUrl(r) ? (
                             <a
                               href={openUrl(r)}
@@ -281,15 +362,31 @@ export default function BarriosPage() {
             <div className="mb-4 flex items-start justify-between border-b border-slate-100 pb-3 dark:border-slate-800">
               <div>
                 <h2 id="hub-new-title" className="font-bold text-slate-900 dark:text-white">
-                  Nuevo barrio
+                  {editing ? "Editar barrio" : "Nuevo barrio"}
                 </h2>
-                <p className="text-xs text-slate-500">Alta en el concentrador. La base vive en el Ubuntu del predio.</p>
+                <p className="text-xs text-slate-500">
+                  {editing
+                    ? "Cambia URLs, plan o admin. La SQLite de la garita no se pisa."
+                    : "Alta en el concentrador. La base vive en el Ubuntu del predio."}
+                </p>
               </div>
-              <button type="button" onClick={() => setShowNew(false)} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800">
+              <button
+                type="button"
+                onClick={() => {
+                  setShowNew(false);
+                  setEditing(null);
+                }}
+                className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+              >
                 <X className="h-5 w-5" />
               </button>
             </div>
             <form onSubmit={onCreate} className="space-y-3">
+              {formError ? (
+                <p className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-800 dark:border-rose-900/50 dark:bg-rose-950/40 dark:text-rose-300">
+                  {formError}
+                </p>
+              ) : null}
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
                 Nombre del barrio
                 <input
@@ -340,19 +437,22 @@ export default function BarriosPage() {
                 </label>
               </div>
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
-                Clave inicial
+                {editing ? "Clave nueva (opcional)" : "Clave inicial"}
                 <input
                   className="cfg-input"
                   type="password"
                   value={form.adminPassword}
                   onChange={(e) => setForm((f) => ({ ...f, adminPassword: e.target.value }))}
                   autoComplete="new-password"
-                  minLength={8}
-                  required
+                  minLength={editing ? undefined : 8}
+                  required={!editing}
                 />
               </label>
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
-                URL LAN (garita)
+                URL LAN del Ubuntu de la garita
+                <span className="mt-0.5 block font-normal text-[11px] text-slate-500">
+                  http://IP:3000 de esa máquina. Si este Ubuntu es el predio, usá esta misma IP (no 114 si acá es 146).
+                </span>
                 <input
                   className="cfg-input"
                   value={form.baseUrl}
@@ -360,7 +460,10 @@ export default function BarriosPage() {
                 />
               </label>
               <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
-                URL pública (si la LAN no responde)
+                URL pública
+                <span className="mt-0.5 block font-normal text-[11px] text-slate-500">
+                  Opcional. Si la LAN no responde desde el concentrador (NAT / ZeroTier).
+                </span>
                 <input
                   className="cfg-input"
                   value={form.cloudUrl}
@@ -368,11 +471,18 @@ export default function BarriosPage() {
                 />
               </label>
               <div className="flex justify-end gap-2 pt-2">
-                <button type="button" onClick={() => setShowNew(false)} className="btn-ghost">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowNew(false);
+                    setEditing(null);
+                  }}
+                  className="btn-ghost"
+                >
                   Cancelar
                 </button>
                 <button type="submit" disabled={busy} className="btn-primary">
-                  {busy ? "Creando…" : "Crear"}
+                  {busy ? (editing ? "Guardando…" : "Creando…") : editing ? "Guardar" : "Crear"}
                 </button>
               </div>
             </form>
@@ -424,6 +534,24 @@ export default function BarriosPage() {
             <div className="mt-4 flex justify-end">
               <button type="button" className="btn-primary" onClick={() => setCreated(null)}>
                 Listo
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+      {confirmDelete ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4 backdrop-blur-sm">
+          <div className="relative w-full max-w-md rounded-xl border border-slate-200 bg-white p-6 dark:border-slate-800 dark:bg-slate-900" role="dialog">
+            <h2 className="font-bold text-slate-900 dark:text-white">Sacar del directorio</h2>
+            <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
+              Se quita {confirmDelete.name} de esta lista. La SQLite de la garita no se borra.
+            </p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button type="button" className="btn-ghost" onClick={() => setConfirmDelete(null)}>
+                Cancelar
+              </button>
+              <button type="button" disabled={busy} className="btn-primary bg-rose-600 hover:bg-rose-700" onClick={() => void removeSite()}>
+                {busy ? "Borrando…" : "Borrar"}
               </button>
             </div>
           </div>

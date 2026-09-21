@@ -29,6 +29,7 @@ services:
       ACCESOPRO_OWNER_GID: ${ACCESOPRO_OWNER_GID:-}
       ACCESOPRO_REPO: ${ACCESOPRO_REPO:-Hugo-Vera/accesopro}
       ACCESOPRO_BRANCH: ${ACCESOPRO_BRANCH:-master}
+      ACCESOPRO_IP: ${ACCESOPRO_IP:-}
     volumes:
       - api_data:/app/apps/api/data
       # Self-update desde el dashboard (Ubuntu). En Windows Desktop puede fallar el socket: poné ALLOW=0.

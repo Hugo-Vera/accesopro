@@ -192,13 +192,49 @@ function publicSite(row: typeof hubSites.$inferSelect, snapshot: HubSnapshot | n
   };
 }
 
+function selfHostnames(): Set<string> {
+  const hosts = new Set(["localhost", "127.0.0.1", "host.docker.internal"]);
+  const ip = (process.env.ACCESOPRO_IP ?? "").trim();
+  if (ip) hosts.add(ip);
+  const origin = (process.env.WEB_ORIGIN ?? "").trim();
+  if (origin) {
+    try {
+      hosts.add(new URL(origin).hostname);
+    } catch {
+      /* ignore */
+    }
+  }
+  return hosts;
+}
+
+function rewriteIfSelf(origin: string): string | null {
+  try {
+    const host = new URL(origin).hostname;
+    if (selfHostnames().has(host)) return "http://web:3000";
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
+function fetchOrigins(baseUrl: string, cloudUrl: string | null): string[] {
+  const raw = [baseUrl, cloudUrl].map((u) => String(u || "").replace(/\/$/, "")).filter(Boolean);
+  const out: string[] = [];
+  for (const u of raw) {
+    const local = rewriteIfSelf(u);
+    if (local && local !== u) out.push(local);
+    out.push(u);
+  }
+  return [...new Set(out)];
+}
+
 async function fetchRemote(
   baseUrl: string,
   cloudUrl: string | null,
   path: string,
   init: RequestInit & { hubToken: string },
 ): Promise<{ ok: boolean; status: number; json: unknown; error?: string }> {
-  const urls = [baseUrl, cloudUrl].map((u) => String(u || "").replace(/\/$/, "")).filter(Boolean);
+  const urls = fetchOrigins(baseUrl, cloudUrl);
   let last = "Sin URL";
   for (let i = 0; i < urls.length; i++) {
     const timeout = i === 0 && urls.length > 1 ? 2000 : 8000;
@@ -394,6 +430,62 @@ hubAdminApi.post("/sites/:id/refresh", async (c) => {
   }
   const updated = await pullAndStore(row);
   return c.json({ site: publicSite(updated, null), bootstrapError: bootError });
+});
+
+hubAdminApi.patch("/sites/:id", async (c) => {
+  const id = c.req.param("id");
+  const row = await db.select().from(hubSites).where(eq(hubSites.id, id)).get();
+  if (!row) return c.json({ error: "Barrio no encontrado" }, 404);
+  const body = await c.req.json<{
+    name?: string;
+    planId?: string;
+    adminName?: string;
+    adminEmail?: string;
+    adminPassword?: string;
+    baseUrl?: string;
+    cloudUrl?: string;
+  }>();
+  const name = String(body.name ?? row.name).trim();
+  const planId = String(body.planId ?? row.planId).trim();
+  const adminName = String(body.adminName ?? row.adminName).trim();
+  const adminEmail = String(body.adminEmail ?? row.adminEmail).trim().toLowerCase();
+  const adminPassword = String(body.adminPassword ?? "");
+  const baseUrl = String(body.baseUrl ?? row.baseUrl).trim().replace(/\/$/, "");
+  const cloudUrlRaw = body.cloudUrl !== undefined ? String(body.cloudUrl ?? "").trim().replace(/\/$/, "") : row.cloudUrl;
+  const cloudUrl = cloudUrlRaw || null;
+  if (!name) return c.json({ error: "Falta el nombre del barrio" }, 400);
+  const plan = planById(planId);
+  if (!plan) return c.json({ error: "Elegí un plan comercial" }, 400);
+  if (!adminName || !adminEmail) return c.json({ error: "Falta el administrador del predio" }, 400);
+  if (adminPassword && adminPassword.length < 8) {
+    return c.json({ error: "La clave debe tener al menos 8 caracteres" }, 400);
+  }
+  if (!baseUrl && !cloudUrl) return c.json({ error: "Indicá la URL LAN o la pública del Ubuntu" }, 400);
+  const patch: Partial<typeof hubSites.$inferInsert> = {
+    name,
+    planId: plan.id,
+    adminName,
+    adminEmail,
+    baseUrl: baseUrl || cloudUrl || "",
+    cloudUrl,
+  };
+  if (adminPassword) patch.adminPasswordHash = await bcrypt.hash(adminPassword, 10);
+  await db.update(hubSites).set(patch).where(eq(hubSites.id, id));
+  let next = (await db.select().from(hubSites).where(eq(hubSites.id, id)).get())!;
+  const boot = await tryBootstrap(next);
+  if (boot.ok) next = (await pullAndStore(next)) as typeof next;
+  return c.json({
+    site: publicSite(next, null),
+    bootstrapError: boot.ok ? null : boot.error,
+  });
+});
+
+hubAdminApi.delete("/sites/:id", async (c) => {
+  const id = c.req.param("id");
+  const row = await db.select().from(hubSites).where(eq(hubSites.id, id)).get();
+  if (!row) return c.json({ error: "Barrio no encontrado" }, 404);
+  await db.delete(hubSites).where(eq(hubSites.id, id));
+  return c.json({ ok: true });
 });
 
 /** Un solo árbol /api/hub: snapshot/bootstrap públicos; /sites con cookie. */
