@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
 import bcrypt from "bcryptjs";
-import { and, desc, eq, gte, sql } from "drizzle-orm";
+import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { planById } from "@accesopro/catalog";
 import type { AuthUser } from "./auth.js";
@@ -50,14 +50,24 @@ function hubHeader(c: { req: { header: (n: string) => string | undefined } }) {
   return (c.req.header("x-accesopro-hub-token") || c.req.header("authorization")?.replace(/^Bearer\s+/i, "") || "").trim();
 }
 
+async function resolveHubSite(token: string) {
+  if (!token) return null;
+  const byHub = await db.select().from(sites).where(eq(sites.hubToken, token)).get();
+  if (byHub) return byHub;
+  const byAgent = await db.select().from(sites).where(eq(sites.agentToken, token)).get();
+  if (byAgent) return byAgent;
+  const envTok = (process.env.ACCESOPRO_HUB_TOKEN ?? "").trim();
+  if (envTok && envTok === token) {
+    return (await db.select().from(sites).limit(1).get()) ?? null;
+  }
+  return null;
+}
+
 async function tokenAccepted(token: string): Promise<boolean> {
   if (!token) return false;
   const envTok = (process.env.ACCESOPRO_HUB_TOKEN ?? "").trim();
   if (envTok && envTok === token) return true;
-  const byHub = await db.select({ id: sites.id }).from(sites).where(eq(sites.hubToken, token)).get();
-  if (byHub) return true;
-  const byAgent = await db.select({ id: sites.id }).from(sites).where(eq(sites.agentToken, token)).get();
-  return Boolean(byAgent);
+  return Boolean(await resolveHubSite(token));
 }
 
 async function countN(q: Promise<{ n: number } | undefined>) {
@@ -65,45 +75,88 @@ async function countN(q: Promise<{ n: number } | undefined>) {
   return Number(row?.n ?? 0);
 }
 
-export async function buildHubSnapshot(): Promise<HubSnapshot> {
-  const tenant = await db.select().from(tenants).limit(1).get();
+export async function buildHubSnapshot(tenantId?: string | null): Promise<HubSnapshot> {
+  const tenant = tenantId
+    ? await db.select().from(tenants).where(eq(tenants.id, tenantId)).get()
+    : await db.select().from(tenants).limit(1).get();
+  const empty: HubSnapshot = {
+    tenantName: tenant?.name ?? null,
+    lots: 0,
+    ownersPending: 0,
+    ownersActive: 0,
+    familyMembers: 0,
+    visitsInSite: 0,
+    pendingApprovals: 0,
+    eventsToday: 0,
+    lastEventAt: null,
+  };
+  if (!tenant) return empty;
+  const siteRows = await db.select({ id: sites.id }).from(sites).where(eq(sites.tenantId, tenant.id));
+  const siteIds = siteRows.map((s) => s.id);
   const start = new Date();
   start.setHours(0, 0, 0, 0);
-  const lastEv = await db.select({ createdAt: events.createdAt }).from(events).orderBy(desc(events.createdAt)).limit(1).get();
+  const lastEv = siteIds.length
+    ? await db
+        .select({ createdAt: events.createdAt })
+        .from(events)
+        .where(inArray(events.siteId, siteIds))
+        .orderBy(desc(events.createdAt))
+        .limit(1)
+        .get()
+    : undefined;
   const lastAt = lastEv?.createdAt instanceof Date ? lastEv.createdAt.getTime() : lastEv?.createdAt ?? null;
   return {
-    tenantName: tenant?.name ?? null,
-    lots: await countN(db.select({ n: sql<number>`count(*)` }).from(properties).get()),
+    tenantName: tenant.name,
+    lots: await countN(db.select({ n: sql<number>`count(*)` }).from(properties).where(eq(properties.tenantId, tenant.id)).get()),
     ownersPending: await countN(
       db
         .select({ n: sql<number>`count(*)` })
         .from(users)
-        .where(and(eq(users.role, "resident"), eq(users.mustChangePassword, true)))
+        .where(and(eq(users.tenantId, tenant.id), eq(users.role, "resident"), eq(users.mustChangePassword, true)))
         .get(),
     ),
     ownersActive: await countN(
       db
         .select({ n: sql<number>`count(*)` })
         .from(users)
-        .where(and(eq(users.role, "resident"), eq(users.mustChangePassword, false)))
+        .where(and(eq(users.tenantId, tenant.id), eq(users.role, "resident"), eq(users.mustChangePassword, false)))
         .get(),
     ),
     familyMembers: await countN(
       db
         .select({ n: sql<number>`count(*)` })
         .from(propertyFamilyMembers)
-        .where(eq(propertyFamilyMembers.active, true))
+        .innerJoin(properties, eq(propertyFamilyMembers.propertyId, properties.id))
+        .where(and(eq(properties.tenantId, tenant.id), eq(propertyFamilyMembers.active, true)))
         .get(),
     ),
-    visitsInSite: await countN(
-      db.select({ n: sql<number>`count(*)` }).from(visitPasses).where(eq(visitPasses.status, "in_site")).get(),
-    ),
-    pendingApprovals: await countN(
-      db.select({ n: sql<number>`count(*)` }).from(guardApprovals).where(eq(guardApprovals.status, "pending")).get(),
-    ),
-    eventsToday: await countN(
-      db.select({ n: sql<number>`count(*)` }).from(events).where(gte(events.createdAt, start)).get(),
-    ),
+    visitsInSite: siteIds.length
+      ? await countN(
+          db
+            .select({ n: sql<number>`count(*)` })
+            .from(visitPasses)
+            .where(and(inArray(visitPasses.siteId, siteIds), eq(visitPasses.status, "in_site")))
+            .get(),
+        )
+      : 0,
+    pendingApprovals: siteIds.length
+      ? await countN(
+          db
+            .select({ n: sql<number>`count(*)` })
+            .from(guardApprovals)
+            .where(and(inArray(guardApprovals.siteId, siteIds), eq(guardApprovals.status, "pending")))
+            .get(),
+        )
+      : 0,
+    eventsToday: siteIds.length
+      ? await countN(
+          db
+            .select({ n: sql<number>`count(*)` })
+            .from(events)
+            .where(and(inArray(events.siteId, siteIds), gte(events.createdAt, start)))
+            .get(),
+        )
+      : 0,
     lastEventAt: lastAt != null ? Number(lastAt) : null,
   };
 }
@@ -124,14 +177,16 @@ async function bootstrapPredio(body: {
   if (existingTok) {
     return { ok: true as const, already: true, tenantId: existingTok.tenantId, siteId: existingTok.id };
   }
-  const tenantCount = await db.select({ n: sql<number>`count(*)` }).from(tenants).get();
-  if (Number(tenantCount?.n ?? 0) > 0) {
-    const site = await db.select().from(sites).limit(1).get();
+  const bySlug = await db.select().from(tenants).where(eq(tenants.slug, body.slug)).get();
+  if (bySlug) {
+    const site = await db.select().from(sites).where(eq(sites.tenantId, bySlug.id)).limit(1).get();
     if (site) {
       await db.update(sites).set({ hubToken: body.hubToken }).where(eq(sites.id, site.id));
     }
-    return { ok: true as const, already: true, tenantId: site?.tenantId ?? "", siteId: site?.id ?? "" };
+    return { ok: true as const, already: true, tenantId: bySlug.id, siteId: site?.id ?? "" };
   }
+  const emailTaken = await db.select({ id: users.id }).from(users).where(eq(users.email, email)).get();
+  if (emailTaken) throw new Error("Ese email ya está en uso en este Ubuntu");
   const now = new Date();
   const tenantId = `tenant_${body.slug}`.slice(0, 64);
   const siteId = nid();
@@ -259,7 +314,30 @@ async function fetchRemote(
   return { ok: false, status: 0, json: null, error: last };
 }
 
+function isSelfHubRow(row: { baseUrl: string; cloudUrl: string | null }) {
+  return Boolean(rewriteIfSelf(row.baseUrl) || rewriteIfSelf(row.cloudUrl || ""));
+}
+
 async function pullAndStore(row: typeof hubSites.$inferSelect) {
+  if (isSelfHubRow(row)) {
+    const site = await db.select().from(sites).where(eq(sites.hubToken, row.hubToken)).get();
+    const snapshot = await buildHubSnapshot(site?.tenantId ?? null);
+    const now = new Date();
+    await db
+      .update(hubSites)
+      .set({
+        status: site ? "online" : "pending",
+        lastSeenAt: site ? now : row.lastSeenAt,
+        lastSnapshotJson: JSON.stringify(snapshot),
+      })
+      .where(eq(hubSites.id, row.id));
+    return {
+      ...row,
+      status: site ? ("online" as const) : ("pending" as const),
+      lastSeenAt: site ? now : row.lastSeenAt,
+      lastSnapshotJson: JSON.stringify(snapshot),
+    };
+  }
   const got = await fetchRemote(row.baseUrl, row.cloudUrl, "/api/hub/snapshot", { hubToken: row.hubToken });
   if (!got.ok) {
     await db.update(hubSites).set({ status: "offline" }).where(eq(hubSites.id, row.id));
@@ -280,7 +358,7 @@ async function pullAndStore(row: typeof hubSites.$inferSelect) {
 
 async function tryBootstrap(row: typeof hubSites.$inferSelect) {
   if (!row.adminPasswordHash) return { error: "Falta clave para el bootstrap" };
-  const body = JSON.stringify({
+  const payload = {
     name: row.name,
     slug: row.slug,
     planId: row.planId,
@@ -288,7 +366,16 @@ async function tryBootstrap(row: typeof hubSites.$inferSelect) {
     adminEmail: row.adminEmail,
     passwordHash: row.adminPasswordHash,
     hubToken: row.hubToken,
-  });
+  };
+  if (isSelfHubRow(row)) {
+    try {
+      await bootstrapPredio(payload);
+      return { ok: true as const };
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : "No se pudo iniciar el predio" };
+    }
+  }
+  const body = JSON.stringify(payload);
   const got = await fetchRemote(row.baseUrl, row.cloudUrl, "/api/hub/bootstrap", {
     method: "POST",
     hubToken: row.hubToken,
@@ -304,7 +391,8 @@ export const hubPredioApi = new Hono();
 hubPredioApi.get("/snapshot", async (c) => {
   const token = hubHeader(c);
   if (!(await tokenAccepted(token))) return c.json({ error: "Token de hub inválido" }, 401);
-  const snapshot = await buildHubSnapshot();
+  const site = await resolveHubSite(token);
+  const snapshot = await buildHubSnapshot(site?.tenantId ?? null);
   return c.json(snapshot);
 });
 

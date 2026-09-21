@@ -75,7 +75,9 @@ Si el Ubuntu de la garita todavía no responde, el recuadro ámbar es normal:
 
 La fila queda **Pendiente** o **Sin enlace**. Eso no borra el alta: el directorio ya está.
 
-En la prueba del 20/09/2026 el concentrador (`192.168.190.146`) registró Los Alamos apuntando a `http://192.168.190.114:3000`. El bootstrap falló con `fetch failed` porque esa IP no contestaba. **Si el predio es este mismo Ubuntu, la URL LAN es `http://192.168.190.146:3000`** (no 114). El API, desde Docker, consulta el servicio `web` de este compose.
+En la prueba del 20/09/2026 el concentrador (`192.168.190.146`) registró Los Alamos apuntando a `http://192.168.190.114:3000`. El bootstrap falló con `fetch failed` porque esa IP no contestaba.
+
+**Si el predio es este mismo Ubuntu**, URL LAN = `http://192.168.190.146:3000` (no 114). Eso crea un tenant **nuevo** al lado de Las Acacias (otro admin, otros lotes). El combo de barrio del dashboard lista los dos; los padrones no se mezclan.
 
 ## Certificado HTTPS vencido (`:3443`)
 
