@@ -516,4 +516,64 @@ export const MANUAL_CHAPTERS: ManualChapter[] = [
       },
     ],
   },
+  {
+    id: "autorizaciones-qr",
+    title: "Autorizaciones QR del propietario",
+    updated: "21/09/2026",
+    summary:
+      "El titular arma el QR en el portal WAN. El lector solo identifica. Portería completa la ficha y abre. Validez por defecto del barrio (24 h, configurable). El walk-in de 120 s es otro camino.",
+    sections: [
+      {
+        id: "regla-qr",
+        title: "Qué acredita el QR",
+        blocks: [
+          {
+            type: "p",
+            text: "El QR de visita no abre la barrera. En el ASI-6214S el lector pita (Error 96) y AccesoPro pone el pase en la cola de portería. Recién cuando el guardia aprueba (DNI, y baúl/seguro si hay auto) se dispara el relé. Cara de invitado: no se enrola.",
+          },
+          {
+            type: "ul",
+            items: [
+              "Titular en /portal (DNS del concentrador): nombre obligatorio; DNI, categoría, patente y acompañantes opcionales",
+              "Si no pone fechas ni horario: el pase vale el plazo del barrio (por defecto 24 h) desde que lo crea",
+              "Si pone hasta el domingo o una franja: se respeta. La franja sin fechas usa el mismo plazo corrido y filtra la hora al escanear",
+              "El QR viaja a la garita en 1–2 s (sync rápido mientras el pase está preautorizado o esperando entrada)",
+            ],
+          },
+        ],
+      },
+      {
+        id: "admin-plazo",
+        title: "Plazo del barrio",
+        blocks: [
+          {
+            type: "p",
+            text: "Admin del predio → Configuración → Módulos → Validez de autorizaciones QR. Combo 4 / 8 / 12 / 24 / 48 / 72 horas. Eso no topea un fin de semana que el titular cargue a mano: solo aplica cuando no hay ventana.",
+          },
+          {
+            type: "note",
+            text: "Los 120 segundos del aviso walk-in (clic en el lote del plano) no son la validez del QR. El pase de walk-in también nace con el plazo del barrio; el aviso al titular vence a los 2 minutos.",
+          },
+        ],
+      },
+      {
+        id: "prueba-qr",
+        title: "Cómo se prueba",
+        blocks: [
+          {
+            type: "table",
+            headers: ["Paso", "Qué tiene que pasar"],
+            rows: [
+              ["Configuración en 24 h; QR en portal sin fechas", "validUntil ≈ ahora + 24 h"],
+              ["Cambiar a 8 h; otro QR sin fechas", "8 h"],
+              ["QR con hasta el domingo", "Se respeta esa fecha"],
+              ["Escanear en el ASI", "Cola de portería; no abre. Completar DNI; Aprobar; relé"],
+              ["Crear el QR en el concentrador (portal DNS)", "En menos de ~2 s el mismo token existe en la garita"],
+              ["Walk-in desde el plano", "Aviso 120 s igual; el pase dura el plazo del barrio"],
+            ],
+          },
+        ],
+      },
+    ],
+  },
 ];

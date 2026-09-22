@@ -22,6 +22,7 @@ import { companionIsMinor, isMinorBirthDate } from "./age.js";
 import { createOwnerNotice, expireOwnerNotices } from "./ownerNotices.js";
 import { saveEventPhoto } from "./eventPhotos.js";
 import { verifyUserGuardCode } from "./users.js";
+import { getVisitAuthDefaultHours } from "./retention.js";
 
 export type ArrivalMode = "peatonal" | "plataforma" | "vehiculo";
 export type VisitKind = "social" | "service" | "contractor" | "delivery";
@@ -457,6 +458,9 @@ export async function serializePassFicha(
     passStatus: pass.status,
     validFrom: pass.validFrom,
     validUntil: pass.validUntil,
+    horaDesde: pass.horaDesde,
+    horaHasta: pass.horaHasta,
+    windowState: passWindowState(pass),
     needsTrunk: needsVehicleDocs(pass.arrivalMode),
     missing,
     companions: companions.map((x) => ({
@@ -607,6 +611,7 @@ export async function announceWalkIn(input: {
   const passId = nid();
   const token = (await import("./visitPass.js")).makeVisitToken(property.id, passId);
   const guestName = (input.guestName || "Visita espontánea").trim();
+  const defaultHours = await getVisitAuthDefaultHours(input.site.tenantId);
   await db.insert(visitPasses).values({
     id: passId,
     propertyId: property.id,
@@ -617,7 +622,7 @@ export async function announceWalkIn(input: {
     guestDni: input.guestDni?.replace(/\D/g, "") || null,
     patente: null,
     validFrom: now,
-    validUntil: new Date(now.getTime() + 24 * 60 * 60 * 1000),
+    validUntil: new Date(now.getTime() + defaultHours * 60 * 60 * 1000),
     horaDesde: null,
     horaHasta: null,
     status: "awaiting_entry",

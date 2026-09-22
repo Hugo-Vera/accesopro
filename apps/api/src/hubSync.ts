@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, gte, inArray, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { client, dataDir, db } from "./db/client.js";
 import {
@@ -10,6 +10,7 @@ import {
   properties,
   sites,
   tenants,
+  visitPasses,
 } from "./db/schema.js";
 import { eventPhotoPath, listEventPhotoIds, looksLikeJpeg, readEventPhoto, saveEventPhoto } from "./eventPhotos.js";
 import { getRetentionDays } from "./retention.js";
@@ -77,6 +78,7 @@ export type ReplicaDump = {
   tenantId: string;
   tables: Record<string, Record<string, unknown>[]>;
   photos: { siteId: string; eventId: string }[];
+  pendingFast?: boolean;
 };
 
 function hubHeader(c: { req: { header: (n: string) => string | undefined } }) {
@@ -251,7 +253,7 @@ export async function dumpTenant(tenantId: string, sinceMs = 0): Promise<Replica
       photos.push({ siteId, eventId });
     }
   }
-  return { rev: Date.now(), tenantId, tables, photos };
+  return { rev: Date.now(), tenantId, tables, photos, pendingFast: await tenantHasFastSync(tenantId) };
 }
 
 async function existingRow(table: string, row: Record<string, unknown>) {
@@ -339,6 +341,14 @@ hubSyncApi.get("/sync/pull", async (c) => {
   const dump = await dumpTenant(tenantId, since);
   await markHubSync(token, { lastPullAt: Date.now() });
   return c.json(dump);
+});
+
+hubSyncApi.get("/sync/pending", async (c) => {
+  const token = hubHeader(c);
+  if (!(await tokenOk(token))) return c.json({ error: "Token de hub inválido" }, 401);
+  const tenantId = await replicaTenantIdForToken(token);
+  if (!tenantId) return c.json({ error: "No hay tenant sombra para este token" }, 409);
+  return c.json({ pendingFast: await tenantHasFastSync(tenantId) });
 });
 
 hubSyncApi.get("/sync/restore", async (c) => {
@@ -488,6 +498,28 @@ async function pendingOwnerNotices(tenantId: string) {
   return Number(n?.n ?? 0);
 }
 
+async function pendingOpenPasses(tenantId: string) {
+  const site = await db.select().from(sites).where(eq(sites.tenantId, tenantId)).get();
+  if (!site) return 0;
+  const since = new Date(Date.now() - 15 * 60 * 1000);
+  const n = await db
+    .select({ n: sql<number>`count(*)` })
+    .from(visitPasses)
+    .where(
+      and(
+        eq(visitPasses.siteId, site.id),
+        inArray(visitPasses.status, ["preauthorized", "awaiting_entry"]),
+        gte(visitPasses.createdAt, since),
+      ),
+    )
+    .get();
+  return Number(n?.n ?? 0);
+}
+
+async function tenantHasFastSync(tenantId: string) {
+  return (await pendingOwnerNotices(tenantId)) > 0 || (await pendingOpenPasses(tenantId)) > 0;
+}
+
 async function pushMissingPhotos(tenantId: string) {
   const siteRows = await db.select().from(sites).where(eq(sites.tenantId, tenantId));
   let remote: { photos: { siteId: string; eventId: string }[] } = { photos: [] };
@@ -562,7 +594,7 @@ async function tickHubSync() {
   await pullMissingPhotos(incoming);
   await pushMissingPhotos(tenantId);
   state.lastPullMs = Date.now();
-  state.pendingFast = (await pendingOwnerNotices(tenantId)) > 0;
+  state.pendingFast = (await tenantHasFastSync(tenantId)) || Boolean(incoming.pendingFast);
   writeLoopState(state);
 }
 
@@ -576,13 +608,23 @@ export function startHubSyncLoop() {
   loopStarted = true;
   const run = async () => {
     try {
-      await tickHubSync();
+      const tenantId = await localTenantId();
+      const state = readLoopState();
+      let hubFast = false;
+      try {
+        const pending = (await hubFetch("/api/hub/sync/pending")) as { pendingFast?: boolean };
+        hubFast = Boolean(pending.pendingFast);
+      } catch {
+        /* el tick completo reintenta */
+      }
+      const localFast = tenantId ? await tenantHasFastSync(tenantId) : false;
+      const fast = hubFast || localFast || Boolean(state.pendingFast);
+      const due = Date.now() - (state.lastPullMs || 0) >= (fast ? 1500 : 60_000);
+      if (due || !state.lastPullMs) await tickHubSync();
     } catch (err) {
       console.warn("[hub-sync]", err instanceof Error ? err.message : err);
     }
-    const state = readLoopState();
-    const wait = state.pendingFast ? 1500 : 60_000;
-    setTimeout(run, wait);
+    setTimeout(run, 1500);
   };
   setTimeout(run, 4000);
 }

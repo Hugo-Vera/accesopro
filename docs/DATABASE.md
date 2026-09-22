@@ -119,7 +119,7 @@ Visita: ingreso en carril 1 (`visit_passes.scanned_in_at`) y egreso en carril 2 
 | `owner_profiles` | Vecino ↔ `users` ↔ `properties` (DNI, WhatsApp, foto, sync Dahua). El lote queda fijo en `property_id`; `PATCH /api/residents/me` ignora `lote` / `lotNumber` / `propertyId`. |
 | `property_family_members` | Grupo familiar del lote (foto / Dahua / vigencia). `user_id` si el titular lo invitó a la app. |
 | `owner_notices` | Avisos al lote (walk-in 120 s, bien, traslado). `decided_by_user_id` = quién autorizó. |
-| `tenant_settings` | Retención comercial (días) |
+| `tenant_settings` | Retención comercial (días) y `visit_auth_default_hours` (validez QR si el titular no arma ventana; default 24) |
 | `push_devices` | Tokens FCM (web / Android) por usuario |
 | `property_services` | Jardinero, empleada, horarios, fechas, foto |
 | `dahua_period_slots` | Huella de horario → índice `AccessTimeSchedule` por ASI |

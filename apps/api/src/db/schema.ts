@@ -765,6 +765,8 @@ export const tenantSettings = sqliteTable("tenant_settings", {
     .primaryKey()
     .references(() => tenants.id),
   retentionDays: integer("retention_days").notNull().default(90),
+  /** Validez del QR de visita si el titular no arma ventana. 4|8|12|24|48|72. */
+  visitAuthDefaultHours: integer("visit_auth_default_hours").notNull().default(24),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
 });
 

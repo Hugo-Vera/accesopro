@@ -21,6 +21,8 @@ export function ConfigPage() {
 
       <RetentionPanel />
 
+      <VisitAuthPolicyPanel />
+
       <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
         <div className="mb-6 flex flex-col gap-1 border-b border-slate-200 pb-4 dark:border-slate-800">
           <h2 className="text-lg font-semibold text-slate-900 dark:text-white">
@@ -258,6 +260,57 @@ function RetentionPanel() {
           <option value={90}>90</option>
           <option value={180}>180</option>
           <option value={0}>No purgar</option>
+        </select>
+      </label>
+      {msg ? <p className="mt-2 text-xs text-slate-500">{msg}</p> : null}
+    </section>
+  );
+}
+
+const VISIT_AUTH_HOURS = [4, 8, 12, 24, 48, 72] as const;
+
+function VisitAuthPolicyPanel() {
+  const { tenantId, can } = useDash();
+  const [hours, setHours] = useState<number>(24);
+  const [msg, setMsg] = useState<string | null>(null);
+  const allowed = can("core.config");
+
+  useEffect(() => {
+    if (!tenantId || !allowed) return;
+    api<{ defaultHours: number }>(`/api/tenants/${tenantId}/visit-auth-policy`)
+      .then((d) => setHours(d.defaultHours))
+      .catch(() => undefined);
+  }, [tenantId, allowed]);
+
+  if (!tenantId || !allowed) return null;
+
+  return (
+    <section className="rounded-xl border border-slate-200 bg-white p-6 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+      <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Validez de autorizaciones QR</h2>
+      <p className="mt-1 text-sm text-slate-500 dark:text-slate-400">
+        Si el titular no define fecha ni horario, el pase dura este plazo desde que lo crea. El QR no abre la barrera.
+      </p>
+      <label className="mt-4 block text-xs font-semibold text-slate-700 dark:text-slate-300">
+        Plazo por defecto
+        <select
+          className="mt-1 w-full max-w-xs rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm dark:border-slate-700 dark:bg-slate-900 dark:text-slate-100"
+          value={hours}
+          onChange={(e) => {
+            const n = Number(e.target.value);
+            setHours(n);
+            api(`/api/tenants/${tenantId}/visit-auth-policy`, {
+              method: "PUT",
+              body: JSON.stringify({ defaultHours: n }),
+            })
+              .then(() => setMsg("Guardado"))
+              .catch((err) => setMsg(err instanceof Error ? err.message : "Error"));
+          }}
+        >
+          {VISIT_AUTH_HOURS.map((h) => (
+            <option key={h} value={h}>
+              {h} horas
+            </option>
+          ))}
         </select>
       </label>
       {msg ? <p className="mt-2 text-xs text-slate-500">{msg}</p> : null}

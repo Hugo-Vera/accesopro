@@ -803,9 +803,11 @@ async function backfillAccessPointsFromLegacy() {
     CREATE TABLE IF NOT EXISTS tenant_settings (
       tenant_id TEXT PRIMARY KEY REFERENCES tenants(id),
       retention_days INTEGER NOT NULL DEFAULT 90,
+      visit_auth_default_hours INTEGER NOT NULL DEFAULT 24,
       updated_at INTEGER NOT NULL
     )
   `);
+  await addColumn("tenant_settings", "visit_auth_default_hours", "INTEGER NOT NULL DEFAULT 24");
   await addColumn("users", "guard_code", "TEXT");
   await addColumn("sites", "hub_token", "TEXT");
   await db.run(sql`

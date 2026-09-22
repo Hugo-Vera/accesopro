@@ -185,6 +185,7 @@ export function OwnerPortal() {
   const [isTitular, setIsTitular] = useState(true);
   const [showServiceModal, setShowServiceModal] = useState(false);
   const [showVisitModal, setShowVisitModal] = useState(false);
+  const [visitAuthDefaultHours, setVisitAuthDefaultHours] = useState(24);
   const [panicEnabled, setPanicEnabled] = useState(false);
   const [features, setFeatures] = useState<PortalFeatures>({
     face: true,
@@ -226,6 +227,7 @@ export function OwnerPortal() {
         features?: PortalFeatures;
         isTitular?: boolean;
         canManageFamily?: boolean;
+        visitAuthDefaultHours?: number;
       }>("/api/residents/me");
 
       setUserName(me.profile?.fullName || me.user.name);
@@ -236,6 +238,7 @@ export function OwnerPortal() {
       setPanicEnabled(Boolean(me.panicEnabled));
       setIsTitular(me.isTitular !== false);
       setCanManageFamily(me.canManageFamily !== false);
+      if (me.visitAuthDefaultHours) setVisitAuthDefaultHours(me.visitAuthDefaultHours);
       if (me.features) setFeatures(me.features);
 
       if (me.features?.qr !== false) {
@@ -1613,7 +1616,9 @@ export function OwnerPortal() {
                 const patente = String(fd.get("patente") || "").trim();
                 const validFrom = String(fd.get("validFrom") || "").trim();
                 const validUntil = String(fd.get("validUntil") || "").trim();
-                const twentyFourHours = fd.get("twentyFourHours") === "on";
+                const horaDesde = String(fd.get("horaDesde") || "").trim();
+                const horaHasta = String(fd.get("horaHasta") || "").trim();
+                const useDefaultHours = fd.get("useDefaultHours") === "on";
                 const completeness = fd.get("completeness") === "full" ? "full" : "basic";
                 const notes = String(fd.get("notes") || "").trim();
                 const companions: { name: string; dni: string }[] = [];
@@ -1638,11 +1643,11 @@ export function OwnerPortal() {
                       visitKind,
                       completeness,
                       notes: notes || undefined,
-                      twentyFourHours,
-                      validFrom: validFrom || new Date().toISOString(),
-                      validUntil:
-                        validUntil ||
-                        new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+                      useDefaultHours,
+                      validFrom: useDefaultHours ? undefined : validFrom || undefined,
+                      validUntil: useDefaultHours ? undefined : validUntil || undefined,
+                      horaDesde: horaDesde || undefined,
+                      horaHasta: horaHasta || undefined,
                       companions,
                       insurance:
                         completeness === "full" && arrivalMode === "vehiculo" && insuranceCompany && policyNumber
@@ -1683,12 +1688,11 @@ export function OwnerPortal() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
-                    DNI Visitante *
+                    DNI Visitante
                   </label>
                   <input
                     type="text"
                     name="guestDni"
-                    required
                     className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-blue-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                   />
                 </div>
@@ -1732,13 +1736,21 @@ export function OwnerPortal() {
                   className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-mono uppercase dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                 />
               </div>
+              <label className="flex items-start gap-2 text-xs text-slate-700 dark:text-slate-300">
+                <input type="checkbox" name="useDefaultHours" defaultChecked className="mt-0.5" />
+                <span>
+                  Usar validez del barrio ({visitAuthDefaultHours} h)
+                  <span className="mt-0.5 block text-[11px] text-slate-500 dark:text-slate-400">
+                    Si no definís fecha ni horario, el pase vale {visitAuthDefaultHours} horas desde ahora. Portería completa los datos que falten; el QR no abre la barrera.
+                  </span>
+                </span>
+              </label>
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">Válido desde</label>
                   <input
                     type="datetime-local"
                     name="validFrom"
-                    defaultValue={new Date().toISOString().slice(0, 16)}
                     className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                   />
                 </div>
@@ -1747,15 +1759,28 @@ export function OwnerPortal() {
                   <input
                     type="datetime-local"
                     name="validUntil"
-                    defaultValue={new Date(Date.now() + 24 * 3600 * 1000).toISOString().slice(0, 16)}
                     className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                   />
                 </div>
               </div>
-              <label className="flex items-center gap-2 text-xs text-slate-700 dark:text-slate-300">
-                <input type="checkbox" name="twentyFourHours" defaultChecked />
-                24 horas de validez
-              </label>
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">Hora desde</label>
+                  <input
+                    type="time"
+                    name="horaDesde"
+                    className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">Hora hasta</label>
+                  <input
+                    type="time"
+                    name="horaHasta"
+                    className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                  />
+                </div>
+              </div>
               <div className="grid grid-cols-3 gap-2">
                 <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300">
                   Compañía

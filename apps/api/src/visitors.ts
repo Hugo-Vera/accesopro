@@ -38,6 +38,7 @@ import {
   confirmPhoneAuth,
 } from "./visitHold.js";
 import { readEventPhoto } from "./eventPhotos.js";
+import { getVisitAuthDefaultHours } from "./retention.js";
 
 function tsMs(v: Date | number | null | undefined) {
   if (v == null) return null;
@@ -852,6 +853,8 @@ visitorsApi.post("/visitors/checkin", async (c) => {
   const tenantId = scoped.site.tenantId;
   const siteId = scoped.site.id;
   const now = new Date();
+  const defaultHours = await getVisitAuthDefaultHours(tenantId);
+  const defaultUntil = new Date(now.getTime() + defaultHours * 60 * 60 * 1000);
   const dniClean = normalizeDni(body.identity.dniNumber);
   const accessMethod = "qr";
 
@@ -1090,7 +1093,7 @@ visitorsApi.post("/visitors/checkin", async (c) => {
     guestDni: dniClean,
     patente: body.vehicle?.plate ? normalizePlate(body.vehicle.plate) : null,
     validFrom: now,
-    validUntil: new Date(now.getTime() + 24 * 60 * 60 * 1000),
+    validUntil: defaultUntil,
     horaDesde: null,
     horaHasta: null,
     status: "preauthorized",
@@ -1118,7 +1121,7 @@ visitorsApi.post("/visitors/checkin", async (c) => {
     payload: token,
     label: guestName,
     validFrom: now,
-    validUntil: new Date(now.getTime() + 24 * 60 * 60 * 1000),
+    validUntil: defaultUntil,
     maxUses: 0,
   });
 
@@ -1135,7 +1138,7 @@ visitorsApi.post("/visitors/checkin", async (c) => {
         photoBase64: undefined,
         useTime: 0,
       },
-      { fechaDesde: now, fechaHasta: new Date(now.getTime() + 24 * 60 * 60 * 1000) },
+      { fechaDesde: now, fechaHasta: defaultUntil },
     );
     dahuaSynced = results.some((r) => r.ok);
     if (dahuaSynced) {

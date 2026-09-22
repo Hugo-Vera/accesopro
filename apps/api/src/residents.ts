@@ -35,6 +35,7 @@ import {
   normalizeArWhatsapp,
   unusableInviteHash,
 } from "./ownerInvite.js";
+import { getVisitAuthDefaultHours, resolveVisitPassWindow } from "./retention.js";
 
 type Env = { Variables: { user: AuthUser } };
 
@@ -408,6 +409,7 @@ residents.get("/me", async (c) => {
     features,
     isTitular: ctx.isTitular !== false,
     canManageFamily: ctx.canManageFamily !== false && (await userHasCapability(c.get("user"), "access.family.manage")),
+    visitAuthDefaultHours: await getVisitAuthDefaultHours(scoped.tenantId),
   });
 });
 
@@ -921,13 +923,15 @@ residents.post("/me/visit-passes", async (c) => {
     completeness?: "basic" | "full";
     notes?: string;
     twentyFourHours?: boolean;
+    useDefaultHours?: boolean;
     companions?: { name?: string; dni?: string }[];
     insurance?: { company?: string; policyNumber?: string; validUntil?: string };
   }>();
   const guestName = body.guestName?.trim();
   if (!guestName) return c.json({ error: "Falta el nombre del visitante" }, 400);
-  const guestDni = body.guestDni?.replace(/\D/g, "") || "";
-  if (guestDni.length < 7) return c.json({ error: "Falta el DNI de la visita" }, 400);
+  const dniDigits = body.guestDni?.replace(/\D/g, "") || "";
+  if (dniDigits && dniDigits.length < 7) return c.json({ error: "El DNI de la visita es demasiado corto" }, 400);
+  const guestDni = dniDigits || null;
   const { isArrivalMode, replaceCompanions, attachVehicleInsurance } = await import("./visitHold.js");
   const arrivalMode = isArrivalMode(body.arrivalMode) ? body.arrivalMode : body.patente ? "vehiculo" : "peatonal";
   const visitKind =
@@ -935,10 +939,14 @@ residents.post("/me/visit-passes", async (c) => {
       ? body.visitKind
       : "social";
   const maxUses = Math.max(0, Math.trunc(Number(body.maxUses ?? 0) || 0));
-  const validFrom = parseDateInput(body.validFrom);
-  const validUntil = body.twentyFourHours
-    ? new Date(validFrom.getTime() + 24 * 60 * 60 * 1000)
-    : parseDateInput(body.validUntil, new Date(validFrom.getTime() + 8 * 60 * 60 * 1000));
+  const defaultHours = await getVisitAuthDefaultHours(scoped.tenantId);
+  const { validFrom, validUntil } = resolveVisitPassWindow({
+    defaultHours,
+    validFrom: body.validFrom,
+    validUntil: body.validUntil,
+    useDefaultHours: body.useDefaultHours,
+    twentyFourHours: body.twentyFourHours,
+  });
   if (validUntil <= validFrom) return c.json({ error: "La vigencia de fin debe ser posterior al inicio" }, 400);
   const passId = nid();
   const token = makeVisitToken(ctx.property.id, passId);

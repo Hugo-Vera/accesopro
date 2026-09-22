@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Bell, Check, Phone, X } from "lucide-react";
+import { Bell, Check, Phone, Plus, Trash2, X } from "lucide-react";
 import { api, apiUrl, withTenant } from "@/lib/api";
 import { useEscapeKey } from "@/hooks/useEscapeKey";
 
@@ -26,6 +26,9 @@ export type GuardApprovalItem = {
   emergencies: { label: string; phone: string }[];
   validFrom: string | number;
   validUntil: string | number;
+  horaDesde?: string | null;
+  horaHasta?: string | null;
+  windowState?: "ok" | "expired" | "too_early" | "closed";
   passStatus?: string;
   ownerAuthStatus?: string;
   ownerAuthorizedByName?: string | null;
@@ -41,6 +44,19 @@ export type GuardApprovalItem = {
 };
 
 type Props = { tenantId: string; enabled: boolean };
+
+function fmtWindow(v: string | number) {
+  const d = new Date(typeof v === "number" ? v : v);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleString("es-AR", { dateStyle: "short", timeStyle: "short" });
+}
+
+function windowCopy(item: GuardApprovalItem) {
+  if (item.windowState === "expired") return "Pase vencido o fuera de horario";
+  if (item.windowState === "too_early") return "Todavía no vale (temprano)";
+  if (item.windowState === "closed") return "Cerrado";
+  return "Ventana vigente";
+}
 
 export function GuardApprovalQueue({ tenantId, enabled }: Props) {
   const [items, setItems] = useState<GuardApprovalItem[]>([]);
@@ -58,6 +74,7 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
   const [exitMinors, setExitMinors] = useState("");
   const [originLot, setOriginLot] = useState("");
   const [guardCode, setGuardCode] = useState("");
+  const [companionsDraft, setCompanionsDraft] = useState<{ name: string; dni: string }[]>([]);
   const [lots, setLots] = useState<{ id: string; lotNumber: string }[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -135,6 +152,7 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
     setExitMinors(String(current.minorsIn ?? ""));
     setGuardCode("");
     setError(null);
+    setCompanionsDraft((current.companions || []).map((x) => ({ name: x.name, dni: x.dni || "" })));
   }, [current?.id]);
 
   async function decide(decision: "approved" | "denied") {
@@ -149,6 +167,7 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
           comment,
           trunkChecked,
           guestDni,
+          companions: companionsDraft.filter((x) => x.name.trim()),
           insurance:
             current.needsTrunk && insCompany && insPolicy
               ? { plate, company: insCompany, policyNumber: insPolicy, validUntil: insUntil }
@@ -210,8 +229,19 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
                           : current.ownerAuthStatus === "owner_expired"
                             ? "El lote no contestó a tiempo. Podés excepción."
                             : "Walk-in: avisamos al lote (2 min). La barrera la abrís vos."
-                    : "Identificado en el lector"}
+                    : "Identificado en el lector. El QR no abre: completá y aprobá."}
                 </p>
+                <p className="mt-1 text-[11px] text-slate-600 dark:text-slate-400">
+                  {windowCopy(current)} · {fmtWindow(current.validFrom)} → {fmtWindow(current.validUntil)}
+                  {current.horaDesde && current.horaHasta ? ` · franja ${current.horaDesde}–${current.horaHasta}` : ""}
+                </p>
+                {current.reason === "walk_in" && current.ownerAuthorizedByName ? (
+                  <p className="mt-0.5 text-[11px] font-semibold text-slate-700 dark:text-slate-300">
+                    Autorizó {current.ownerAuthorizedByName}
+                  </p>
+                ) : current.reason !== "walk_in" ? (
+                  <p className="mt-0.5 text-[11px] text-slate-500">Preautorizado por el titular. El lector solo identificó el pase.</p>
+                ) : null}
               </div>
               <button type="button" onClick={() => { setOpenId(null); setPreview(null); }} className="rounded p-1 text-slate-500" aria-label="Cerrar">
                 <X className="h-5 w-5" />
@@ -259,7 +289,55 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
               </label>
             </div>
 
-            {current.companions.length ? (
+            {canDecide ? (
+              <div className="mt-3 space-y-2 rounded-lg border border-slate-200 p-2 dark:border-slate-700">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Acompañantes</p>
+                {companionsDraft.map((row, i) => (
+                  <div key={i} className="grid grid-cols-[1fr_1fr_auto] gap-2">
+                    <label className="text-[11px] font-semibold">
+                      Nombre
+                      <input
+                        value={row.name}
+                        onChange={(e) => {
+                          const next = companionsDraft.slice();
+                          next[i] = { ...next[i], name: e.target.value };
+                          setCompanionsDraft(next);
+                        }}
+                        className="mt-0.5 w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+                      />
+                    </label>
+                    <label className="text-[11px] font-semibold">
+                      DNI
+                      <input
+                        value={row.dni}
+                        onChange={(e) => {
+                          const next = companionsDraft.slice();
+                          next[i] = { ...next[i], dni: e.target.value };
+                          setCompanionsDraft(next);
+                        }}
+                        className="mt-0.5 w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      className="mt-5 rounded p-1 text-slate-500"
+                      aria-label="Quitar acompañante"
+                      onClick={() => setCompanionsDraft(companionsDraft.filter((_, j) => j !== i))}
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </div>
+                ))}
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-2 py-1 text-[11px] font-semibold dark:border-slate-600"
+                  onClick={() => setCompanionsDraft([...companionsDraft, { name: "", dni: "" }])}
+                >
+                  <Plus className="h-3 w-3" />
+                  Agregar acompañante
+                </button>
+              </div>
+            ) : current.companions.length ? (
               <p className="mt-2 text-[11px] text-slate-600 dark:text-slate-400">
                 Acompañantes: {current.companions.map((x) => `${x.name}${x.isMinor ? " (menor)" : ""}${x.dni ? ` (${x.dni})` : ""}`).join(", ")}
               </p>

@@ -22,20 +22,76 @@ export const retentionApi = new Hono<Env>();
 
 const CLOSED = ["completed", "denied", "revoked", "expired"] as const;
 
+export const VISIT_AUTH_HOURS = [4, 8, 12, 24, 48, 72] as const;
+
+export function normalizeVisitAuthHours(n: number): number {
+  return (VISIT_AUTH_HOURS as readonly number[]).includes(n) ? n : 24;
+}
+
 export async function getRetentionDays(tenantId: string): Promise<number> {
   const row = await db.select().from(tenantSettings).where(eq(tenantSettings.tenantId, tenantId)).get();
   return row?.retentionDays ?? 90;
 }
 
+export async function getVisitAuthDefaultHours(tenantId: string): Promise<number> {
+  const row = await db.select().from(tenantSettings).where(eq(tenantSettings.tenantId, tenantId)).get();
+  return normalizeVisitAuthHours(row?.visitAuthDefaultHours ?? 24);
+}
+
+export function resolveVisitPassWindow(input: {
+  now?: Date;
+  defaultHours: number;
+  validFrom?: string;
+  validUntil?: string;
+  useDefaultHours?: boolean;
+  twentyFourHours?: boolean;
+}): { validFrom: Date; validUntil: Date } {
+  const now = input.now ?? new Date();
+  const hours = normalizeVisitAuthHours(input.defaultHours);
+  const hasFrom = Boolean(input.validFrom?.trim());
+  const hasUntil = Boolean(input.validUntil?.trim());
+  const useDefault =
+    input.useDefaultHours === true || input.twentyFourHours === true || (!hasFrom && !hasUntil);
+
+  const parse = (raw: string | undefined, fallback: Date) => {
+    if (!raw?.trim()) return fallback;
+    const d = new Date(raw);
+    if (Number.isNaN(d.getTime())) throw new Error("Fecha inválida");
+    return d;
+  };
+
+  if (useDefault) {
+    return { validFrom: now, validUntil: new Date(now.getTime() + hours * 60 * 60 * 1000) };
+  }
+  const validFrom = parse(input.validFrom, now);
+  const validUntil = parse(input.validUntil, new Date(validFrom.getTime() + hours * 60 * 60 * 1000));
+  return { validFrom, validUntil };
+}
+
 export async function setRetentionDays(tenantId: string, days: number) {
   const n = [30, 60, 90, 180, 0].includes(days) ? days : 90;
   const now = new Date();
+  const hours = await getVisitAuthDefaultHours(tenantId);
   await db
     .insert(tenantSettings)
-    .values({ tenantId, retentionDays: n, updatedAt: now })
+    .values({ tenantId, retentionDays: n, visitAuthDefaultHours: hours, updatedAt: now })
     .onConflictDoUpdate({
       target: tenantSettings.tenantId,
       set: { retentionDays: n, updatedAt: now },
+    });
+  return n;
+}
+
+export async function setVisitAuthDefaultHours(tenantId: string, hours: number) {
+  const n = normalizeVisitAuthHours(hours);
+  const now = new Date();
+  const days = await getRetentionDays(tenantId);
+  await db
+    .insert(tenantSettings)
+    .values({ tenantId, retentionDays: days, visitAuthDefaultHours: n, updatedAt: now })
+    .onConflictDoUpdate({
+      target: tenantSettings.tenantId,
+      set: { visitAuthDefaultHours: n, updatedAt: now },
     });
   return n;
 }
@@ -179,4 +235,30 @@ retentionApi.put("/tenants/:id/retention", async (c) => {
   const body = await c.req.json<{ retentionDays?: number }>();
   const days = await setRetentionDays(tenantId, Number(body.retentionDays));
   return c.json({ ok: true, tenantId, retentionDays: days, id: nid() });
+});
+
+function assertSameTenant(user: AuthUser, tenantId: string) {
+  if (user.role !== "platform_admin" && user.tenantId !== tenantId) {
+    return false;
+  }
+  return true;
+}
+
+retentionApi.get("/tenants/:id/visit-auth-policy", async (c) => {
+  const user = c.get("user");
+  const tenantId = c.req.param("id");
+  if (!assertSameTenant(user, tenantId)) return c.json({ error: "Sin acceso a este barrio" }, 403);
+  const defaultHours = await getVisitAuthDefaultHours(tenantId);
+  return c.json({ tenantId, defaultHours, allowedHours: VISIT_AUTH_HOURS });
+});
+
+retentionApi.put("/tenants/:id/visit-auth-policy", async (c) => {
+  const denied = await denyUnlessCapability(c.get("user"), "core.config");
+  if (denied) return denied;
+  const user = c.get("user");
+  const tenantId = c.req.param("id");
+  if (!assertSameTenant(user, tenantId)) return c.json({ error: "Sin acceso a este barrio" }, 403);
+  const body = await c.req.json<{ defaultHours?: number }>();
+  const defaultHours = await setVisitAuthDefaultHours(tenantId, Number(body.defaultHours));
+  return c.json({ ok: true, tenantId, defaultHours, id: nid() });
 });
