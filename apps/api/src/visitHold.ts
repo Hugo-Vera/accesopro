@@ -173,11 +173,22 @@ export async function holdVisitQr(input: {
   approvalId?: string;
   reason?: string;
   guestName?: string;
+  lotNumber?: string | null;
 }> {
   const pass = await findVisitPassByCard(input.siteId, input.cardRaw);
   if (!pass) return { held: false };
+  const lotOf = async (propertyId: string) => {
+    const row = await db.select().from(properties).where(eq(properties.id, propertyId)).get();
+    return row?.lotNumber ?? null;
+  };
   if (pass.status === "revoked" || pass.status === "denied") {
-    return { held: true, passId: pass.id, guestName: pass.guestName, reason: "closed" };
+    return {
+      held: true,
+      passId: pass.id,
+      guestName: pass.guestName,
+      lotNumber: await lotOf(pass.propertyId),
+      reason: "closed",
+    };
   }
 
   const now = input.at ?? new Date();
@@ -262,7 +273,14 @@ export async function holdVisitQr(input: {
     createdAt: now.getTime(),
   });
 
-  return { held: true, passId: pass.id, approvalId, reason, guestName: pass.guestName };
+  return {
+    held: true,
+    passId: pass.id,
+    approvalId,
+    reason,
+    guestName: pass.guestName,
+    lotNumber: property?.lotNumber ?? null,
+  };
 }
 
 async function openForVisit(

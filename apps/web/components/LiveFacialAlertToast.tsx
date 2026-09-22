@@ -22,6 +22,11 @@ export type FacialEventAlert = {
   lane?: "in" | "out";
   /** JPEG ya copiado al barrio (no consultar el ASI). */
   photoStored?: boolean;
+  /** QR de visita: no es denegación facial. */
+  kind?: "facial" | "visit";
+  lotNumber?: string;
+  approvalId?: string;
+  passId?: string;
 };
 
 interface Props {

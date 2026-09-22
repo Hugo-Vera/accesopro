@@ -10,9 +10,11 @@ import {
   propertyFamilyMembers,
   propertyServices,
   tenantModules,
+  tenants,
   users,
   visitAuthorizations,
   visitPasses,
+  visitRecords,
 } from "./db/schema.js";
 import {
   deletePersonOnSiteDevicesWait,
@@ -238,6 +240,45 @@ residents.patch("/properties/:id", async (c) => {
   return c.json({ ok: true });
 });
 
+residents.delete("/properties/:id", async (c) => {
+  const scoped = await scopedSiteWithModule(c, "visitors");
+  if ("error" in scoped) return scoped.error;
+  if (!isAdmin(c.get("user"))) return c.json({ error: "Solo administración del barrio" }, 403);
+  const row = await db
+    .select()
+    .from(properties)
+    .where(and(eq(properties.id, c.req.param("id")), eq(properties.tenantId, scoped.tenantId)))
+    .get();
+  if (!row) return c.json({ error: "Propiedad no encontrada" }, 404);
+  const linked = await Promise.all([
+    db.select({ id: ownerProfiles.id }).from(ownerProfiles).where(eq(ownerProfiles.propertyId, row.id)).limit(1),
+    db
+      .select({ id: propertyFamilyMembers.id })
+      .from(propertyFamilyMembers)
+      .where(eq(propertyFamilyMembers.propertyId, row.id))
+      .limit(1),
+    db.select({ id: propertyServices.id }).from(propertyServices).where(eq(propertyServices.propertyId, row.id)).limit(1),
+    db
+      .select({ id: visitAuthorizations.id })
+      .from(visitAuthorizations)
+      .where(eq(visitAuthorizations.propertyId, row.id))
+      .limit(1),
+    db.select({ id: visitPasses.id }).from(visitPasses).where(eq(visitPasses.propertyId, row.id)).limit(1),
+    db.select({ id: visitRecords.id }).from(visitRecords).where(eq(visitRecords.propertyId, row.id)).limit(1),
+  ]);
+  if (linked.some((rows) => rows.length > 0)) {
+    return c.json(
+      {
+        error:
+          "No se puede eliminar: el lote tiene propietario, grupo familiar, servicios o visitas. Sacalos primero.",
+      },
+      409,
+    );
+  }
+  await db.delete(properties).where(eq(properties.id, row.id));
+  return c.json({ ok: true });
+});
+
 residents.post("/properties/:id/owners", async (c) => {
   return c.json(
     { error: "El propietario se invita con POST /api/residents/properties/:id/invite (sin clave). El vecino arma la clave en /activar." },
@@ -391,6 +432,7 @@ residents.get("/me", async (c) => {
     .where(and(eq(tenantModules.tenantId, scoped.tenantId), eq(tenantModules.moduleKey, "panic")))
     .get();
   const features = await featureMap(scoped.tenantId);
+  const tenant = await db.select().from(tenants).where(eq(tenants.id, scoped.tenantId)).get();
   const familyOut = [];
   for (const f of familyMembers) {
     familyOut.push({ ...f, deviceSync: await syncLanes(f.dahuaUserId) });
@@ -410,6 +452,7 @@ residents.get("/me", async (c) => {
     isTitular: ctx.isTitular !== false,
     canManageFamily: ctx.canManageFamily !== false && (await userHasCapability(c.get("user"), "access.family.manage")),
     visitAuthDefaultHours: await getVisitAuthDefaultHours(scoped.tenantId),
+    tenantName: tenant?.name ?? null,
   });
 });
 

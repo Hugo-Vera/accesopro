@@ -258,6 +258,9 @@ agentRoutes.post("/events", async (c) => {
       payload.visitPassId = hold.passId;
       payload.approvalId = hold.approvalId;
       payload.holdReason = hold.reason;
+      payload.guestName = hold.guestName;
+      payload.lotNumber = hold.lotNumber;
+      if (hold.guestName) payload.personName = hold.guestName;
       payload.approved = false;
       failed = true;
     } else if (

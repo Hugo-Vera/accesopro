@@ -1,10 +1,10 @@
 "use client";
 
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { api } from "@/lib/api";
 import { useEscapeKey } from "@/hooks/useEscapeKey";
-import { LocalQr } from "@/components/LocalQr";
+import { LocalQr, downloadQrPng } from "@/components/LocalQr";
 import { PortalPush } from "@/components/owner/PortalPush";
 import {
   User,
@@ -18,9 +18,10 @@ import {
   CheckCircle2,
   Clock,
   Calendar,
-  Share2,
   Copy,
   Check,
+  Download,
+  ChevronDown,
   Shield,
   Phone,
   Car,
@@ -150,6 +151,57 @@ function fmtDate(v: string | number) {
   return new Date(v).toLocaleString("es-AR", { dateStyle: "short", timeStyle: "short" });
 }
 
+function visitShareText(guestName: string, barrio: string, lote: string, from: string | number, until: string | number) {
+  const name = barrio.trim() || "el barrio";
+  return `Hola ${guestName}\nQR ${name} · Lote ${lote}\nVigente ${fmtDate(from)} – ${fmtDate(until)}. Mostralo en portería; no abre solo.`;
+}
+
+function qrFileSlug(name: string) {
+  const s = name
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-zA-Z0-9]+/g, "-")
+    .replace(/^-|-$/g, "")
+    .slice(0, 40);
+  return s || "visita";
+}
+
+type VisitSection = "validez" | "documento" | "llegada" | "acompanantes" | "notas" | null;
+
+function VisitAccordion({
+  title,
+  open,
+  onToggle,
+  children,
+}: {
+  title: string;
+  open: boolean;
+  onToggle: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <div className="rounded-xl border border-slate-200 dark:border-slate-700">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="flex w-full items-center justify-between px-3 py-2.5 text-left text-xs font-bold text-slate-800 dark:text-slate-100"
+      >
+        {title}
+        <ChevronDown className={`h-4 w-4 shrink-0 text-slate-500 transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+      <div
+        className={
+          open
+            ? "space-y-3 border-t border-slate-100 px-3 py-3 dark:border-slate-800"
+            : "hidden"
+        }
+      >
+        {children}
+      </div>
+    </div>
+  );
+}
+
 function formatStay(inAt: string | number | null, outAt: string | number | null) {
   if (inAt == null || outAt == null) return "—";
   const a = new Date(inAt).getTime();
@@ -185,7 +237,11 @@ export function OwnerPortal() {
   const [isTitular, setIsTitular] = useState(true);
   const [showServiceModal, setShowServiceModal] = useState(false);
   const [showVisitModal, setShowVisitModal] = useState(false);
+  const [visitSection, setVisitSection] = useState<VisitSection>(null);
+  const [visitArrival, setVisitArrival] = useState("peatonal");
+  const [visitUseDefault, setVisitUseDefault] = useState(true);
   const [visitAuthDefaultHours, setVisitAuthDefaultHours] = useState(24);
+  const [tenantName, setTenantName] = useState("");
   const [panicEnabled, setPanicEnabled] = useState(false);
   const [features, setFeatures] = useState<PortalFeatures>({
     face: true,
@@ -228,6 +284,7 @@ export function OwnerPortal() {
         isTitular?: boolean;
         canManageFamily?: boolean;
         visitAuthDefaultHours?: number;
+        tenantName?: string | null;
       }>("/api/residents/me");
 
       setUserName(me.profile?.fullName || me.user.name);
@@ -239,6 +296,7 @@ export function OwnerPortal() {
       setIsTitular(me.isTitular !== false);
       setCanManageFamily(me.canManageFamily !== false);
       if (me.visitAuthDefaultHours) setVisitAuthDefaultHours(me.visitAuthDefaultHours);
+      setTenantName(me.tenantName || "");
       if (me.features) setFeatures(me.features);
 
       if (me.features?.qr !== false) {
@@ -349,9 +407,27 @@ export function OwnerPortal() {
   }
 
   function handleCopy(text: string, id: string) {
-    navigator.clipboard.writeText(text);
-    setCopiedId(id);
-    setTimeout(() => setCopiedId(null), 2500);
+    void navigator.clipboard.writeText(text).then(() => {
+      setCopiedId(id);
+      setTimeout(() => setCopiedId(null), 2500);
+    }).catch(() => {
+      alert("No se pudo copiar el texto");
+    });
+  }
+
+  async function handleDownloadQr(payload: string, guestName: string) {
+    try {
+      await downloadQrPng(payload, `qr-${qrFileSlug(guestName)}.png`);
+    } catch {
+      alert("No se pudo descargar el QR");
+    }
+  }
+
+  function openVisitModal() {
+    setVisitSection(null);
+    setVisitArrival("peatonal");
+    setVisitUseDefault(true);
+    setShowVisitModal(true);
   }
 
   if (!property) {
@@ -954,7 +1030,7 @@ export function OwnerPortal() {
             </div>
             <button
               type="button"
-              onClick={() => setShowVisitModal(true)}
+              onClick={openVisitModal}
               className="inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-3.5 py-2 text-xs font-bold text-white hover:bg-blue-700 dark:bg-blue-500 dark:hover:bg-blue-600 transition-colors shadow-sm"
             >
               <Plus className="h-4 w-4" />
@@ -969,11 +1045,11 @@ export function OwnerPortal() {
                 No tenés visitas autorizadas
               </p>
               <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-                Creá una invitación con QR para compartir por WhatsApp. Tu invitado no entra hasta que portería apruebe.
+                Generá el QR, copiá el texto y descargá la imagen para pegar en WhatsApp. El invitado no entra hasta que portería apruebe.
               </p>
               <button
                 type="button"
-                onClick={() => setShowVisitModal(true)}
+                onClick={openVisitModal}
                 className="mt-4 inline-flex items-center gap-1.5 rounded-xl bg-blue-600 px-4 py-2 text-xs font-bold text-white hover:bg-blue-700 dark:bg-blue-500 transition-colors"
               >
                 <Plus className="h-4 w-4" />
@@ -981,99 +1057,90 @@ export function OwnerPortal() {
               </button>
             </div>
           ) : (
-            <div className="grid grid-cols-1 gap-5 md:grid-cols-2">
+            <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
               {passes
                 .filter((p) => isOpenPass(p.status))
                 .map((p) => {
-                  const shareText = `Hola ${p.guestName}! Te comparto tu código QR para ingresar a Barrio Las Acacias (Lote ${property.lotNumber}). Validez: ${fmtDate(p.validFrom)} hasta ${fmtDate(p.validUntil)}. Al llegar, mostralo al lector de portería: el QR identifica, no abre solo. Portería aprueba la entrada (y la salida).`;
-                  const waUrl = `https://wa.me/?text=${encodeURIComponent(shareText)}`;
+                  const shareText = visitShareText(
+                    p.guestName,
+                    tenantName,
+                    property.lotNumber,
+                    p.validFrom,
+                    p.validUntil,
+                  );
+                  const payload = p.qrPayload || p.id;
 
                   return (
                     <div
                       key={p.id}
-                      className="flex flex-col justify-between rounded-2xl border-2 border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900"
+                      className="flex items-stretch gap-3 rounded-xl border border-slate-200 bg-white p-2.5 shadow-sm dark:border-slate-800 dark:bg-slate-900"
                     >
-                      <div className="flex items-start justify-between gap-3">
+                      <div className="flex shrink-0 items-center justify-center rounded-lg bg-white p-1 dark:bg-slate-950">
+                        <LocalQr
+                          payload={payload}
+                          size={208}
+                          alt={`QR de acceso de ${p.guestName}`}
+                        />
+                      </div>
+                      <div className="flex min-w-0 flex-1 flex-col justify-between py-0.5">
                         <div>
-                          <span className="inline-flex items-center gap-1 rounded-full bg-amber-100 px-2.5 py-0.5 text-[10px] font-extrabold text-amber-800 dark:bg-amber-950/80 dark:text-amber-300 uppercase">
-                            <CheckCircle2 className="h-3 w-3 text-amber-600" />
-                            {passStatusLabel(p.status)} · espera portería
-                          </span>
-                          <h3 className="mt-1 text-base font-bold text-slate-900 dark:text-white">
+                          <div className="flex items-start justify-between gap-1">
+                            <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[10px] font-extrabold uppercase text-amber-800 dark:bg-amber-950/80 dark:text-amber-300">
+                              {passStatusLabel(p.status)}
+                            </span>
+                            <button
+                              type="button"
+                              onClick={async () => {
+                                if (confirm(`¿Revocar pase para ${p.guestName}?`)) {
+                                  await api(`/api/residents/me/visit-passes/${p.id}/revoke`, {
+                                    method: "POST",
+                                  });
+                                  load();
+                                }
+                              }}
+                              className="rounded p-1 text-slate-400 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/40 dark:hover:text-rose-400"
+                              title="Revocar pase"
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </button>
+                          </div>
+                          <h3 className="mt-1 truncate text-sm font-bold text-slate-900 dark:text-white">
                             {p.guestName}
                           </h3>
-                          <p className="text-xs text-slate-500 dark:text-slate-400">
-                            DNI: {p.guestDni || "No especificado"}
-                            {p.patente ? ` · Patente: ${p.patente}` : ""}
+                          <p className="mt-1 flex items-center gap-1 text-[11px] text-slate-500 dark:text-slate-400">
+                            <Calendar className="h-3 w-3 shrink-0" />
+                            <span className="truncate">
+                              {fmtDate(p.validFrom)} – {fmtDate(p.validUntil)}
+                            </span>
                           </p>
                         </div>
-
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            if (confirm(`¿Revocar pase para ${p.guestName}?`)) {
-                              await api(`/api/residents/me/visit-passes/${p.id}/revoke`, {
-                                method: "POST",
-                              });
-                              load();
-                            }
-                          }}
-                          className="rounded-lg p-1 text-slate-400 hover:bg-rose-50 hover:text-rose-600 dark:hover:bg-rose-950/40 dark:hover:text-rose-400 transition-colors"
-                          title="Revocar pase"
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </button>
-                      </div>
-
-                      <div className="mt-4 flex flex-col items-center justify-center rounded-xl bg-slate-50 p-4 dark:bg-slate-950/60 border border-slate-200 dark:border-slate-800">
-                        <LocalQr
-                          payload={p.qrPayload || p.id}
-                          size={144}
-                          alt={`QR de acceso de ${p.guestName}`}
-                          className="border border-slate-200 p-1 shadow-sm"
-                        />
-                        <p className="mt-2 text-center font-mono text-[10px] text-slate-500 dark:text-slate-400">
-                          {p.qrPayload || p.id}
-                        </p>
-                      </div>
-
-                      <div className="mt-3 text-xs text-slate-500 dark:text-slate-400">
-                        <p className="flex items-center gap-1.5">
-                          <Calendar className="h-3.5 w-3.5" />
-                          <span>
-                            Vigencia: {fmtDate(p.validFrom)} → {fmtDate(p.validUntil)}
-                          </span>
-                        </p>
-                      </div>
-
-                      <div className="mt-4 flex items-center gap-2 border-t border-slate-100 pt-3 dark:border-slate-800">
-                        <a
-                          href={waUrl}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="flex flex-1 items-center justify-center gap-1.5 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white hover:bg-emerald-700 transition-colors shadow-sm"
-                        >
-                          <Share2 className="h-3.5 w-3.5" />
-                          <span>WhatsApp</span>
-                        </a>
-
-                        <button
-                          type="button"
-                          onClick={() => handleCopy(p.qrPayload || p.id, p.id)}
-                          className="flex items-center justify-center gap-1.5 rounded-xl border border-slate-200 px-3 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-800 dark:text-slate-300 dark:hover:bg-slate-800 transition-colors"
-                        >
-                          {copiedId === p.id ? (
-                            <>
-                              <Check className="h-3.5 w-3.5 text-emerald-600" />
-                              <span>Copiado</span>
-                            </>
-                          ) : (
-                            <>
-                              <Copy className="h-3.5 w-3.5" />
-                              <span>Copiar</span>
-                            </>
-                          )}
-                        </button>
+                        <div className="mt-2 flex flex-wrap gap-1.5">
+                          <button
+                            type="button"
+                            onClick={() => handleCopy(shareText, p.id)}
+                            className="inline-flex items-center gap-1 rounded-lg border border-slate-200 px-2 py-1.5 text-[11px] font-semibold text-slate-700 hover:bg-slate-100 dark:border-slate-700 dark:text-slate-300 dark:hover:bg-slate-800"
+                          >
+                            {copiedId === p.id ? (
+                              <>
+                                <Check className="h-3.5 w-3.5 text-emerald-600" />
+                                Copiado
+                              </>
+                            ) : (
+                              <>
+                                <Copy className="h-3.5 w-3.5" />
+                                Copiar texto
+                              </>
+                            )}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDownloadQr(payload, p.guestName)}
+                            className="inline-flex items-center gap-1 rounded-lg bg-slate-900 px-2 py-1.5 text-[11px] font-semibold text-white hover:bg-slate-800 dark:bg-slate-100 dark:text-slate-900 dark:hover:bg-white"
+                          >
+                            <Download className="h-3.5 w-3.5" />
+                            Descargar QR
+                          </button>
+                        </div>
                       </div>
                     </div>
                   );
@@ -1585,10 +1652,16 @@ export function OwnerPortal() {
         </div>
       )}
 
-      {/* MODAL 3: AUTORIZAR VISITA & QR SINCRONIZADO DAHUA */}
+      {/* MODAL 3: AUTORIZAR VISITA QR */}
       {showVisitModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-          <div className="w-full max-w-md max-h-[90vh] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+          onClick={() => setShowVisitModal(false)}
+        >
+          <div
+            className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900"
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex items-center justify-between border-b border-slate-100 pb-3 dark:border-slate-800">
               <div className="flex items-center gap-2">
                 <QrCode className="h-5 w-5 text-blue-600 dark:text-blue-400" />
@@ -1600,6 +1673,7 @@ export function OwnerPortal() {
                 type="button"
                 onClick={() => setShowVisitModal(false)}
                 className="rounded-lg p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300"
+                aria-label="Cerrar"
               >
                 <X className="h-5 w-5" />
               </button>
@@ -1611,15 +1685,13 @@ export function OwnerPortal() {
                 const fd = new FormData(e.currentTarget);
                 const guestName = String(fd.get("guestName") || "").trim();
                 const guestDni = String(fd.get("guestDni") || "").trim();
-                const arrivalMode = String(fd.get("arrivalMode") || "peatonal");
+                const arrivalMode = visitArrival;
                 const visitKind = String(fd.get("visitKind") || "social");
                 const patente = String(fd.get("patente") || "").trim();
                 const validFrom = String(fd.get("validFrom") || "").trim();
                 const validUntil = String(fd.get("validUntil") || "").trim();
                 const horaDesde = String(fd.get("horaDesde") || "").trim();
                 const horaHasta = String(fd.get("horaHasta") || "").trim();
-                const useDefaultHours = fd.get("useDefaultHours") === "on";
-                const completeness = fd.get("completeness") === "full" ? "full" : "basic";
                 const notes = String(fd.get("notes") || "").trim();
                 const companions: { name: string; dni: string }[] = [];
                 const names = fd.getAll("companionName");
@@ -1631,6 +1703,7 @@ export function OwnerPortal() {
                 const insuranceCompany = String(fd.get("insuranceCompany") || "").trim();
                 const policyNumber = String(fd.get("policyNumber") || "").trim();
                 const insuranceValidUntil = String(fd.get("insuranceValidUntil") || "").trim();
+                const hasInsurance = Boolean(insuranceCompany && policyNumber);
 
                 try {
                   await api("/api/residents/me/visit-passes", {
@@ -1641,16 +1714,16 @@ export function OwnerPortal() {
                       patente: arrivalMode === "vehiculo" ? patente : undefined,
                       arrivalMode,
                       visitKind,
-                      completeness,
+                      completeness: hasInsurance ? "full" : "basic",
                       notes: notes || undefined,
-                      useDefaultHours,
-                      validFrom: useDefaultHours ? undefined : validFrom || undefined,
-                      validUntil: useDefaultHours ? undefined : validUntil || undefined,
+                      useDefaultHours: visitUseDefault,
+                      validFrom: visitUseDefault ? undefined : validFrom || undefined,
+                      validUntil: visitUseDefault ? undefined : validUntil || undefined,
                       horaDesde: horaDesde || undefined,
                       horaHasta: horaHasta || undefined,
                       companions,
                       insurance:
-                        completeness === "full" && arrivalMode === "vehiculo" && insuranceCompany && policyNumber
+                        hasInsurance && arrivalMode === "vehiculo"
                           ? { company: insuranceCompany, policyNumber, validUntil: insuranceValidUntil }
                           : undefined,
                     }),
@@ -1662,21 +1735,11 @@ export function OwnerPortal() {
                   alert(err instanceof Error ? err.message : "Error");
                 }
               }}
-              className="mt-4 space-y-4"
+              className="mt-4 space-y-3"
             >
-              <div className="grid grid-cols-2 gap-2">
-                <label className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs dark:border-slate-700">
-                  <input type="radio" name="completeness" value="basic" defaultChecked />
-                  Datos básicos
-                </label>
-                <label className="flex items-center gap-2 rounded-lg border border-slate-200 px-3 py-2 text-xs dark:border-slate-700">
-                  <input type="radio" name="completeness" value="full" />
-                  Datos completos
-                </label>
-              </div>
               <div>
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
-                  Nombre del Visitante *
+                  Nombre del visitante
                 </label>
                 <input
                   type="text"
@@ -1684,119 +1747,119 @@ export function OwnerPortal() {
                   required
                   className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-blue-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                 />
+                <p className="mt-1.5 text-[11px] text-slate-500 dark:text-slate-400">
+                  Si no definís fechas, el pase vale {visitAuthDefaultHours} h. Portería completa lo que falte; el QR no abre.
+                </p>
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
-                    DNI Visitante
-                  </label>
+
+              <VisitAccordion
+                title="Validez"
+                open={visitSection === "validez"}
+                onToggle={() => setVisitSection(visitSection === "validez" ? null : "validez")}
+              >
+                <label className="flex items-start gap-2 text-xs text-slate-700 dark:text-slate-300">
                   <input
-                    type="text"
-                    name="guestDni"
-                    className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:border-blue-500 focus:outline-none dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
+                    type="checkbox"
+                    checked={visitUseDefault}
+                    onChange={(e) => setVisitUseDefault(e.target.checked)}
+                    className="mt-0.5"
                   />
+                  <span>Usar validez del barrio ({visitAuthDefaultHours} h)</span>
+                </label>
+                {!visitUseDefault ? (
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">Válido desde</label>
+                      <input type="datetime-local" name="validFrom" className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100" />
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">Válido hasta</label>
+                      <input type="datetime-local" name="validUntil" className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100" />
+                    </div>
+                  </div>
+                ) : null}
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">Hora desde</label>
+                    <input type="time" name="horaDesde" className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">Hora hasta</label>
+                    <input type="time" name="horaHasta" className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100" />
+                  </div>
                 </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">Categoría</label>
-                  <select
-                    name="visitKind"
-                    className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                  >
-                    <option value="social">Social / familiar</option>
-                    <option value="service">Servicio / técnico</option>
-                    <option value="contractor">Obra / contratista</option>
-                    <option value="delivery">Delivery / paquete</option>
-                  </select>
+              </VisitAccordion>
+
+              <VisitAccordion
+                title="Documento y categoría"
+                open={visitSection === "documento"}
+                onToggle={() => setVisitSection(visitSection === "documento" ? null : "documento")}
+              >
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">DNI</label>
+                    <input type="text" name="guestDni" className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">Categoría</label>
+                    <select name="visitKind" className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100">
+                      <option value="social">Social / familiar</option>
+                      <option value="service">Servicio / técnico</option>
+                      <option value="contractor">Obra / contratista</option>
+                      <option value="delivery">Delivery / paquete</option>
+                    </select>
+                  </div>
                 </div>
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Cómo llega</label>
+              </VisitAccordion>
+
+              <VisitAccordion
+                title="Cómo llega"
+                open={visitSection === "llegada"}
+                onToggle={() => setVisitSection(visitSection === "llegada" ? null : "llegada")}
+              >
                 <div className="grid grid-cols-3 gap-2 text-[11px]">
                   <label className="rounded-lg border border-slate-200 px-2 py-2 dark:border-slate-700">
-                    <input type="radio" name="arrivalMode" value="peatonal" defaultChecked className="mr-1" />
+                    <input type="radio" name="arrivalMode" value="peatonal" checked={visitArrival === "peatonal"} onChange={() => setVisitArrival("peatonal")} className="mr-1" />
                     A pie
                   </label>
                   <label className="rounded-lg border border-slate-200 px-2 py-2 dark:border-slate-700">
-                    <input type="radio" name="arrivalMode" value="plataforma" className="mr-1" />
-                    Traslado por plataforma
+                    <input type="radio" name="arrivalMode" value="plataforma" checked={visitArrival === "plataforma"} onChange={() => setVisitArrival("plataforma")} className="mr-1" />
+                    Plataforma
                   </label>
                   <label className="rounded-lg border border-slate-200 px-2 py-2 dark:border-slate-700">
-                    <input type="radio" name="arrivalMode" value="vehiculo" className="mr-1" />
-                    Vehículo propio
+                    <input type="radio" name="arrivalMode" value="vehiculo" checked={visitArrival === "vehiculo"} onChange={() => setVisitArrival("vehiculo")} className="mr-1" />
+                    Vehículo
                   </label>
                 </div>
-              </div>
-              <div>
-                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
-                  Patente (si entra con auto)
-                </label>
-                <input
-                  type="text"
-                  name="patente"
-                  className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-mono uppercase dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                />
-              </div>
-              <label className="flex items-start gap-2 text-xs text-slate-700 dark:text-slate-300">
-                <input type="checkbox" name="useDefaultHours" defaultChecked className="mt-0.5" />
-                <span>
-                  Usar validez del barrio ({visitAuthDefaultHours} h)
-                  <span className="mt-0.5 block text-[11px] text-slate-500 dark:text-slate-400">
-                    Si no definís fecha ni horario, el pase vale {visitAuthDefaultHours} horas desde ahora. Portería completa los datos que falten; el QR no abre la barrera.
-                  </span>
-                </span>
-              </label>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">Válido desde</label>
-                  <input
-                    type="datetime-local"
-                    name="validFrom"
-                    className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">Válido hasta</label>
-                  <input
-                    type="datetime-local"
-                    name="validUntil"
-                    className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                  />
-                </div>
-              </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">Hora desde</label>
-                  <input
-                    type="time"
-                    name="horaDesde"
-                    className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">Hora hasta</label>
-                  <input
-                    type="time"
-                    name="horaHasta"
-                    className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
-                  />
-                </div>
-              </div>
-              <div className="grid grid-cols-3 gap-2">
-                <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300">
-                  Compañía
-                  <input name="insuranceCompany" className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-[11px] font-normal dark:border-slate-700 dark:bg-slate-800" />
-                </label>
-                <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300">
-                  Póliza
-                  <input name="policyNumber" className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-[11px] font-normal dark:border-slate-700 dark:bg-slate-800" />
-                </label>
-                <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300">
-                  Vence
-                  <input type="date" name="insuranceValidUntil" className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-[11px] font-normal dark:border-slate-700 dark:bg-slate-800" />
-                </label>
-              </div>
-              <div>
-                <p className="text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">Acompañantes (mismo QR)</p>
+                {visitArrival === "vehiculo" ? (
+                  <>
+                    <div>
+                      <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">Patente</label>
+                      <input type="text" name="patente" className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-mono uppercase dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100" />
+                    </div>
+                    <div className="grid grid-cols-3 gap-2">
+                      <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300">
+                        Compañía
+                        <input name="insuranceCompany" className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-[11px] font-normal dark:border-slate-700 dark:bg-slate-800" />
+                      </label>
+                      <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300">
+                        Póliza
+                        <input name="policyNumber" className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-[11px] font-normal dark:border-slate-700 dark:bg-slate-800" />
+                      </label>
+                      <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300">
+                        Vence
+                        <input type="date" name="insuranceValidUntil" className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-[11px] font-normal dark:border-slate-700 dark:bg-slate-800" />
+                      </label>
+                    </div>
+                  </>
+                ) : null}
+              </VisitAccordion>
+
+              <VisitAccordion
+                title="Acompañantes"
+                open={visitSection === "acompanantes"}
+                onToggle={() => setVisitSection(visitSection === "acompanantes" ? null : "acompanantes")}
+              >
                 <div className="mb-1 grid grid-cols-2 gap-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
                   <span>Nombre</span>
                   <span>DNI</span>
@@ -1807,22 +1870,20 @@ export function OwnerPortal() {
                   <input name="companionName" aria-label="Nombre acompañante 2" className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs dark:border-slate-700 dark:bg-slate-800" />
                   <input name="companionDni" aria-label="DNI acompañante 2" className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs dark:border-slate-700 dark:bg-slate-800" />
                 </div>
-              </div>
-              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
-                Notas para portería
-                <textarea
-                  name="notes"
-                  rows={2}
-                  className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-normal dark:border-slate-700 dark:bg-slate-800"
-                />
-              </label>
-              <div className="rounded-xl border border-blue-200 bg-blue-50/70 p-3 text-xs text-blue-900 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-300">
-                <p className="font-semibold">Tu invitado no entra hasta que portería apruebe.</p>
-                <p className="mt-0.5 text-[11px] opacity-80">
-                  El QR identifica; no abre solo. Cara y QR permanente son del propietario. El guardia aprueba entrada y salida (baúl si entra con vehículo).
-                </p>
-              </div>
-              <div className="mt-6 flex justify-end gap-2 border-t border-slate-100 pt-3 dark:border-slate-800">
+              </VisitAccordion>
+
+              <VisitAccordion
+                title="Notas para portería"
+                open={visitSection === "notas"}
+                onToggle={() => setVisitSection(visitSection === "notas" ? null : "notas")}
+              >
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
+                  Notas
+                  <textarea name="notes" rows={2} className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-normal dark:border-slate-700 dark:bg-slate-800" />
+                </label>
+              </VisitAccordion>
+
+              <div className="flex justify-end gap-2 border-t border-slate-100 pt-3 dark:border-slate-800">
                 <button
                   type="button"
                   onClick={() => setShowVisitModal(false)}
@@ -1832,7 +1893,7 @@ export function OwnerPortal() {
                 </button>
                 <button
                   type="submit"
-                  className="rounded-xl bg-blue-600 px-4 py-2 text-xs font-bold text-white hover:bg-blue-700 dark:bg-blue-500 transition-colors shadow-sm"
+                  className="rounded-xl bg-blue-600 px-4 py-2 text-xs font-bold text-white hover:bg-blue-700 dark:bg-blue-500"
                 >
                   Generar pase QR
                 </button>

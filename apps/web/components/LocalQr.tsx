@@ -10,6 +10,23 @@ type Props = {
   className?: string;
 };
 
+/** PNG 512 px para que el vecino lo adjunte en WhatsApp. */
+export async function downloadQrPng(payload: string, filename: string) {
+  const text = payload.trim();
+  if (!text) throw new Error("Sin contenido");
+  const url = await QRCode.toDataURL(text, {
+    width: 512,
+    margin: 1,
+    color: { dark: "#0f172a", light: "#ffffff" },
+  });
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename.toLowerCase().endsWith(".png") ? filename : `${filename}.png`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
 /** QR generado en el browser. Nunca manda la credencial a un servicio de internet. */
 export function LocalQr({ payload, size = 180, alt, className }: Props) {
   const [src, setSrc] = useState("");

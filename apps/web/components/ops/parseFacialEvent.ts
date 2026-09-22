@@ -43,23 +43,33 @@ export function parseFacialEvent(
 ): FacialEventAlert | null {
   if (!ev?.id) return null;
   const p = (ev.payload || {}) as Record<string, unknown>;
-  const isApproved = p.approved === true || String(p.status ?? p.Status ?? "0") === "1";
+  const isVisit = p.visitHold === true || String(p.accessKind ?? "") === "visita";
+  const isApproved = isVisit
+    ? false
+    : p.approved === true || String(p.status ?? p.Status ?? "0") === "1";
   const personName = String(
-    p.personName ||
+    (isVisit ? p.guestName || p.personName : p.personName) ||
       p.CardName ||
       p.userName ||
       p.UserID ||
-      (isApproved ? "Usuario ASI" : "Rostro no reconocido"),
+      (isVisit ? "Visita" : isApproved ? "Usuario ASI" : "Rostro no reconocido"),
   );
   // Etiqueta ya resuelta contra el catálogo: el código crudo manda sobre el nombre guardado.
-  const method = asiMethodLabel(p.methodCode ?? p.Method, p.method);
+  const method = isVisit ? "QR visita" : asiMethodLabel(p.methodCode ?? p.Method, p.method);
   const deviceName = String(p.deviceName || "Lector Facial Dahua");
   const deviceId = String(p.deviceId || "");
   const snapshotUrl = normalizeSnapshotUrl(p.snapshotUrl || p.URL);
-  const reason = isApproved ? undefined : String(p.reason || "Rostro no registrado en el sistema");
+  const reason = isVisit
+    ? "Identificado · espera portería"
+    : isApproved
+      ? undefined
+      : String(p.reason || "Rostro no registrado en el sistema");
   const code = Number(p.laneCode ?? ev.laneCode ?? 0);
   const stamped = String(p.sentido ?? ev.sentido ?? "").trim();
   const lane: "in" | "out" = code === 2 || stamped === "out" ? "out" : "in";
+  const lotNumber = p.lotNumber != null && String(p.lotNumber).trim() ? String(p.lotNumber) : undefined;
+  const approvalId = p.approvalId != null ? String(p.approvalId) : undefined;
+  const passId = p.visitPassId != null ? String(p.visitPassId) : p.passId != null ? String(p.passId) : undefined;
 
   return {
     id: ev.id,
@@ -73,6 +83,10 @@ export function parseFacialEvent(
     reason,
     lane,
     photoStored: p.photoStored === true,
+    kind: isVisit ? "visit" : "facial",
+    lotNumber,
+    approvalId,
+    passId,
   };
 }
 

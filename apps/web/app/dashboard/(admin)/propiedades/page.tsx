@@ -5,7 +5,7 @@ import Link from "next/link";
 import { api, withTenant } from "@/lib/api";
 import { useDash } from "@/components/DashboardProvider";
 import { ModuleGate, PageHeader } from "@/components/PageHeader";
-import { Home, Plus, UserPlus, MapPin, X, Building, CheckCircle2, Copy, MessageCircle } from "lucide-react";
+import { Home, Plus, UserPlus, MapPin, X, Building, CheckCircle2, Copy, MessageCircle, Pencil, Trash2 } from "lucide-react";
 import { useEscapeKey } from "@/hooks/useEscapeKey";
 
 type OwnerRow = {
@@ -40,15 +40,21 @@ export default function PropiedadesPage() {
   const [canCreateLot, setCanCreateLot] = useState(false);
   const [loading, setLoading] = useState(true);
   const [showPropModal, setShowPropModal] = useState(false);
+  const [editId, setEditId] = useState<string | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState<Property | null>(null);
   const [showOwnerModal, setShowOwnerModal] = useState(false);
   const [inviteResult, setInviteResult] = useState<InviteResult | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   useEscapeKey(() => {
     if (inviteResult) setInviteResult(null);
+    else if (confirmDelete) setConfirmDelete(null);
     else if (showOwnerModal) setShowOwnerModal(false);
-    else if (showPropModal) setShowPropModal(false);
-  }, showPropModal || showOwnerModal || Boolean(inviteResult));
+    else if (showPropModal) {
+      setShowPropModal(false);
+      setEditId(null);
+    }
+  }, showPropModal || showOwnerModal || Boolean(inviteResult) || Boolean(confirmDelete));
 
   const [form, setForm] = useState({ lotNumber: "", label: "", address: "", mapLat: "", mapLng: "" });
   const [ownerForm, setOwnerForm] = useState({ propertyId: "", email: "", name: "", dni: "", whatsapp: "" });
@@ -73,22 +79,65 @@ export default function PropiedadesPage() {
     loadProperties();
   }, [tenantId]);
 
-  async function addProperty(e: FormEvent) {
+  function openNewLot() {
+    setEditId(null);
+    setForm({ lotNumber: "", label: "", address: "", mapLat: "", mapLng: "" });
+    setShowPropModal(true);
+  }
+
+  function openEditLot(r: Property) {
+    setEditId(r.id);
+    setForm({
+      lotNumber: r.lotNumber,
+      label: r.label,
+      address: r.address || "",
+      mapLat: r.mapLat || "",
+      mapLng: r.mapLng || "",
+    });
+    setShowPropModal(true);
+  }
+
+  async function saveProperty(e: FormEvent) {
     e.preventDefault();
     if (!tenantId) return;
     setBusy(true);
     setMsg(null);
     try {
-      await api(withTenant("/api/residents/properties", tenantId), {
-        method: "POST",
-        body: JSON.stringify(form),
-      });
+      if (editId) {
+        await api(withTenant(`/api/residents/properties/${editId}`, tenantId), {
+          method: "PATCH",
+          body: JSON.stringify(form),
+        });
+        setMsg("Lote actualizado");
+      } else {
+        await api(withTenant("/api/residents/properties", tenantId), {
+          method: "POST",
+          body: JSON.stringify(form),
+        });
+        setMsg("Propiedad agregada con exito");
+      }
       setForm({ lotNumber: "", label: "", address: "", mapLat: "", mapLng: "" });
+      setEditId(null);
       setShowPropModal(false);
-      setMsg("Propiedad agregada con exito");
       await loadProperties();
     } catch (err) {
       setMsg(err instanceof Error ? err.message : "Error al guardar");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function deleteProperty() {
+    if (!tenantId || !confirmDelete) return;
+    setBusy(true);
+    setMsg(null);
+    try {
+      await api(withTenant(`/api/residents/properties/${confirmDelete.id}`, tenantId), { method: "DELETE" });
+      setMsg(`Lote ${confirmDelete.lotNumber} eliminado`);
+      setConfirmDelete(null);
+      await loadProperties();
+    } catch (err) {
+      setMsg(err instanceof Error ? err.message : "No se pudo eliminar");
     } finally {
       setBusy(false);
     }
@@ -125,7 +174,7 @@ export default function PropiedadesPage() {
     <ModuleGate module="visitors">
       <PageHeader
         title="Propiedades y Propietarios"
-        subtitle="Gestion de lotes, coordenadas de plano y credenciales de acceso para vecinos."
+        subtitle="Cada lote se edita o borra desde la fila (modal). El vecino no cambia el lote desde el portal."
       />
 
       {msg ? (
@@ -163,7 +212,7 @@ export default function PropiedadesPage() {
           {canCreateLot ? (
             <button
               type="button"
-              onClick={() => setShowPropModal(true)}
+              onClick={openNewLot}
               className="flex items-center gap-2 rounded-xl bg-blue-600 px-4 py-2.5 text-xs font-semibold text-white shadow-sm transition hover:bg-blue-700 active:scale-95"
             >
               <Plus className="h-4 w-4" />
@@ -184,12 +233,13 @@ export default function PropiedadesPage() {
                 <th className="px-5 py-3.5">Direccion</th>
                 <th className="px-5 py-3.5">Coordenadas GPS</th>
                 <th className="px-5 py-3.5">Plano</th>
+                <th className="px-5 py-3.5 text-right">Acciones</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
               {rows.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-5 py-12 text-center text-slate-500 dark:text-slate-400">
+                  <td colSpan={6} className="px-5 py-12 text-center text-slate-500 dark:text-slate-400">
                     <Home className="mx-auto h-8 w-8 text-slate-300 dark:text-slate-600 mb-2" />
                     <p className="text-sm font-medium">No hay propiedades registradas</p>
                     <p className="text-xs text-slate-400 mt-0.5">Usa el boton superior para cargar el primer lote.</p>
@@ -230,13 +280,35 @@ export default function PropiedadesPage() {
                       )}
                     </td>
                     <td className="px-5 py-3.5">
-                      <Link
-                        href={`/dashboard/plano?lote=${encodeURIComponent(r.lotNumber)}`}
-                        className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-sky-700 transition hover:bg-sky-50 dark:border-slate-600 dark:bg-slate-800 dark:text-sky-300 dark:hover:bg-slate-700"
-                      >
-                        <MapPin className="h-3.5 w-3.5" />
-                        Abrir en el plano
-                      </Link>
+                      <div className="flex flex-wrap items-center justify-end gap-1.5">
+                        <Link
+                          href={`/dashboard/plano?lote=${encodeURIComponent(r.lotNumber)}`}
+                          className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-sky-700 transition hover:bg-sky-50 dark:border-slate-600 dark:bg-slate-800 dark:text-sky-300 dark:hover:bg-slate-700"
+                        >
+                          <MapPin className="h-3.5 w-3.5" />
+                          Abrir en el plano
+                        </Link>
+                        {canCreateLot ? (
+                          <>
+                            <button
+                              type="button"
+                              onClick={() => openEditLot(r)}
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-slate-700 transition hover:bg-slate-50 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200 dark:hover:bg-slate-700"
+                            >
+                              <Pencil className="h-3.5 w-3.5" />
+                              Editar
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setConfirmDelete(r)}
+                              className="inline-flex items-center gap-1.5 rounded-lg border border-rose-200 bg-white px-2.5 py-1.5 text-[11px] font-semibold text-rose-700 transition hover:bg-rose-50 dark:border-rose-900 dark:bg-slate-800 dark:text-rose-300 dark:hover:bg-rose-950/40"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" />
+                              Borrar
+                            </button>
+                          </>
+                        ) : null}
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -256,20 +328,25 @@ export default function PropiedadesPage() {
                   <Building className="h-5 w-5" />
                 </div>
                 <div>
-                  <h3 className="font-bold text-slate-900 dark:text-white">Nueva Propiedad</h3>
-                  <p className="text-xs text-slate-500 dark:text-slate-400">Alta de lote en el predio del barrio.</p>
+                  <h3 className="font-bold text-slate-900 dark:text-white">{editId ? "Editar lote" : "Nueva Propiedad"}</h3>
+                  <p className="text-xs text-slate-500 dark:text-slate-400">
+                    {editId ? "Número, titular, dirección y coordenadas GPS." : "Alta de lote en el predio del barrio."}
+                  </p>
                 </div>
               </div>
               <button
                 type="button"
-                onClick={() => setShowPropModal(false)}
+                onClick={() => {
+                  setShowPropModal(false);
+                  setEditId(null);
+                }}
                 className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-100 hover:text-slate-700 dark:hover:bg-slate-800 dark:hover:text-slate-200 transition"
               >
                 <X className="h-5 w-5" />
               </button>
             </div>
 
-            <form onSubmit={addProperty} className="mt-5 space-y-4">
+            <form onSubmit={saveProperty} className="mt-5 space-y-4">
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
@@ -337,7 +414,10 @@ export default function PropiedadesPage() {
               <div className="mt-6 flex items-center justify-end gap-2 pt-4 border-t border-slate-100 dark:border-slate-800">
                 <button
                   type="button"
-                  onClick={() => setShowPropModal(false)}
+                  onClick={() => {
+                    setShowPropModal(false);
+                    setEditId(null);
+                  }}
                   className="rounded-xl px-4 py-2.5 text-xs font-medium text-slate-600 hover:bg-slate-100 transition dark:text-slate-400 dark:hover:bg-slate-800"
                 >
                   Cancelar
@@ -347,7 +427,7 @@ export default function PropiedadesPage() {
                   disabled={busy}
                   className="rounded-xl bg-blue-600 px-5 py-2.5 text-xs font-semibold text-white shadow-sm transition hover:bg-blue-700 disabled:opacity-50"
                 >
-                  {busy ? "Guardando..." : "Crear Propiedad"}
+                  {busy ? "Guardando..." : editId ? "Guardar cambios" : "Crear Propiedad"}
                 </button>
               </div>
             </form>
@@ -505,6 +585,37 @@ export default function PropiedadesPage() {
                 className="rounded-xl px-3 py-2 text-xs text-slate-500"
               >
                 Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {confirmDelete ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onClick={() => setConfirmDelete(null)}>
+          <div
+            className="relative w-full max-w-md rounded-2xl border border-slate-200 bg-white p-6 shadow-2xl dark:border-slate-800 dark:bg-slate-900"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="font-bold text-slate-900 dark:text-white">Borrar lote {confirmDelete.lotNumber}</h3>
+            <p className="mt-2 text-sm text-slate-600 dark:text-slate-300">
+              Se saca del padrón y del plano. Si tiene propietario, familia, servicios o visitas, primero hay que darlos de baja.
+            </p>
+            <div className="mt-5 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setConfirmDelete(null)}
+                className="rounded-xl px-4 py-2.5 text-xs font-medium text-slate-600 hover:bg-slate-100 dark:text-slate-400 dark:hover:bg-slate-800"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void deleteProperty()}
+                className="rounded-xl bg-rose-600 px-4 py-2.5 text-xs font-semibold text-white hover:bg-rose-700 disabled:opacity-50"
+              >
+                {busy ? "Borrando…" : "Borrar"}
               </button>
             </div>
           </div>

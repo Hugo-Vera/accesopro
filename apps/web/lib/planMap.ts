@@ -80,6 +80,53 @@ function ringFromGeo(raw: string | null | undefined): { lat: number; lng: number
   }
 }
 
+export function escapePlanText(value: string) {
+  return value.replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch] ?? ch);
+}
+
+export const PLAN_HOUSE_HTML =
+  '<span class="ops-plan-house-face"><svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></span>';
+
+export function planLotLabelHtml(lotNumber: string) {
+  return `<span>${escapePlanText(lotNumber)}</span>`;
+}
+
+export function lotPolygonRing(raw: string | null | undefined): { lat: number; lng: number }[] {
+  return ringFromGeo(raw);
+}
+
+export function lotCentroid(ring: { lat: number; lng: number }[]): { lat: number; lng: number } | null {
+  if (!ring.length) return null;
+  return {
+    lat: ring.reduce((s, p) => s + p.lat, 0) / ring.length,
+    lng: ring.reduce((s, p) => s + p.lng, 0) / ring.length,
+  };
+}
+
+export function lotHouseLatLng(lot: {
+  mapLat?: string | null;
+  mapLng?: string | null;
+  lotPolygon?: string | null;
+}): [number, number] | null {
+  if (lot.mapLat && lot.mapLng) {
+    const lat = Number(lot.mapLat);
+    const lng = Number(lot.mapLng);
+    if (Number.isFinite(lat) && Number.isFinite(lng)) return [lat, lng];
+  }
+  return null;
+}
+
+export function lotLabelLatLng(lot: {
+  mapLat?: string | null;
+  mapLng?: string | null;
+  lotPolygon?: string | null;
+}): [number, number] | null {
+  const ring = ringFromGeo(lot.lotPolygon);
+  const c = lotCentroid(ring);
+  if (c) return [c.lat, c.lng];
+  return lotHouseLatLng(lot);
+}
+
 export function planContentPoints(
   lots: Array<{ mapLat?: string | null; mapLng?: string | null; lotPolygon?: string | null }>,
   overlays: OverlayLayer[] | undefined,

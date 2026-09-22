@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { createPortal } from "react-dom";
-import { ScanFace, X, CheckCircle2, AlertTriangle } from "lucide-react";
+import { ScanFace, X, CheckCircle2, AlertTriangle, QrCode } from "lucide-react";
 import { IconUserCheck } from "@/components/DashboardIcons";
 import { useDash } from "@/components/DashboardProvider";
 import { parseFacialEvent, type EventRow } from "@/components/ops/parseFacialEvent";
@@ -40,14 +40,14 @@ function FeedThumb({
   className?: string;
   tenantId?: string | null;
 }) {
+  const isVisit = alert.kind === "visit";
+  const border = isVisit
+    ? "border-amber-400 dark:border-amber-600"
+    : alert.approved
+      ? "border-emerald-400 dark:border-emerald-600"
+      : "border-rose-400 dark:border-rose-600";
   return (
-    <div
-      className={`relative flex-shrink-0 overflow-hidden bg-slate-900 ${className ?? ""} ${
-        alert.approved
-          ? "border-emerald-400 dark:border-emerald-600"
-          : "border-rose-400 dark:border-rose-600"
-      }`}
-    >
+    <div className={`relative flex-shrink-0 overflow-hidden bg-slate-900 ${className ?? ""} ${border}`}>
       <EventPhoto
         eventId={alert.id}
         tenantId={tenantId}
@@ -60,7 +60,9 @@ function FeedThumb({
       />
       {!alert.photoStored ? (
         <div className="pointer-events-none absolute inset-0 -z-10 grid place-items-center bg-slate-100 text-slate-400 dark:bg-slate-800">
-          {alert.approved ? (
+          {isVisit ? (
+            <QrCode className="h-6 w-6 text-amber-600" />
+          ) : alert.approved ? (
             <IconUserCheck className="h-6 w-6 text-emerald-600" />
           ) : (
             <ScanFace className="h-6 w-6 text-rose-500" />
@@ -82,10 +84,11 @@ function EventDetailModal({
   tenantId?: string | null;
   onClose: () => void;
 }) {
+  const isVisit = alert.kind === "visit";
   const isApproved = alert.approved;
-  const accent = isApproved ? "#10b981" : "#f43f5e";
-  const accentSoft = isApproved ? "#34d399" : "#fb7185";
-  const bg = isApproved ? "#ecfdf5" : "#fff1f2";
+  const accent = isVisit ? "#d97706" : isApproved ? "#10b981" : "#f43f5e";
+  const accentSoft = isVisit ? "#fbbf24" : isApproved ? "#34d399" : "#fb7185";
+  const bg = isVisit ? "#fffbeb" : isApproved ? "#ecfdf5" : "#fff1f2";
 
   useEscapeKey(onClose, true);
 
@@ -169,12 +172,12 @@ function EventDetailModal({
                     fontWeight: 800,
                     letterSpacing: "0.04em",
                     textTransform: "uppercase",
-                    background: isApproved ? "#a7f3d0" : "#fecdd3",
-                    color: isApproved ? "#065f46" : "#9f1239",
+                    background: isVisit ? "#fde68a" : isApproved ? "#a7f3d0" : "#fecdd3",
+                    color: isVisit ? "#92400e" : isApproved ? "#065f46" : "#9f1239",
                   }}
                 >
-                  {isApproved ? <CheckCircle2 size={15} /> : <AlertTriangle size={15} />}
-                  {isApproved ? "Acceso Aprobado" : "Acceso Denegado"}
+                  {isVisit ? <QrCode size={15} /> : isApproved ? <CheckCircle2 size={15} /> : <AlertTriangle size={15} />}
+                  {isVisit ? "Identificado" : isApproved ? "Acceso Aprobado" : "Acceso Denegado"}
                 </span>
                 <button
                   type="button"
@@ -221,7 +224,12 @@ function EventDetailModal({
                 <span style={{ opacity: 0.55 }}> · </span>
                 {alert.method}
               </div>
-              {!isApproved ? (
+              {isVisit ? (
+                <div style={{ marginTop: 10, fontSize: 15, fontWeight: 700, color: "#b45309", lineHeight: 1.35 }}>
+                  Identificado · espera portería
+                  {alert.lotNumber ? ` · Lote ${alert.lotNumber}` : ""}
+                </div>
+              ) : !isApproved ? (
                 <div style={{ marginTop: 10, fontSize: 15, fontWeight: 700, color: "#be123c", lineHeight: 1.35 }}>
                   {alert.reason || "Rostro no registrado"}
                 </div>
@@ -232,6 +240,32 @@ function EventDetailModal({
               )}
               {alert.doorName ? (
                 <div style={{ marginTop: 8, fontSize: 13, color: "#64748b" }}>Punto: {alert.doorName}</div>
+              ) : null}
+              {isVisit && alert.passId ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    window.dispatchEvent(
+                      new CustomEvent("ap:open-visit-approval", { detail: { passId: alert.passId } }),
+                    );
+                    onClose();
+                  }}
+                  style={{
+                    marginTop: 14,
+                    display: "inline-flex",
+                    alignItems: "center",
+                    border: "none",
+                    borderRadius: 10,
+                    padding: "9px 12px",
+                    background: "#d97706",
+                    color: "#fff",
+                    fontSize: 13,
+                    fontWeight: 700,
+                    cursor: "pointer",
+                  }}
+                >
+                  Abrir ficha
+                </button>
               ) : null}
             </div>
           </div>
@@ -286,17 +320,24 @@ export function LiveFacialFeed({
           events.map((e) => {
             const alert = parseFacialEvent(e);
             if (!alert) return null;
+            const isVisit = alert.kind === "visit";
+            const rowTone = isVisit
+              ? "border-amber-200/90 bg-amber-50/80 dark:border-amber-900/60 dark:bg-amber-950/25"
+              : alert.approved
+                ? "border-emerald-200/90 bg-emerald-50/80 dark:border-emerald-900/60 dark:bg-emerald-950/25"
+                : "border-rose-200/90 bg-rose-50/80 dark:border-rose-900/60 dark:bg-rose-950/25";
+            const badgeTone = isVisit
+              ? "bg-amber-100 text-amber-800 dark:bg-amber-950/70 dark:text-amber-300"
+              : alert.approved
+                ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300"
+                : "bg-rose-100 text-rose-800 dark:bg-rose-950/70 dark:text-rose-300";
 
             return (
               <button
                 key={e.id}
                 type="button"
                 onClick={() => setSelected({ alert, createdAt: e.createdAt })}
-                className={`ops-hist-row flex w-full items-stretch overflow-hidden rounded-lg border text-left shadow-sm transition hover:brightness-[0.98] dark:hover:brightness-110 ${
-                  alert.approved
-                    ? "border-emerald-200/90 bg-emerald-50/80 dark:border-emerald-900/60 dark:bg-emerald-950/25"
-                    : "border-rose-200/90 bg-rose-50/80 dark:border-rose-900/60 dark:bg-rose-950/25"
-                }`}
+                className={`ops-hist-row flex w-full items-stretch overflow-hidden rounded-lg border text-left shadow-sm transition hover:brightness-[0.98] dark:hover:brightness-110 ${rowTone}`}
               >
                 <FeedThumb
                   alert={alert}
@@ -332,16 +373,12 @@ export function LiveFacialFeed({
                     <span
                       className={`inline-flex shrink-0 items-center rounded px-1.5 py-0.5 font-bold tracking-wide ${
                         compact ? "text-[11px]" : "text-[10px]"
-                      } ${
-                        alert.approved
-                          ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300"
-                          : "bg-rose-100 text-rose-800 dark:bg-rose-950/70 dark:text-rose-300"
-                      }`}
+                      } ${badgeTone}`}
                     >
-                      {alert.approved ? "Aprobado" : "Denegado"}
+                      {isVisit ? "Pendiente" : alert.approved ? "Aprobado" : "Denegado"}
                     </span>
                   </div>
-                  {!compact && alert.reason ? (
+                  {!compact && !isVisit && alert.reason ? (
                     <p className="truncate text-[10px] font-semibold text-rose-600 dark:text-rose-400">
                       {alert.reason}
                     </p>

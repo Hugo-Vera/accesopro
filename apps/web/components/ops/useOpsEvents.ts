@@ -83,6 +83,7 @@ export function useOpsEvents({ tenantId, enabled, onAlert }: Options) {
   const notifyNew = useCallback((ev: EventRow) => {
     const alert = parseFacialEvent(ev);
     if (!alert) return;
+    if (alert.kind === "visit") return;
     const ts = toMs(ev.createdAt);
     // Watermark del listado hidratado (reloj del server, no Date.now() del browser).
     if (ts && ts <= bootMaxCreatedAtRef.current) return;
@@ -167,7 +168,7 @@ export function useOpsEvents({ tenantId, enabled, onAlert }: Options) {
         });
         for (const u of updates) {
           const alert = parseFacialEvent(u);
-          if (!alert) continue;
+          if (!alert || alert.kind === "visit") continue;
           try {
             window.dispatchEvent(new CustomEvent("ap:facial-photo", { detail: alert }));
           } catch {

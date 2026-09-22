@@ -519,9 +519,9 @@ export const MANUAL_CHAPTERS: ManualChapter[] = [
   {
     id: "autorizaciones-qr",
     title: "Autorizaciones QR del propietario",
-    updated: "21/09/2026",
+    updated: "22/09/2026",
     summary:
-      "El titular arma el QR en el portal WAN. El lector solo identifica. Portería completa la ficha y abre. Validez por defecto del barrio (24 h, configurable). El walk-in de 120 s es otro camino.",
+      "El titular arma el QR en el portal WAN. Copia el texto corto y descarga el PNG para pegar en WhatsApp. El lector solo identifica. Portería ve un toast ámbar (no denegación facial), completa la ficha y abre. Validez por defecto del barrio (24 h, configurable). El walk-in de 120 s es otro camino.",
     sections: [
       {
         id: "regla-qr",
@@ -538,7 +538,28 @@ export const MANUAL_CHAPTERS: ManualChapter[] = [
               "Si no pone fechas ni horario: el pase vale el plazo del barrio (por defecto 24 h) desde que lo crea",
               "Si pone hasta el domingo o una franja: se respeta. La franja sin fechas usa el mismo plazo corrido y filtra la hora al escanear",
               "El QR viaja a la garita en 1–2 s (sync rápido mientras el pase está preautorizado o esperando entrada)",
+              "En el portal: Copiar texto (3 líneas) y Descargar QR (PNG). No hay botón de WhatsApp: se pega a mano",
             ],
+          },
+        ],
+      },
+      {
+        id: "compartir-png",
+        title: "Cómo se comparte el QR",
+        blocks: [
+          {
+            type: "p",
+            text: "La invitación pide el nombre. El resto (validez, DNI, cómo llega, acompañantes, notas) está en acordeones. Después de generar: tarjeta compacta con el QR grande. Copiar texto pega el mensaje corto; Descargar QR guarda un PNG de 512 px. El vecino pega ambos en WhatsApp. El token crudo no se muestra.",
+          },
+        ],
+      },
+      {
+        id: "porteria-toast",
+        title: "Qué ve portería al escanear",
+        blocks: [
+          {
+            type: "p",
+            text: "No es un acceso facial denegado. Sale un toast ámbar en el carril (ingreso a la izquierda, salida a la derecha): nombre, lote y «Identificado. Aprobá para abrir.» Clic abre la ficha. La campana muestra el nombre del invitado. En el historial IN/OUT la fila es ámbar con badge Pendiente. Recién al aprobar se dispara el relé.",
           },
         ],
       },
@@ -567,7 +588,8 @@ export const MANUAL_CHAPTERS: ManualChapter[] = [
               ["Configuración en 24 h; QR en portal sin fechas", "validUntil ≈ ahora + 24 h"],
               ["Cambiar a 8 h; otro QR sin fechas", "8 h"],
               ["QR con hasta el domingo", "Se respeta esa fecha"],
-              ["Escanear en el ASI", "Cola de portería; no abre. Completar DNI; Aprobar; relé"],
+              ["Escanear en el ASI", "Toast ámbar Identificado; cola con nombre; no abre. Completar DNI; Aprobar; relé"],
+              ["Historial IN/OUT", "Fila ámbar, badge Pendiente (no Denegado / Rostro no identificado)"],
               ["Crear el QR en el concentrador (portal DNS)", "En menos de ~2 s el mismo token existe en la garita"],
               ["Walk-in desde el plano", "Aviso 120 s igual; el pase dura el plazo del barrio"],
             ],

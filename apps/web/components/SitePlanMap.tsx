@@ -13,7 +13,7 @@ import {
   readKmlFile,
   type OverlayLayer,
 } from "@/lib/kml";
-import { defaultPlanMapStyle, fitPlanContent, makePlanTiles, persistPlanMapStyle, type PlanMapStyle } from "@/lib/planMap";
+import { defaultPlanMapStyle, fitPlanContent, makePlanTiles, persistPlanMapStyle, PLAN_HOUSE_HTML, planLotLabelHtml, lotHouseLatLng, lotLabelLatLng, type PlanMapStyle } from "@/lib/planMap";
 import { useDash } from "@/components/DashboardProvider";
 import { useEscapeKey } from "@/hooks/useEscapeKey";
 
@@ -113,9 +113,6 @@ function flyToLots(
 }
 
 const DETAIL_MIN_ZOOM = 16;
-
-const HOUSE_SVG =
-  '<svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8"/><path d="M3 10a2 2 0 0 1 .709-1.528l7-6a2 2 0 0 1 2.582 0l7 6A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg>';
 
 export function SitePlanMap() {
   const { tenantId, can } = useDash();
@@ -253,31 +250,32 @@ export function SitePlanMap() {
         poly.addTo(group);
       }
       if (lot.mapLat && lot.mapLng) {
-        const marker = L.marker([Number(lot.mapLat), Number(lot.mapLng)], {
-          icon: L.divIcon({
-            className: focused ? "ops-plan-house-icon ops-plan-house-icon--on" : "ops-plan-house-icon",
-            html: HOUSE_SVG,
-            iconSize: [28, 28],
-            iconAnchor: [14, 26],
-          }),
-        });
-        marker.bindTooltip(`Casa · Lote ${lot.lotNumber} · ${lot.label}`, { direction: "top", permanent: focused });
-        marker.on("click", (ev: import("leaflet").LeafletMouseEvent) => {
-          L.DomEvent.stopPropagation(ev);
-          if (tool === "move") openEdit(lot);
-        });
-        marker.addTo(group);
+        const houseAt = lotHouseLatLng(lot);
+        if (houseAt) {
+          const marker = L.marker(houseAt, {
+            icon: L.divIcon({
+              className: focused ? "ops-plan-house-icon ops-plan-house-icon--on" : "ops-plan-house-icon",
+              html: PLAN_HOUSE_HTML,
+              iconSize: [16, 16],
+              iconAnchor: [8, 14],
+            }),
+          });
+          marker.bindTooltip(`Casa · Lote ${lot.lotNumber} · ${lot.label}`, { direction: "top", permanent: focused });
+          marker.on("click", (ev: import("leaflet").LeafletMouseEvent) => {
+            L.DomEvent.stopPropagation(ev);
+            if (tool === "move") openEdit(lot);
+          });
+          marker.addTo(group);
+        }
       }
-      if (poly) {
-        const bounds = poly.getBounds();
-        const padLat = (bounds.getNorth() - bounds.getSouth()) * 0.08;
-        const padLng = (bounds.getEast() - bounds.getWest()) * 0.08;
-        L.marker([bounds.getSouth() + padLat, bounds.getEast() - padLng], {
+      const labelAt = lotLabelLatLng(lot);
+      if (labelAt) {
+        L.marker(labelAt, {
           icon: L.divIcon({
             className: `ops-plan-lot-label${focused ? " ops-plan-lot-label--on" : ""}`,
-            html: `<span>${lot.lotNumber.replace(/[&<>"']/g, (ch) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[ch] ?? ch)}</span>`,
-            iconSize: [36, 22],
-            iconAnchor: [36, 22],
+            html: planLotLabelHtml(lot.lotNumber),
+            iconSize: [28, 18],
+            iconAnchor: [14, 9],
           }),
           pane: "lotLabels",
           zIndexOffset: 2000,
@@ -960,6 +958,7 @@ export function SitePlanMap() {
 
       <div
         className={`ops-plan-map-wrap relative min-h-[420px] flex-1 overflow-hidden rounded-xl border border-slate-200 dark:border-slate-700${tool === "lot" || tool === "house" ? " ops-plan-map-wrap--draw" : ""}${showLotDetail ? "" : " ops-plan-map-wrap--far"}`}
+        style={{ ["--plan-bearing" as string]: `${bearing}deg` }}
       >
         <div ref={hostRef} className="ops-plan-map h-full min-h-[420px] w-full" />
       </div>

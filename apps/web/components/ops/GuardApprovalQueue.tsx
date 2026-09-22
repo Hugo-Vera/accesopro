@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Bell, Check, Phone, Plus, Trash2, X } from "lucide-react";
 import { api, apiUrl, withTenant } from "@/lib/api";
 import { useEscapeKey } from "@/hooks/useEscapeKey";
+import { LiveVisitHoldToast, type VisitHoldAlert } from "@/components/ops/LiveVisitHoldToast";
 
 export type GuardApprovalItem = {
   id: string;
@@ -78,6 +79,7 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
   const [lots, setLots] = useState<{ id: string; lotNumber: string }[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [visitToast, setVisitToast] = useState<VisitHoldAlert | null>(null);
 
   const load = useCallback(() => {
     if (!enabled || !tenantId) return;
@@ -96,10 +98,30 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
     const es = new EventSource(apiUrl(withTenant("/api/events/stream?type=visit_hold", tenantId)), {
       withCredentials: true,
     });
-    // El QR en el ASI no abre este modal: solo refresca la campana.
-    // La ficha la abre el guardia (campana / pin) o la app Android.
-    es.addEventListener("message", () => load());
-    es.addEventListener("access_event", () => load());
+    const onHold = (raw: string) => {
+      load();
+      try {
+        const ev = JSON.parse(raw) as { id?: string; payload?: Record<string, unknown> };
+        const p = ev.payload || {};
+        if (p.decided || p.phoneAuth) return;
+        const guestName = String(p.guestName || "").trim();
+        const passId = String(p.passId || "").trim();
+        if (!guestName && !passId) return;
+        setVisitToast({
+          id: String(ev.id || p.approvalId || Date.now()),
+          passId,
+          approvalId: p.approvalId != null ? String(p.approvalId) : undefined,
+          guestName: guestName || "Visita",
+          lotNumber: p.lotNumber != null ? String(p.lotNumber) : null,
+          sentido: p.sentido === "out" ? "out" : "in",
+          reason: p.reason != null ? String(p.reason) : undefined,
+        });
+      } catch {
+        /* ping / connected */
+      }
+    };
+    es.addEventListener("message", (e: MessageEvent) => onHold(e.data));
+    es.addEventListener("access_event", (e: MessageEvent) => onHold(e.data));
     return () => {
       window.clearInterval(id);
       es.close();
@@ -195,12 +217,32 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
             setPreview(null);
             setOpenId(items[0].id);
           }}
-          className="fixed right-4 top-20 z-40 inline-flex items-center gap-2 rounded-full bg-amber-500 px-3 py-2 text-xs font-bold text-white shadow-lg"
+          className="fixed right-4 top-20 z-40 inline-flex max-w-[min(280px,calc(100vw-2rem))] items-center gap-2 rounded-full bg-amber-500 px-3 py-2 text-xs font-bold text-white shadow-lg"
         >
-          <Bell className="h-4 w-4" />
-          {items.length} {items.length === 1 ? "aprobación" : "aprobaciones"}
+          <Bell className="h-4 w-4 shrink-0" />
+          <span className="truncate">
+            {items[0].guestName}
+            {items.length === 1 ? " · 1 aprobación" : ` · ${items.length} aprobaciones`}
+          </span>
         </button>
       ) : null}
+
+      <LiveVisitHoldToast
+        alert={visitToast}
+        onDismiss={() => setVisitToast(null)}
+        onOpenFicha={(a) => {
+          setVisitToast(null);
+          const match = items.find((x) => x.id === a.approvalId || x.passId === a.passId);
+          if (match) {
+            setPreview(null);
+            setOpenId(match.id);
+            return;
+          }
+          if (a.passId) {
+            window.dispatchEvent(new CustomEvent("ap:open-visit-approval", { detail: { passId: a.passId } }));
+          }
+        }}
+      />
 
       {current ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => { setOpenId(null); setPreview(null); }}>

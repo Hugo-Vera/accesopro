@@ -9,8 +9,13 @@ import { attachMapBearing } from "@/lib/leafletBearing";
 import {
   defaultPlanMapStyle,
   fitPlanContent,
+  lotHouseLatLng,
+  lotLabelLatLng,
+  lotPolygonRing,
   makePlanTiles,
   persistPlanMapStyle,
+  PLAN_HOUSE_HTML,
+  planLotLabelHtml,
   type PlanMapStyle,
 } from "@/lib/planMap";
 import { useDash } from "@/components/DashboardProvider";
@@ -77,6 +82,7 @@ export function OpsPlanMap() {
   const [msg, setMsg] = useState<string | null>(null);
   const [mapStyle, setMapStyle] = useState<PlanMapStyle>(defaultPlanMapStyle);
   const [mapReady, setMapReady] = useState(false);
+  const [bearing, setBearing] = useState(0);
 
   const recenter = useCallback(() => {
     const map = mapRef.current;
@@ -122,7 +128,9 @@ export function OpsPlanMap() {
         zoomControl: false,
         attributionControl: false,
       });
-      attachMapBearing(L, map, Number(d.view?.mapBearing) || 0);
+      const startBearing = Number(d.view?.mapBearing) || 0;
+      attachMapBearing(L, map, startBearing);
+      setBearing(startBearing);
       L.control.zoom({ position: "bottomright" }).addTo(map);
       if (dead) {
         map.remove();
@@ -130,6 +138,10 @@ export function OpsPlanMap() {
         return;
       }
       tilesRef.current = makePlanTiles(L, defaultPlanMapStyle()).addTo(map);
+      if (!map.getPane("lotLabels")) {
+        const pane = map.createPane("lotLabels");
+        pane.style.zIndex = "650";
+      }
       const group = L.layerGroup().addTo(map);
       for (const layer of d.overlays ?? []) {
         if (layer.visible === false) continue;
@@ -172,28 +184,54 @@ export function OpsPlanMap() {
         }
       }
       for (const lot of d.lots ?? []) {
-        const raw = lot.lotPolygon;
-        if (!raw) continue;
-        try {
-          const g = JSON.parse(raw) as { coordinates?: number[][][] };
-          const ring = (g.coordinates?.[0] ?? [])
-            .map((pt) => [Number(pt[1]), Number(pt[0])] as [number, number])
-            .filter((p) => Number.isFinite(p[0]) && Number.isFinite(p[1]));
-          if (ring.length < 3) continue;
-          L.polygon(ring, { color: "#0284c7", weight: 2, fillColor: "#38bdf8", fillOpacity: 0.28 })
+        const ring = lotPolygonRing(lot.lotPolygon);
+        const announce = () => {
+          window.dispatchEvent(
+            new CustomEvent("ap:announce-lot", { detail: { propertyId: lot.id, lotNumber: lot.lotNumber } }),
+          );
+        };
+        if (ring.length >= 3) {
+          L.polygon(
+            ring.map((p) => [p.lat, p.lng] as [number, number]),
+            { color: "#0284c7", weight: 2, fillColor: "#38bdf8", fillOpacity: 0.28 },
+          )
             .bindTooltip(`Lote ${lot.lotNumber} · ${lot.label}`, { sticky: true })
-            .on("click", () => {
-              window.dispatchEvent(
-                new CustomEvent("ap:announce-lot", { detail: { propertyId: lot.id, lotNumber: lot.lotNumber } }),
-              );
-            })
+            .on("click", announce)
             .addTo(group);
-        } catch {
-          /* polígono inválido */
+        }
+        const houseAt = lotHouseLatLng(lot);
+        if (houseAt) {
+          L.marker(houseAt, {
+            icon: L.divIcon({
+              className: "ops-plan-house-icon",
+              html: PLAN_HOUSE_HTML,
+              iconSize: [16, 16],
+              iconAnchor: [8, 14],
+            }),
+          })
+            .bindTooltip(`Lote ${lot.lotNumber} · ${lot.label}`, { direction: "top" })
+            .on("click", announce)
+            .addTo(group);
+        }
+        const labelAt = lotLabelLatLng(lot);
+        if (labelAt) {
+          L.marker(labelAt, {
+            icon: L.divIcon({
+              className: "ops-plan-lot-label",
+              html: planLotLabelHtml(lot.lotNumber),
+              iconSize: [28, 18],
+              iconAnchor: [14, 9],
+            }),
+            pane: "lotLabels",
+            zIndexOffset: 2000,
+            interactive: false,
+            keyboard: false,
+          }).addTo(group);
         }
       }
       mapRef.current = map;
       setMapReady(true);
+      const viewSaved = Boolean(d.view?.saved);
       let placed = false;
       const applyView = () => {
         if (dead || !map) return;
@@ -202,6 +240,11 @@ export function OpsPlanMap() {
           const size = map.getSize();
           if (!size.x || !size.y) return;
           if (placed) return;
+          if (viewSaved) {
+            map.setView(center, zoom);
+            placed = true;
+            return;
+          }
           if (fitPlanContent(map, L, d.lots ?? [], d.overlays ?? [], { padding: 28, maxZoom: 18 })) {
             placed = true;
             return;
@@ -309,7 +352,7 @@ export function OpsPlanMap() {
         </Link>
       </header>
       {msg ? <p className="px-2 pb-2 text-[11px] text-rose-600">{msg}</p> : null}
-      <div className="ops-predio-map-wrap">
+      <div className="ops-predio-map-wrap" style={{ ["--plan-bearing" as string]: `${bearing}deg` }}>
         <div className="ops-predio-map-tools" role="toolbar" aria-label="Capa y encuadre del plano">
           <button
             type="button"
