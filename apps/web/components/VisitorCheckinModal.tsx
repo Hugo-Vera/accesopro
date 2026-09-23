@@ -6,6 +6,7 @@ import { useEscapeKey } from "@/hooks/useEscapeKey";
 import { DniScanPanel } from "@/components/DniScanPanel";
 import { parseDniScan } from "@/lib/parseDni";
 import { DocumentScanPanel, type AcceptedDoc, visitorDocUrl } from "@/components/ops/DocumentScanPanel";
+import { Modal } from "@/components/ui/Modal";
 import {
   IdCard,
   Home,
@@ -467,8 +468,7 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-sm animate-in fade-in">
-      <div className="relative w-full max-w-2xl max-h-[90vh] overflow-y-auto rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 shadow-2xl transition-all">
+    <Modal open={isOpen} onClose={onClose} size="lg" closeOnEscape={false} panelClassName="p-6" labelledBy="ap-checkin-title">
         {/* Cabecera del Modal */}
         <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-4">
           <div className="flex items-center gap-2.5">
@@ -476,7 +476,7 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
               <IdCard className="h-5 w-5" />
             </div>
             <div>
-              <h3 className="text-base font-bold text-slate-900 dark:text-white">
+              <h3 id="ap-checkin-title" className="text-base font-bold text-slate-900 dark:text-white">
                 Registro de Ingreso de Visita
               </h3>
               <p className="text-xs text-slate-500 dark:text-slate-400">
@@ -1329,7 +1329,6 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
             </button>
           )}
         </div>
-      </div>
-    </div>
+    </Modal>
   );
 }

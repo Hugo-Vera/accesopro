@@ -8,6 +8,7 @@ import { LiveVisitHoldToast, type VisitHoldAlert } from "@/components/ops/LiveVi
 import { DniScanPanel } from "@/components/DniScanPanel";
 import { DocumentScanPanel, type AcceptedDoc } from "@/components/ops/DocumentScanPanel";
 import { parseDniScan } from "@/lib/parseDni";
+import { Modal } from "@/components/ui/Modal";
 
 export type GuardApprovalItem = {
   id: string;
@@ -358,7 +359,7 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
             setPreview(null);
             setOpenId(items[0].id);
           }}
-          className="fixed right-4 top-20 z-40 inline-flex max-w-[min(280px,calc(100vw-2rem))] items-center gap-2 rounded-full bg-amber-500 px-3 py-2 text-xs font-bold text-white shadow-lg"
+          className="fixed right-4 z-40 inline-flex max-w-[min(280px,calc(100vw-2rem))] items-center gap-2 rounded-full bg-amber-500 px-3 py-2 text-xs font-bold text-white shadow-lg bottom-[calc(4.5rem+env(safe-area-inset-bottom))] lg:bottom-auto lg:top-20"
         >
           <Bell className="h-4 w-4 shrink-0" />
           <span className="truncate">
@@ -371,8 +372,8 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
       <button
         type="button"
         onClick={() => setScanOpen(true)}
-        className={`fixed z-40 inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-800 shadow-lg dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 ${
-          items.length ? "right-4 top-32" : "right-4 top-20"
+        className={`fixed z-40 inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-800 shadow-lg dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 right-4 bottom-[calc(1rem+env(safe-area-inset-bottom))] lg:bottom-auto ${
+          items.length ? "lg:top-32" : "lg:top-20"
         }`}
       >
         <QrCode className="h-4 w-4 shrink-0" />
@@ -396,12 +397,7 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
         }}
       />
 
-      {scanOpen ? (
-        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4" onClick={() => setScanOpen(false)}>
-          <div
-            className="w-full max-w-lg overflow-y-auto rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl dark:border-slate-700 dark:bg-slate-900"
-            onClick={(e) => e.stopPropagation()}
-          >
+      <Modal open={scanOpen} onClose={() => setScanOpen(false)} size="md" zClass="z-[60]" closeOnEscape={false}>
             <div className="mb-3 flex items-start justify-between">
               <div>
                 <h3 className="text-lg font-bold text-slate-900 dark:text-white">Escanear en portería</h3>
@@ -444,22 +440,25 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
               }}
             />
             {error ? <p className="mt-2 text-[11px] text-rose-600">{error}</p> : null}
-          </div>
-        </div>
-      ) : null}
+      </Modal>
 
       {current ? (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => { setOpenId(null); setPreview(null); }}>
-          <div
-            className="w-full max-w-lg overflow-y-auto rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl dark:border-slate-700 dark:bg-slate-900"
-            onClick={(e) => e.stopPropagation()}
-          >
+      <Modal
+        open
+        onClose={() => {
+          setOpenId(null);
+          setPreview(null);
+        }}
+        size="md"
+        closeOnEscape={false}
+        labelledBy="ap-guard-ficha-title"
+      >
             <div className="mb-3 flex items-start justify-between">
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400">
                   {current.sentido === "out" ? "Salida" : "Entrada"} · Lote {current.lotNumber || "—"}
                 </p>
-                <h3 className="text-lg font-bold text-slate-900 dark:text-white">{current.guestName}</h3>
+                <h3 id="ap-guard-ficha-title" className="text-lg font-bold text-slate-900 dark:text-white">{current.guestName}</h3>
                 <p className="text-xs text-slate-500">
                   {current.reason === "expired"
                     ? "Pase vencido o fuera de horario"
@@ -892,8 +891,7 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
                 </button>
               </div>
             )}
-          </div>
-        </div>
+      </Modal>
       ) : null}
     </>
   );

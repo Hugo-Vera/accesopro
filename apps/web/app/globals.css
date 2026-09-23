@@ -27,6 +27,11 @@
   --ap-tile-icon: #4a5a68;
 }
 
+/*
+  z-index AccesoPro (no mezclar con Bootstrap):
+  drawer menú 40 · FAB cola 40 · Modal 50 · scan/confirm 60 · toast facial 80
+*/
+
 @layer components {
   .badge {
     @apply inline-block rounded-md px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide;
@@ -78,6 +83,18 @@
   }
   .btn-filter.active {
     @apply border-ok/50 text-ok;
+  }
+
+  /* Overlay / panel de modal (Tailwind). Escritorio igual; celular se estira. */
+  .ap-overlay {
+    @apply fixed inset-0 flex items-center justify-center p-3 sm:p-4;
+    padding-top: max(0.75rem, env(safe-area-inset-top));
+    padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+    padding-left: max(0.75rem, env(safe-area-inset-left));
+    padding-right: max(0.75rem, env(safe-area-inset-right));
+  }
+  .ap-modal-panel {
+    @apply relative w-full max-h-[min(94dvh,100%)] overflow-y-auto rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-900;
   }
   .relay-icon {
     @apply grid h-9 w-9 shrink-0 place-items-center rounded-md border border-line text-[10px] font-bold text-muted;
@@ -251,7 +268,7 @@
   min-height: 0;
 }
 
-@media (min-width: 1100px) {
+@media (min-width: 1024px) {
   .ops-lanes-footer {
     grid-template-columns: minmax(0, 1fr) auto;
     align-items: center;
@@ -280,12 +297,16 @@
   gap: 0.45rem;
   min-height: 0;
   flex: 1 1 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
-@media (min-width: 1100px) {
+@media (min-width: 1024px) {
   .ops-lanes-grid {
-    /* Historial ingreso | plano (más ancho) | historial salida */
+    /* Historial ingreso | plano (más ancho) | historial salida — mismo corte que Tailwind lg */
     grid-template-columns: minmax(200px, 0.72fr) minmax(340px, 1.9fr) minmax(200px, 0.72fr);
+    overflow: hidden;
   }
 }
 

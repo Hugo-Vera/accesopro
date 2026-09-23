@@ -712,4 +712,32 @@ export const MANUAL_CHAPTERS: ManualChapter[] = [
       },
     ],
   },
+  {
+    id: "layout-pantallas",
+    title: "Pantallas: garita, tablet y overlay",
+    updated: "23/09/2026",
+    summary:
+      "Sin Bootstrap. Tailwind de siempre. En monitor de garita Inicio sigue en tres columnas. En tablet o celular se apila y se scrollea. Los modales de relé, ficha QR y check-in ocupan casi toda la pantalla chica; Escape y tap afuera cierran.",
+    sections: [
+      {
+        id: "que-cambia",
+        title: "Qué se ve",
+        blocks: [
+          {
+            type: "table",
+            headers: ["Ancho", "Inicio", "Overlay"],
+            rows: [
+              ["Garita (~1280 px)", "Ingreso | plano | Salida, igual que antes", "Modal centrado, mismo look"],
+              ["Tablet (~768 px)", "Las tres zonas una debajo de la otra; se llega scrolleando", "Ficha casi a pantalla completa"],
+              ["Celular (~390 px)", "Igual apilado; botones Escanear QR abajo a la derecha", "Escape y tap en el fondo cierran"],
+            ],
+          },
+          {
+            type: "note",
+            text: "No se mezcló Bootstrap. El corte de las tres columnas coincide con el menú lateral (1024 px). Claro y oscuro del modal son los mismos paneles blancos / slate-900.",
+          },
+        ],
+      },
+    ],
+  },
 ];

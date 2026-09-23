@@ -328,7 +328,7 @@ export function HomeDashboard() {
   }
 
   return (
-    <div className="ops-shell flex min-h-full flex-col gap-1.5 p-1 xl:h-full xl:min-h-0">
+    <div className="ops-shell flex h-full min-h-0 flex-col gap-1.5 p-1">
       <OpsTopbar
         tenantId={tenantId}
         tenantName={tenantName}
