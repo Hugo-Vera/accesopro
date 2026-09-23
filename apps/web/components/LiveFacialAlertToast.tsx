@@ -24,6 +24,8 @@ export type FacialEventAlert = {
   photoStored?: boolean;
   /** QR de visita: no es denegación facial. */
   kind?: "facial" | "visit";
+  visitStatus?: "pending" | "approved" | "denied";
+  approvedAt?: number;
   lotNumber?: string;
   approvalId?: string;
   passId?: string;

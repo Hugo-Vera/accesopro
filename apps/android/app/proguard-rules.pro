@@ -1,1 +1,4 @@
 -keep class ar.accesopro.guard.** { *; }
+-keep class com.google.mlkit.** { *; }
+-dontwarn com.google.mlkit.**
+-keep class androidx.camera.** { *; }

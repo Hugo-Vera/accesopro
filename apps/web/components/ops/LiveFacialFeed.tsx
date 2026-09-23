@@ -19,6 +19,17 @@ type Props = {
   compact?: boolean;
 };
 
+type CardTone = "pending" | "approved" | "denied";
+
+function cardTone(alert: FacialEventAlert): CardTone {
+  if (alert.kind === "visit") {
+    if (alert.visitStatus === "denied") return "denied";
+    if (alert.approved || alert.visitStatus === "approved") return "approved";
+    return "pending";
+  }
+  return alert.approved ? "approved" : "denied";
+}
+
 /** Fecha + hora 24 h (sin segundos) — historial ingreso y salida. */
 function timeLabel(createdAt: string | number | undefined) {
   if (!createdAt) return "--/-- --:--";
@@ -41,11 +52,13 @@ function FeedThumb({
   tenantId?: string | null;
 }) {
   const isVisit = alert.kind === "visit";
-  const border = isVisit
-    ? "border-amber-400 dark:border-amber-600"
-    : alert.approved
-      ? "border-emerald-400 dark:border-emerald-600"
-      : "border-rose-400 dark:border-rose-600";
+  const tone = cardTone(alert);
+  const border =
+    tone === "pending"
+      ? "border-amber-400 dark:border-amber-600"
+      : tone === "approved"
+        ? "border-emerald-400 dark:border-emerald-600"
+        : "border-rose-400 dark:border-rose-600";
   return (
     <div className={`relative flex-shrink-0 overflow-hidden bg-slate-900 ${className ?? ""} ${border}`}>
       <EventPhoto
@@ -56,13 +69,13 @@ function FeedThumb({
         alt={alert.personName}
         className="h-full w-full object-cover object-top"
         style={{ position: "relative", zIndex: 1, height: "100%", width: "100%", objectFit: "cover", objectPosition: "center top" }}
-        placeholderApproved={alert.approved}
+        placeholderApproved={tone === "approved"}
       />
       {!alert.photoStored ? (
         <div className="pointer-events-none absolute inset-0 -z-10 grid place-items-center bg-slate-100 text-slate-400 dark:bg-slate-800">
           {isVisit ? (
-            <QrCode className="h-6 w-6 text-amber-600" />
-          ) : alert.approved ? (
+            <QrCode className={`h-6 w-6 ${tone === "approved" ? "text-emerald-600" : tone === "denied" ? "text-rose-500" : "text-amber-600"}`} />
+          ) : tone === "approved" ? (
             <IconUserCheck className="h-6 w-6 text-emerald-600" />
           ) : (
             <ScanFace className="h-6 w-6 text-rose-500" />
@@ -85,10 +98,15 @@ function EventDetailModal({
   onClose: () => void;
 }) {
   const isVisit = alert.kind === "visit";
-  const isApproved = alert.approved;
-  const accent = isVisit ? "#d97706" : isApproved ? "#10b981" : "#f43f5e";
-  const accentSoft = isVisit ? "#fbbf24" : isApproved ? "#34d399" : "#fb7185";
-  const bg = isVisit ? "#fffbeb" : isApproved ? "#ecfdf5" : "#fff1f2";
+  const tone = cardTone(alert);
+  const isApproved = tone === "approved";
+  const accent = tone === "pending" ? "#d97706" : isApproved ? "#10b981" : "#f43f5e";
+  const accentSoft = tone === "pending" ? "#fbbf24" : isApproved ? "#34d399" : "#fb7185";
+  const bg = tone === "pending" ? "#fffbeb" : isApproved ? "#ecfdf5" : "#fff1f2";
+  const badgeBg = tone === "pending" ? "#fde68a" : isApproved ? "#a7f3d0" : "#fecdd3";
+  const badgeFg = tone === "pending" ? "#92400e" : isApproved ? "#065f46" : "#9f1239";
+  const badgeLabel =
+    tone === "pending" ? "Identificado" : isApproved ? "Acceso Aprobado" : isVisit ? "Visita denegada" : "Acceso Denegado";
 
   useEscapeKey(onClose, true);
 
@@ -172,12 +190,12 @@ function EventDetailModal({
                     fontWeight: 800,
                     letterSpacing: "0.04em",
                     textTransform: "uppercase",
-                    background: isVisit ? "#fde68a" : isApproved ? "#a7f3d0" : "#fecdd3",
-                    color: isVisit ? "#92400e" : isApproved ? "#065f46" : "#9f1239",
+                    background: badgeBg,
+                    color: badgeFg,
                   }}
                 >
-                  {isVisit ? <QrCode size={15} /> : isApproved ? <CheckCircle2 size={15} /> : <AlertTriangle size={15} />}
-                  {isVisit ? "Identificado" : isApproved ? "Acceso Aprobado" : "Acceso Denegado"}
+                  {tone === "pending" ? <QrCode size={15} /> : isApproved ? <CheckCircle2 size={15} /> : <AlertTriangle size={15} />}
+                  {badgeLabel}
                 </span>
                 <button
                   type="button"
@@ -224,9 +242,19 @@ function EventDetailModal({
                 <span style={{ opacity: 0.55 }}> · </span>
                 {alert.method}
               </div>
-              {isVisit ? (
+              {isVisit && tone === "pending" ? (
                 <div style={{ marginTop: 10, fontSize: 15, fontWeight: 700, color: "#b45309", lineHeight: 1.35 }}>
-                  Identificado · espera portería
+                  QR visita · espera aprobación
+                  {alert.lotNumber ? ` · Lote ${alert.lotNumber}` : ""}
+                </div>
+              ) : isVisit && isApproved ? (
+                <div style={{ marginTop: 10, fontSize: 15, fontWeight: 600, color: "#047857" }}>
+                  {alert.method}
+                  {alert.lotNumber ? ` · Lote ${alert.lotNumber}` : ""}
+                </div>
+              ) : isVisit ? (
+                <div style={{ marginTop: 10, fontSize: 15, fontWeight: 700, color: "#be123c", lineHeight: 1.35 }}>
+                  Visita denegada
                   {alert.lotNumber ? ` · Lote ${alert.lotNumber}` : ""}
                 </div>
               ) : !isApproved ? (
@@ -241,7 +269,7 @@ function EventDetailModal({
               {alert.doorName ? (
                 <div style={{ marginTop: 8, fontSize: 13, color: "#64748b" }}>Punto: {alert.doorName}</div>
               ) : null}
-              {isVisit && alert.passId ? (
+              {isVisit && tone === "pending" && alert.passId ? (
                 <button
                   type="button"
                   onClick={() => {
@@ -320,17 +348,20 @@ export function LiveFacialFeed({
           events.map((e) => {
             const alert = parseFacialEvent(e);
             if (!alert) return null;
-            const isVisit = alert.kind === "visit";
-            const rowTone = isVisit
-              ? "border-amber-200/90 bg-amber-50/80 dark:border-amber-900/60 dark:bg-amber-950/25"
-              : alert.approved
-                ? "border-emerald-200/90 bg-emerald-50/80 dark:border-emerald-900/60 dark:bg-emerald-950/25"
-                : "border-rose-200/90 bg-rose-50/80 dark:border-rose-900/60 dark:bg-rose-950/25";
-            const badgeTone = isVisit
-              ? "bg-amber-100 text-amber-800 dark:bg-amber-950/70 dark:text-amber-300"
-              : alert.approved
-                ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300"
-                : "bg-rose-100 text-rose-800 dark:bg-rose-950/70 dark:text-rose-300";
+            const tone = cardTone(alert);
+            const rowTone =
+              tone === "pending"
+                ? "border-amber-200/90 bg-amber-50/80 dark:border-amber-900/60 dark:bg-amber-950/25"
+                : tone === "approved"
+                  ? "border-emerald-200/90 bg-emerald-50/80 dark:border-emerald-900/60 dark:bg-emerald-950/25"
+                  : "border-rose-200/90 bg-rose-50/80 dark:border-rose-900/60 dark:bg-rose-950/25";
+            const badgeTone =
+              tone === "pending"
+                ? "bg-amber-100 text-amber-800 dark:bg-amber-950/70 dark:text-amber-300"
+                : tone === "approved"
+                  ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300"
+                  : "bg-rose-100 text-rose-800 dark:bg-rose-950/70 dark:text-rose-300";
+            const badgeLabel = tone === "pending" ? "Pendiente" : tone === "approved" ? "Aprobado" : "Denegado";
 
             return (
               <button
@@ -375,10 +406,10 @@ export function LiveFacialFeed({
                         compact ? "text-[11px]" : "text-[10px]"
                       } ${badgeTone}`}
                     >
-                      {isVisit ? "Pendiente" : alert.approved ? "Aprobado" : "Denegado"}
+                      {badgeLabel}
                     </span>
                   </div>
-                  {!compact && !isVisit && alert.reason ? (
+                  {!compact && tone === "denied" && alert.reason ? (
                     <p className="truncate text-[10px] font-semibold text-rose-600 dark:text-rose-400">
                       {alert.reason}
                     </p>
@@ -402,7 +433,10 @@ export function LiveFacialFeed({
 
       {selected ? (
         <EventDetailModal
-          alert={selected.alert}
+          alert={(() => {
+            const row = events.find((e) => String(e.id) === String(selected.alert.id));
+            return (row && parseFacialEvent(row)) || selected.alert;
+          })()}
           createdAt={selected.createdAt}
           tenantId={tenantId}
           onClose={() => setSelected(null)}

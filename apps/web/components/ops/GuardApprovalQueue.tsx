@@ -1,10 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { Bell, Check, Phone, Plus, Trash2, X } from "lucide-react";
+import { Bell, Check, Phone, Plus, QrCode, Trash2, X } from "lucide-react";
 import { api, apiUrl, withTenant } from "@/lib/api";
 import { useEscapeKey } from "@/hooks/useEscapeKey";
 import { LiveVisitHoldToast, type VisitHoldAlert } from "@/components/ops/LiveVisitHoldToast";
+import { DniScanPanel } from "@/components/DniScanPanel";
+import { DocumentScanPanel, type AcceptedDoc } from "@/components/ops/DocumentScanPanel";
+import { parseDniScan } from "@/lib/parseDni";
 
 export type GuardApprovalItem = {
   id: string;
@@ -17,8 +20,14 @@ export type GuardApprovalItem = {
   patente: string | null;
   arrivalMode: string;
   needsTrunk: boolean;
+  needsArt?: boolean;
+  visitKind?: string;
   missing: string[];
+  expiredDocs?: string[];
   companions: { name: string; dni: string | null; isMinor?: boolean }[];
+  insurance?: { company?: string; policyNumber?: string; validUntil?: string | number } | null;
+  personInsurance?: { id: string; kind: string; company: string | null; validUntil: string | number; hasDocument: boolean } | null;
+  license?: { id: string; licenseNumber: string; validUntil: string | number } | null;
   lotNumber: string | null;
   ownerName: string;
   ownerPhone: string | null;
@@ -80,6 +89,16 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [visitToast, setVisitToast] = useState<VisitHoldAlert | null>(null);
+  const [scanOpen, setScanOpen] = useState(false);
+  const [scanLane, setScanLane] = useState<"in" | "out">("in");
+  const [docKind, setDocKind] = useState<"vehicle" | "art" | "license" | null>(null);
+  const [vehDoc, setVehDoc] = useState<AcceptedDoc | null>(null);
+  const [artDoc, setArtDoc] = useState<AcceptedDoc | null>(null);
+  const [licDoc, setLicDoc] = useState<AcceptedDoc | null>(null);
+  const [artUntil, setArtUntil] = useState("");
+  const [artCompany, setArtCompany] = useState("");
+  const [licUntil, setLicUntil] = useState("");
+  const [licNumber, setLicNumber] = useState("");
 
   const load = useCallback(() => {
     if (!enabled || !tenantId) return;
@@ -160,9 +179,17 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
   const current = items.find((x) => x.id === openId) || preview;
   const canDecide = Boolean(current && current.pending !== false && !String(current.id).startsWith("preview:"));
   useEscapeKey(() => {
+    if (docKind) {
+      setDocKind(null);
+      return;
+    }
+    if (scanOpen) {
+      setScanOpen(false);
+      return;
+    }
     setOpenId(null);
     setPreview(null);
-  }, Boolean(current));
+  }, Boolean(current) || scanOpen || Boolean(docKind));
 
   useEffect(() => {
     if (!current) return;
@@ -175,6 +202,26 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
     setGuardCode("");
     setError(null);
     setCompanionsDraft((current.companions || []).map((x) => ({ name: x.name, dni: x.dni || "" })));
+    setInsCompany(current.insurance?.company || "");
+    setInsPolicy(current.insurance?.policyNumber || "");
+    setInsUntil(
+      current.insurance?.validUntil
+        ? new Date(current.insurance.validUntil).toISOString().slice(0, 10)
+        : "",
+    );
+    setArtUntil(
+      current.personInsurance?.validUntil
+        ? new Date(current.personInsurance.validUntil).toISOString().slice(0, 10)
+        : "",
+    );
+    setArtCompany(current.personInsurance?.company || "");
+    setLicUntil(
+      current.license?.validUntil ? new Date(current.license.validUntil).toISOString().slice(0, 10) : "",
+    );
+    setLicNumber(current.license?.licenseNumber || "");
+    setVehDoc(null);
+    setArtDoc(null);
+    setLicDoc(null);
   }, [current?.id]);
 
   async function decide(decision: "approved" | "denied") {
@@ -189,11 +236,32 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
           comment,
           trunkChecked,
           guestDni,
+          patente: plate || undefined,
           companions: companionsDraft.filter((x) => x.name.trim()),
           insurance:
             current.needsTrunk && insCompany && insPolicy
-              ? { plate, company: insCompany, policyNumber: insPolicy, validUntil: insUntil }
+              ? {
+                  plate,
+                  company: insCompany,
+                  policyNumber: insPolicy,
+                  validUntil: insUntil,
+                  cardPhotoBase64: vehDoc?.base64 || undefined,
+                }
               : undefined,
+          personInsurance:
+            current.needsArt && artUntil
+              ? {
+                  kind: "art" as const,
+                  company: artCompany,
+                  validUntil: artUntil,
+                  documentBase64: artDoc?.base64 || undefined,
+                  documentMime: artDoc?.mime,
+                  source: artDoc?.source || "scan",
+                }
+              : undefined,
+          driverLicense: licUntil
+            ? { licenseNumber: licNumber, validUntil: licUntil, photoBase64: licDoc?.base64 || undefined }
+            : undefined,
         }),
       });
       setOpenId(null);
@@ -201,6 +269,79 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
       load();
     } catch (err) {
       setError(err instanceof Error ? err.message : "No se pudo resolver");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function consumeCode(raw: string) {
+    const dni = parseDniScan(raw);
+    if (dni?.dni) {
+      setGuestDni(dni.dni);
+      setScanOpen(false);
+      return true;
+    }
+    try {
+      const res = await api<{ approvalId?: string; passId?: string; item?: GuardApprovalItem }>(
+        withTenant("/api/visitors/approvals/scan-qr", tenantId),
+        { method: "POST", body: JSON.stringify({ cardRaw: raw, sentido: scanLane }) },
+      );
+      setScanOpen(false);
+      load();
+      if (res.item?.id) {
+        setPreview(null);
+        setOpenId(res.item.id);
+      } else if (res.passId) {
+        window.dispatchEvent(new CustomEvent("ap:open-visit-approval", { detail: { passId: res.passId } }));
+      }
+      return true;
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "QR no autorizado");
+      return false;
+    }
+  }
+
+  async function saveFicha(extra?: Record<string, unknown>) {
+    if (!current || !canDecide) return;
+    setBusy(true);
+    setError(null);
+    try {
+      await api(withTenant(`/api/visitors/approvals/${current.id}/ficha`, tenantId), {
+        method: "POST",
+        body: JSON.stringify({
+          guestDni,
+          patente: plate || undefined,
+          companions: companionsDraft.filter((x) => x.name.trim()),
+          insurance:
+            current.needsTrunk && insCompany && insPolicy
+              ? {
+                  plate,
+                  company: insCompany,
+                  policyNumber: insPolicy,
+                  validUntil: insUntil,
+                  cardPhotoBase64: vehDoc?.base64 || undefined,
+                }
+              : undefined,
+          personInsurance:
+            current.needsArt && artUntil
+              ? {
+                  kind: "art",
+                  company: artCompany,
+                  validUntil: artUntil,
+                  documentBase64: artDoc?.base64 || undefined,
+                  documentMime: artDoc?.mime,
+                  source: artDoc?.source || "scan",
+                }
+              : undefined,
+          driverLicense: licUntil
+            ? { licenseNumber: licNumber, validUntil: licUntil, photoBase64: licDoc?.base64 || undefined }
+            : undefined,
+          ...extra,
+        }),
+      });
+      load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo guardar la ficha");
     } finally {
       setBusy(false);
     }
@@ -227,6 +368,17 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
         </button>
       ) : null}
 
+      <button
+        type="button"
+        onClick={() => setScanOpen(true)}
+        className={`fixed z-40 inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-800 shadow-lg dark:border-slate-600 dark:bg-slate-900 dark:text-slate-100 ${
+          items.length ? "right-4 top-32" : "right-4 top-20"
+        }`}
+      >
+        <QrCode className="h-4 w-4 shrink-0" />
+        Escanear QR de visita
+      </button>
+
       <LiveVisitHoldToast
         alert={visitToast}
         onDismiss={() => setVisitToast(null)}
@@ -243,6 +395,58 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
           }
         }}
       />
+
+      {scanOpen ? (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 p-4" onClick={() => setScanOpen(false)}>
+          <div
+            className="w-full max-w-lg overflow-y-auto rounded-2xl border border-slate-200 bg-white p-5 shadow-2xl dark:border-slate-700 dark:bg-slate-900"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="mb-3 flex items-start justify-between">
+              <div>
+                <h3 className="text-lg font-bold text-slate-900 dark:text-white">Escanear en portería</h3>
+                <p className="text-xs text-slate-500">QR de visita o DNI (PDF417 / QR). El lote queda precargado.</p>
+              </div>
+              <button type="button" onClick={() => setScanOpen(false)} className="rounded p-1 text-slate-500" aria-label="Cerrar">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            <div className="mb-3 flex gap-2 text-xs font-semibold">
+              <button
+                type="button"
+                className={`rounded-lg px-3 py-1.5 ${scanLane === "in" ? "bg-emerald-600 text-white" : "border border-slate-300 dark:border-slate-600"}`}
+                onClick={() => setScanLane("in")}
+              >
+                Ingreso
+              </button>
+              <button
+                type="button"
+                className={`rounded-lg px-3 py-1.5 ${scanLane === "out" ? "bg-emerald-600 text-white" : "border border-slate-300 dark:border-slate-600"}`}
+                onClick={() => setScanLane("out")}
+              >
+                Salida
+              </button>
+            </div>
+            <DniScanPanel
+              active={scanOpen}
+              title="Cámara: QR de visita o DNI"
+              onScan={(raw) => {
+                void consumeCode(raw);
+              }}
+              onRaw={(raw) => {
+                const dni = parseDniScan(raw);
+                if (dni?.dni) {
+                  setGuestDni(dni.dni);
+                  return false;
+                }
+                void consumeCode(raw);
+                return true;
+              }}
+            />
+            {error ? <p className="mt-2 text-[11px] text-rose-600">{error}</p> : null}
+          </div>
+        </div>
+      ) : null}
 
       {current ? (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => { setOpenId(null); setPreview(null); }}>
@@ -284,6 +488,16 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
                 ) : current.reason !== "walk_in" ? (
                   <p className="mt-0.5 text-[11px] text-slate-500">Preautorizado por el titular. El lector solo identificó el pase.</p>
                 ) : null}
+                {canDecide ? (
+                  <button
+                    type="button"
+                    onClick={() => setScanOpen(true)}
+                    className="mt-2 inline-flex items-center gap-1 rounded-lg border border-slate-300 px-2 py-1 text-[11px] font-semibold dark:border-slate-600"
+                  >
+                    <QrCode className="h-3 w-3" />
+                    Escanear QR de visita
+                  </button>
+                ) : null}
               </div>
               <button type="button" onClick={() => { setOpenId(null); setPreview(null); }} className="rounded p-1 text-slate-500" aria-label="Cerrar">
                 <X className="h-5 w-5" />
@@ -295,12 +509,56 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
                 Completar: {current.missing.join(", ")}
               </p>
             ) : null}
+            {current.expiredDocs?.length ? (
+              <div className="mb-2 rounded-lg bg-amber-50 px-3 py-2 text-[11px] font-semibold text-amber-900 dark:bg-amber-950/40 dark:text-amber-200">
+                <p>Vencido: {current.expiredDocs.join(", ")}. Sin autorización del titular no se puede abrir.</p>
+                {canDecide && current.ownerAuthStatus !== "owner_approved" ? (
+                  <button
+                    type="button"
+                    disabled={busy}
+                    className="mt-2 rounded-lg bg-amber-700 px-2 py-1 text-[11px] font-bold text-white disabled:opacity-50"
+                    onClick={async () => {
+                      setBusy(true);
+                      setError(null);
+                      try {
+                        await api(withTenant(`/api/visitors/approvals/${current.id}/expired-exception`, tenantId), {
+                          method: "POST",
+                        });
+                        load();
+                      } catch (err) {
+                        setError(err instanceof Error ? err.message : "No se pudo avisar al lote");
+                      } finally {
+                        setBusy(false);
+                      }
+                    }}
+                  >
+                    Pedir autorización al titular
+                  </button>
+                ) : current.ownerAuthStatus === "owner_approved" ? (
+                  <p className="mt-1">El titular autorizó la excepción.</p>
+                ) : current.ownerAuthStatus === "pending_owner" ? (
+                  <p className="mt-1">Esperando al lote.</p>
+                ) : null}
+              </div>
+            ) : null}
 
             <div className="grid grid-cols-2 gap-2 text-xs">
               <label className="col-span-2">
                 DNI
                 <input value={guestDni} onChange={(e) => setGuestDni(e.target.value)} className="mt-0.5 w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
               </label>
+              {canDecide ? (
+                <div className="col-span-2">
+                  <DniScanPanel
+                    active={Boolean(current) && !scanOpen}
+                    title="Escanear DNI (cámara o pistola)"
+                    onScan={(raw) => {
+                      const parsed = parseDniScan(raw);
+                      if (parsed?.dni) setGuestDni(parsed.dni);
+                    }}
+                  />
+                </div>
+              ) : null}
               {current.needsTrunk ? (
                 <>
                   <label>
@@ -323,7 +581,63 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
                     <input type="checkbox" checked={trunkChecked} onChange={(e) => setTrunkChecked(e.target.checked)} />
                     Baúl revisado
                   </label>
+                  {canDecide ? (
+                    <div className="col-span-2 space-y-2">
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Tarjeta / póliza del auto</p>
+                      <DocumentScanPanel
+                        tenantId={tenantId}
+                        value={vehDoc}
+                        overlayOpen={docKind === "vehicle"}
+                        onOverlayChange={(open) => setDocKind(open ? "vehicle" : docKind === "vehicle" ? null : docKind)}
+                        onAccept={setVehDoc}
+                        onClear={() => setVehDoc(null)}
+                      />
+                      <label>
+                        Licencia (opcional) · vence
+                        <input type="date" value={licUntil} onChange={(e) => setLicUntil(e.target.value)} className="mt-0.5 w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
+                      </label>
+                      <label>
+                        Nro. de licencia
+                        <input value={licNumber} onChange={(e) => setLicNumber(e.target.value)} className="mt-0.5 w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
+                      </label>
+                      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Foto de la licencia (opcional)</p>
+                      <DocumentScanPanel
+                        tenantId={tenantId}
+                        value={licDoc}
+                        overlayOpen={docKind === "license"}
+                        onOverlayChange={(open) => setDocKind(open ? "license" : docKind === "license" ? null : docKind)}
+                        onAccept={setLicDoc}
+                        onClear={() => setLicDoc(null)}
+                      />
+                    </div>
+                  ) : null}
                 </>
+              ) : null}
+              {current.needsArt ? (
+                <div className="col-span-2 space-y-2 rounded-lg border border-slate-200 p-2 dark:border-slate-700">
+                  <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">ART / seguro de vida</p>
+                  <label>
+                    Compañía
+                    <input value={artCompany} onChange={(e) => setArtCompany(e.target.value)} className="mt-0.5 w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
+                  </label>
+                  <label>
+                    Vence
+                    <input type="date" value={artUntil} onChange={(e) => setArtUntil(e.target.value)} className="mt-0.5 w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
+                  </label>
+                  {canDecide ? (
+                    <DocumentScanPanel
+                      tenantId={tenantId}
+                      value={artDoc}
+                      overlayOpen={docKind === "art"}
+                      onOverlayChange={(open) => setDocKind(open ? "art" : docKind === "art" ? null : docKind)}
+                      onAccept={setArtDoc}
+                      onClear={() => setArtDoc(null)}
+                    />
+                  ) : null}
+                  {artDoc || current.personInsurance?.hasDocument ? (
+                    <p className="text-[11px] text-slate-500">{artDoc ? "Constancia recortada lista." : "Ya hay constancia adjunta."}</p>
+                  ) : null}
+                </div>
               ) : null}
               <label className="col-span-2">
                 Comentario
@@ -565,6 +879,9 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
               </p>
             ) : (
               <div className="mt-4 flex gap-2">
+                <button type="button" disabled={busy} onClick={() => void saveFicha()} className="inline-flex items-center justify-center rounded-xl border border-slate-300 px-3 py-2 text-xs font-bold dark:border-slate-600 disabled:opacity-50">
+                  Guardar ficha
+                </button>
                 <button type="button" disabled={busy} onClick={() => void decide("approved")} className="inline-flex flex-1 items-center justify-center gap-1 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">
                   <Check className="h-4 w-4" />
                   Aprobar y abrir

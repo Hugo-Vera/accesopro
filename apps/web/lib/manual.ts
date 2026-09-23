@@ -519,9 +519,9 @@ export const MANUAL_CHAPTERS: ManualChapter[] = [
   {
     id: "autorizaciones-qr",
     title: "Autorizaciones QR del propietario",
-    updated: "22/09/2026",
+    updated: "23/09/2026",
     summary:
-      "El titular arma el QR en el portal WAN. Copia el texto corto y descarga el PNG para pegar en WhatsApp. El lector solo identifica. Portería ve un toast ámbar (no denegación facial), completa la ficha y abre. Validez por defecto del barrio (24 h, configurable). El walk-in de 120 s es otro camino.",
+      "El titular arma el QR en el portal WAN. Copia el texto corto y descarga el PNG para pegar en WhatsApp. El lector solo identifica. Portería ve una tarjeta ámbar con el nombre; al aprobar (web, app o garita) esa misma fila se pone verde con la hora. Titular y familiares adultos con cuenta reciben un aviso informativo. Validez por defecto del barrio (24 h). El walk-in de 120 s es otro camino.",
     sections: [
       {
         id: "regla-qr",
@@ -559,7 +559,31 @@ export const MANUAL_CHAPTERS: ManualChapter[] = [
         blocks: [
           {
             type: "p",
-            text: "No es un acceso facial denegado. Sale un toast ámbar en el carril (ingreso a la izquierda, salida a la derecha): nombre, lote y «Identificado. Aprobá para abrir.» Clic abre la ficha. La campana muestra el nombre del invitado. En el historial IN/OUT la fila es ámbar con badge Pendiente. Recién al aprobar se dispara el relé.",
+            text: "No es un acceso facial denegado. Sale un toast ámbar en el carril (ingreso a la izquierda, salida a la derecha): nombre, lote y «Identificado. Aprobá para abrir.» Clic abre la ficha. La campana muestra el nombre del invitado. En el historial IN/OUT la misma fila empieza ámbar (Pendiente, nombre de la visita, «QR visita · espera aprobación»). Al aprobar desde dashboard, app o garita esa fila se pone verde («QR visita · abierto HH:mm»). Denegar la pinta de rosa. No aparece una segunda tarjeta «Apertura remota» del pulso del relé.",
+          },
+        ],
+      },
+      {
+        id: "aviso-lote-qr",
+        title: "Aviso al lote (titular y familia)",
+        blocks: [
+          {
+            type: "p",
+            text: "Cuando el invitado apoya el QR preautorizado, AccesoPro avisa al titular y a los familiares adultos con cuenta (mismo lote). El copy es informativo: llegó a portería; portería abre. No hay Autorizar/Denegar: el titular ya armó el QR. Quien no tenga cuenta (menor o familiar sin invite) no recibe FCM. Si no hay token, WhatsApp de respaldo como hoy. Al aprobar el guardia no se manda un segundo push «abrí la barrera».",
+          },
+          {
+            type: "note",
+            text: "Los 120 segundos del aviso walk-in (clic en el lote del plano) no son este aviso. Walk-in sigue pidiendo Autorizar/Denegar al titular. El pase de walk-in también nace con el plazo del barrio.",
+          },
+        ],
+      },
+      {
+        id: "app-misma-tarjeta",
+        title: "App Android",
+        blocks: [
+          {
+            type: "p",
+            text: "Mismo paquete. Guardia: la cola muestra «QR presentado · espera aprobación»; al decidir, la fila sale de pendientes. Titular/familiar: el aviso visit_qr es solo texto; walk-in sigue con Autorizar/Denegar. Tras el login, si hay token FCM en la app, se registra. No se bumpea versionCode.",
           },
         ],
       },
@@ -589,9 +613,99 @@ export const MANUAL_CHAPTERS: ManualChapter[] = [
               ["Cambiar a 8 h; otro QR sin fechas", "8 h"],
               ["QR con hasta el domingo", "Se respeta esa fecha"],
               ["Escanear en el ASI", "Toast ámbar Identificado; cola con nombre; no abre. Completar DNI; Aprobar; relé"],
-              ["Historial IN/OUT", "Fila ámbar, badge Pendiente (no Denegado / Rostro no identificado)"],
+              ["Historial IN/OUT", "Misma fila ámbar → verde con HH:mm. Nombre de la visita (no Rostro no identificado). Sin tarjeta Apertura remota"],
+              ["Push al lote", "Titular y familiares adultos con cuenta: aviso visit_qr informativo. Walk-in 120 s aparte"],
+              ["App guardia / lote", "Ficha QR presentado · espera aprobación; visit_qr sin Autorizar/Denegar"],
               ["Crear el QR en el concentrador (portal DNS)", "En menos de ~2 s el mismo token existe en la garita"],
               ["Walk-in desde el plano", "Aviso 120 s igual; el pase dura el plazo del barrio"],
+            ],
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: "checkin-visita-porteria",
+    title: "Check-in de visita (QR, DNI y constancias)",
+    updated: "23/09/2026",
+    summary:
+      "El QR preautorizado solo identifica. El lote ya viene del pase. Portería completa DNI y papeles (bordes + vencimiento) desde el dashboard o la app, sin mandar a la visita al tótem si llueve. Un documento vencido pide excepción al titular (no son los 120 s del walk-in).",
+    sections: [
+      {
+        id: "regla-ficha",
+        title: "Qué falta para aprobar",
+        blocks: [
+          {
+            type: "p",
+            text: "La cara del invitado no se enrola en el ASI. El relé dispara cuando el guardia aprueba, con el cableado del carril si el QR se leyó en el celular (sin deviceId).",
+          },
+          {
+            type: "table",
+            headers: ["Tipo", "Obligatorio", "Opcional"],
+            rows: [
+              ["Social / servicio peatonal", "DNI. Lote precargado", "—"],
+              ["Vehículo", "DNI + patente + seguro auto vigente + baúl", "Licencia: si se carga, no puede estar vencida"],
+              ["Contratista / obra", "DNI + ART o seguro de vida (foto recortada + vence)", "—"],
+            ],
+          },
+          {
+            type: "note",
+            text: "Seguro o licencia vencidos: no se aprueba a solas. El guardia pide autorización especial al titular (aviso expired_docs, ~4 h). Recién con Autorizar se puede abrir. No es el TTL de 120 s del walk-in.",
+          },
+        ],
+      },
+      {
+        id: "escanear-sin-totem",
+        title: "Escanear el QR en portería",
+        blocks: [
+          {
+            type: "p",
+            text: "Mismo POST que el ASI: holdVisitQr, cola ámbar, aviso visit_qr al lote. Botón «Escanear QR de visita» en Inicio (web) y en la cola de la app (ícono + botón si está vacía). Ingreso o salida. Si el código es un DNI, rellena el campo; si es el pase, abre la ficha.",
+          },
+          {
+            type: "ul",
+            items: [
+              "Web: cámara QR/PDF417 o pistola HID",
+              "App: CameraX + ML Kit (QR y PDF417). Copy de la ficha: «QR presentado · espera aprobación»",
+              "Sin deviceId el relé usa los actuadores del carril",
+            ],
+          },
+        ],
+      },
+      {
+        id: "dni-y-papeles",
+        title: "DNI y constancias",
+        blocks: [
+          {
+            type: "p",
+            text: "No es OCR de la póliza. El DNI es el código (PDF417 dorso o QR frente), igual que Alta DNI. Los papeles se recortan por bordes en el server (POST /visitors/document-scan) y el guardia confirma compañía, póliza y vencimiento a ojo.",
+          },
+          {
+            type: "ul",
+            items: [
+              "Vehículo: foto de tarjeta/póliza → recorte → compañía / póliza / vence. La foto queda en vehicle_insurances",
+              "Contratista: ART o seguro de vida → recorte + vence en person_insurances",
+              "Licencia (opcional): misma cámara + vence en driver_licenses",
+              "App: saca la foto y la manda al mismo document-scan; no hay otro pipeline",
+            ],
+          },
+        ],
+      },
+      {
+        id: "probar-checkin",
+        title: "Cómo probar",
+        blocks: [
+          {
+            type: "table",
+            headers: ["Paso", "Resultado"],
+            rows: [
+              ["Titular arma QR en /portal", "Pase preautorizado; lote ya está"],
+              ["Guardia escanea el QR en web o app (sin ASI)", "Misma cola ámbar; ficha con lote"],
+              ["Social: solo DNI y Aprobar", "Relé del carril; fila verde"],
+              ["Auto: DNI + patente + seguro + baúl", "Sin baúl no aprueba"],
+              ["Seguro vencido → Pedir autorización al titular", "Aviso ~4 h con Autorizar/Denegar; visit_qr sigue informativo"],
+              ["Contratista: DNI + ART + vence", "Sin ART no aprueba"],
+              ["App: Escanear DNI + foto de constancia", "Mismos campos que la web. versionCode sin bumpear"],
             ],
           },
         ],

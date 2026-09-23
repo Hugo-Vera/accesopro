@@ -473,6 +473,8 @@ export const visitPasses = sqliteTable("visit_passes", {
   completeness: text("completeness").notNull().default("basic"),
   vehicleId: text("vehicle_id").references(() => vehicles.id),
   insuranceId: text("insurance_id").references(() => vehicleInsurances.id),
+  personInsuranceId: text("person_insurance_id").references(() => personInsurances.id),
+  licenseId: text("license_id").references(() => driverLicenses.id),
   visitRecordId: text("visit_record_id"),
   notes: text("notes"),
   dahuaSynced: integer("dahua_synced", { mode: "boolean" }).notNull().default(false),
@@ -735,7 +737,7 @@ export const credentialDeviceSync = sqliteTable("credential_device_sync", {
   lastSyncedAt: integer("last_synced_at", { mode: "timestamp_ms" }),
 });
 
-/** Avisos al titular del lote (walk-in, bien no registrado, traslado de menor). */
+/** Avisos al titular del lote (walk-in, QR preautorizado, bien no registrado, traslado de menor). */
 export const ownerNotices = sqliteTable("owner_notices", {
   id: text("id").primaryKey(),
   siteId: text("site_id")
@@ -746,7 +748,7 @@ export const ownerNotices = sqliteTable("owner_notices", {
     .references(() => properties.id),
   passId: text("pass_id").references(() => visitPasses.id),
   approvalId: text("approval_id").references(() => guardApprovals.id),
-  /** walk_in | goods | minor_transfer */
+  /** walk_in | goods | minor_transfer | visit_qr | expired_docs */
   kind: text("kind").notNull(),
   /** pending | approved | denied | expired */
   status: text("status").notNull().default("pending"),

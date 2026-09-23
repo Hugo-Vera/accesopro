@@ -26,6 +26,8 @@ import { upsertCredential } from "./credentials.js";
 import { makeVisitToken, parseVisitQrPayload } from "./visitPass.js";
 import {
   attachVehicleInsurance,
+  attachPersonInsuranceToPass,
+  attachLicenseToPass,
   decideGuardApproval,
   holdVisitQr,
   isArrivalMode,
@@ -36,7 +38,9 @@ import {
   attachGoodsAlert,
   requestMinorTransfer,
   confirmPhoneAuth,
+  requestExpiredDocsAuth,
 } from "./visitHold.js";
+import { parseDniScan } from "./parseDni.js";
 import { readEventPhoto } from "./eventPhotos.js";
 import { getVisitAuthDefaultHours } from "./retention.js";
 
@@ -134,6 +138,105 @@ visitorsApi.post("/visitors/document-scan", async (c) => {
   } catch (err) {
     return c.json({ error: err instanceof Error ? err.message : "No se pudo procesar el documento" }, 400);
   }
+});
+
+visitorsApi.post("/visitors/parse-dni", async (c) => {
+  const denied = await denyUnlessCapability(c.get("user"), "access.visitors.manage");
+  if (denied) return denied;
+  const scoped = await scopedSiteWithModule(c, "visitors");
+  if ("error" in scoped) return scoped.error;
+  const body = await c.req.json<{ raw?: string }>();
+  const parsed = parseDniScan(String(body.raw || ""));
+  if (!parsed?.dni) return c.json({ error: "No se reconoció un DNI argentino" }, 400);
+  return c.json({ ok: true, ...parsed });
+});
+
+visitorsApi.post("/visitors/approvals/scan-qr", async (c) => {
+  const denied = await denyUnlessCapability(c.get("user"), "access.visitors.manage");
+  if (denied) return denied;
+  const scoped = await scopedSiteWithModule(c, "visitors");
+  if ("error" in scoped) return scoped.error;
+  const body = await c.req.json<{ cardRaw?: string; sentido?: string }>();
+  const cardRaw = String(body.cardRaw || "").trim();
+  if (!cardRaw) return c.json({ error: "Acercá el QR de la visita" }, 400);
+  const sentido = body.sentido === "out" ? "out" : "in";
+  const hold = await holdVisitQr({
+    siteId: scoped.site.id,
+    tenantId: scoped.site.tenantId,
+    cardRaw,
+    sentido,
+  });
+  if (!hold.held) return c.json({ error: "QR no autorizado" }, 404);
+  const pending = (await listPendingApprovals(scoped.site.id)).find((x) => x.passId === hold.passId);
+  const item = pending || (hold.passId ? await serializePassFicha(hold.passId) : null);
+  return c.json({ ok: true, ...hold, item });
+});
+
+visitorsApi.post("/visitors/approvals/:id/ficha", async (c) => {
+  const denied = await denyUnlessCapability(c.get("user"), "access.visitors.manage");
+  if (denied) return denied;
+  const scoped = await scopedSiteWithModule(c, "visitors");
+  if ("error" in scoped) return scoped.error;
+  const pending = (await listPendingApprovals(scoped.site.id)).find((x) => x.id === c.req.param("id"));
+  if (!pending) return c.json({ error: "No hay una solicitud pendiente" }, 404);
+  const body = await c.req.json<{
+    guestDni?: string;
+    patente?: string;
+    arrivalMode?: string;
+    companions?: { name?: string; dni?: string }[];
+    insurance?: { plate?: string; company?: string; policyNumber?: string; validUntil?: string; cardPhotoBase64?: string };
+    personInsurance?: {
+      kind?: "life" | "art";
+      company?: string;
+      validUntil?: string;
+      documentBase64?: string;
+      documentMime?: string;
+      source?: "scan" | "upload";
+    };
+    driverLicense?: { licenseNumber?: string; validUntil?: string; photoBase64?: string };
+  }>();
+  if (body.guestDni?.trim()) {
+    await db
+      .update(visitPasses)
+      .set({ guestDni: body.guestDni.replace(/\D/g, "") })
+      .where(eq(visitPasses.id, pending.passId));
+  }
+  if (body.patente?.trim()) {
+    await db
+      .update(visitPasses)
+      .set({ patente: body.patente.trim().toUpperCase() })
+      .where(eq(visitPasses.id, pending.passId));
+  }
+  if (isArrivalMode(body.arrivalMode)) {
+    await db.update(visitPasses).set({ arrivalMode: body.arrivalMode }).where(eq(visitPasses.id, pending.passId));
+  }
+  if (body.companions) await replaceCompanions(pending.passId, body.companions);
+  if (body.insurance) {
+    await attachVehicleInsurance(scoped.tenantId, pending.passId, body.insurance);
+  }
+  if (body.personInsurance) {
+    const r = await attachPersonInsuranceToPass(scoped.tenantId, pending.passId, body.personInsurance);
+    if (!r.ok) return c.json({ error: r.error }, 400);
+  }
+  if (body.driverLicense) {
+    const r = await attachLicenseToPass(scoped.tenantId, pending.passId, body.driverLicense);
+    if (!r.ok) return c.json({ error: r.error }, 400);
+  }
+  const fresh = (await listPendingApprovals(scoped.site.id)).find((x) => x.id === pending.id);
+  return c.json({ ok: true, item: fresh || pending });
+});
+
+visitorsApi.post("/visitors/approvals/:id/expired-exception", async (c) => {
+  const denied = await denyUnlessCapability(c.get("user"), "access.visitors.manage");
+  if (denied) return denied;
+  const scoped = await scopedSiteWithModule(c, "visitors");
+  if ("error" in scoped) return scoped.error;
+  const result = await requestExpiredDocsAuth({
+    site: scoped.site,
+    approvalId: c.req.param("id"),
+  });
+  if (!result.ok) return c.json({ error: result.error }, 400);
+  return c.json({ ok: true });
 });
 
 visitorsApi.get("/visitors/documents/:id", async (c) => {
@@ -516,10 +619,20 @@ visitorsApi.post("/visitors/approvals/:id/decide", async (c) => {
     decision?: "approved" | "denied";
     comment?: string;
     trunkChecked?: boolean;
-    insurance?: { plate?: string; company?: string; policyNumber?: string; validUntil?: string };
+    insurance?: { plate?: string; company?: string; policyNumber?: string; validUntil?: string; cardPhotoBase64?: string };
     companions?: { name?: string; dni?: string }[];
     guestDni?: string;
+    patente?: string;
     arrivalMode?: string;
+    personInsurance?: {
+      kind?: "life" | "art";
+      company?: string;
+      validUntil?: string;
+      documentBase64?: string;
+      documentMime?: string;
+      source?: "scan" | "upload";
+    };
+    driverLicense?: { licenseNumber?: string; validUntil?: string; photoBase64?: string };
   }>();
   const decision = body.decision === "denied" ? "denied" : body.decision === "approved" ? "approved" : null;
   if (!decision) return c.json({ error: "Indicá aprobar o denegar" }, 400);
@@ -530,12 +643,23 @@ visitorsApi.post("/visitors/approvals/:id/decide", async (c) => {
     if (body.guestDni?.trim()) {
       await db.update(visitPasses).set({ guestDni: body.guestDni.replace(/\D/g, "") }).where(eq(visitPasses.id, pending.passId));
     }
+    if (body.patente?.trim()) {
+      await db.update(visitPasses).set({ patente: body.patente.trim().toUpperCase() }).where(eq(visitPasses.id, pending.passId));
+    }
     if (isArrivalMode(body.arrivalMode)) {
       await db.update(visitPasses).set({ arrivalMode: body.arrivalMode }).where(eq(visitPasses.id, pending.passId));
     }
     if (body.companions) await replaceCompanions(pending.passId, body.companions);
     if (body.insurance) {
       await attachVehicleInsurance(scoped.tenantId, pending.passId, body.insurance);
+    }
+    if (body.personInsurance) {
+      const r = await attachPersonInsuranceToPass(scoped.tenantId, pending.passId, body.personInsurance);
+      if (!r.ok) return c.json({ error: r.error }, 400);
+    }
+    if (body.driverLicense) {
+      const r = await attachLicenseToPass(scoped.tenantId, pending.passId, body.driverLicense);
+      if (!r.ok) return c.json({ error: r.error }, 400);
     }
   }
 

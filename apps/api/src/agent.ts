@@ -332,6 +332,52 @@ agentRoutes.post("/events", async (c) => {
     }
   }
 
+  // Method 4 del pulso post-visita: no crear fila «Apertura remota»; pegar snapshot a la tarjeta del QR.
+  if (isReaderAccess) {
+    const method = String(payload.Method ?? payload.methodCode ?? payload.method ?? "");
+    const isRemoteUnlock = method === "4" || method === "remote";
+    const deviceId = String(payload.deviceId ?? "").trim();
+    if (isRemoteUnlock && deviceId) {
+      const since = Date.now() - 20_000;
+      const recent = await db
+        .select()
+        .from(events)
+        .where(and(eq(events.siteId, siteId), inArray(events.type, ["dahua_access", "qr_access"])))
+        .orderBy(desc(events.createdAt))
+        .limit(40);
+      for (const row of recent) {
+        const created =
+          row.createdAt instanceof Date ? row.createdAt.getTime() : Number(row.createdAt) || 0;
+        if (created && created < since) continue;
+        let prev: Record<string, unknown> = {};
+        try {
+          prev = JSON.parse(row.payload) as Record<string, unknown>;
+        } catch {
+          continue;
+        }
+        const sameDevice = String(prev.deviceId ?? "") === deviceId;
+        const isVisit =
+          prev.visitHold === true ||
+          String(prev.accessKind ?? "") === "visita" ||
+          Boolean(prev.visitPassId) ||
+          Boolean(prev.approvalId);
+        if (!sameDevice || !isVisit) continue;
+        const snap = String(payload.snapshotUrl ?? payload.URL ?? "").trim();
+        if (snap && !String(prev.snapshotUrl ?? "").trim()) prev.snapshotUrl = snap;
+        await db.update(events).set({ payload: JSON.stringify(prev) }).where(eq(events.id, row.id));
+        broadcastRealtimeEvent({
+          id: row.id,
+          siteId,
+          tenantId: site?.tenantId,
+          type: row.type,
+          payload: prev,
+          createdAt: created || Date.now(),
+        });
+        return c.json({ ok: true, id: row.id, merged: true, openActuatorId: null });
+      }
+    }
+  }
+
   // qr_access del portal / DNI (sin attach del ASI): no pasa por el bloque del lector.
   if ((body.type === "qr_access" && !payload.deviceId) || body.type === "dni_access") {
     const resultado = String(payload.resultado ?? "autorizado");

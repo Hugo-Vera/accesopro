@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray } from "drizzle-orm";
 import { db } from "./db/client.js";
 import {
   events,
@@ -12,6 +12,9 @@ import {
   visitPasses,
   visitRecords,
   ownerNotices,
+  personInsurances,
+  driverLicenses,
+  visitorIdentities,
 } from "./db/schema.js";
 import { fireActuator } from "./actuatorExec.js";
 import { actuatorsForDahuaDevice, actuatorsForSentido, laneCodeOf } from "./accessPoints.js";
@@ -23,6 +26,8 @@ import { createOwnerNotice, expireOwnerNotices } from "./ownerNotices.js";
 import { saveEventPhoto } from "./eventPhotos.js";
 import { verifyUserGuardCode } from "./users.js";
 import { getVisitAuthDefaultHours } from "./retention.js";
+import { processDocumentImage } from "./documentScan.js";
+import { saveVisitorDoc } from "./visitorDocs.js";
 
 export type ArrivalMode = "peatonal" | "plataforma" | "vehiculo";
 export type VisitKind = "social" | "service" | "contractor" | "delivery";
@@ -125,10 +130,23 @@ export async function syncVisitRecordFromPass(pass: typeof visitPasses.$inferSel
     .where(eq(visitRecords.id, pass.visitRecordId));
 }
 
-export async function missingVisitFields(passId: string): Promise<string[]> {
+function untilMs(v: Date | number | null | undefined) {
+  if (v == null) return 0;
+  return v instanceof Date ? v.getTime() : Number(v) || 0;
+}
+
+function isPast(v: Date | number | null | undefined, now = Date.now()) {
+  const t = untilMs(v);
+  return t > 0 && t < now;
+}
+
+export type VisitFieldGaps = { missing: string[]; expired: string[] };
+
+export async function visitFieldGaps(passId: string): Promise<VisitFieldGaps> {
   const pass = await db.select().from(visitPasses).where(eq(visitPasses.id, passId)).get();
-  if (!pass) return ["pase"];
+  if (!pass) return { missing: ["pase"], expired: [] };
   const missing: string[] = [];
+  const expired: string[] = [];
   if (!String(pass.guestDni || "").replace(/\D/g, "")) missing.push("dni");
   if (needsVehicleDocs(pass.arrivalMode)) {
     if (!String(pass.patente || "").trim()) missing.push("patente");
@@ -144,8 +162,28 @@ export async function missingVisitFields(passId: string): Promise<string[]> {
         .get();
     }
     if (!ins?.company || !ins.policyNumber || !ins.validUntil) missing.push("seguro_vehiculo");
+    else if (isPast(ins.validUntil)) expired.push("seguro_vehiculo");
   }
-  return missing;
+  if (pass.visitKind === "contractor") {
+    const pi = pass.personInsuranceId
+      ? await db.select().from(personInsurances).where(eq(personInsurances.id, pass.personInsuranceId)).get()
+      : null;
+    if (!pi?.validUntil) missing.push("art");
+    else if (isPast(pi.validUntil)) expired.push("art");
+  }
+  if (pass.licenseId) {
+    const lic = await db.select().from(driverLicenses).where(eq(driverLicenses.id, pass.licenseId)).get();
+    if (!lic?.validUntil || isPast(lic.validUntil)) expired.push("licencia");
+  }
+  return { missing, expired };
+}
+
+export async function missingVisitFields(passId: string): Promise<string[]> {
+  const gaps = await visitFieldGaps(passId);
+  return [
+    ...gaps.missing,
+    ...gaps.expired.map((k) => (k === "licencia" ? "licencia_vencida" : `${k}_vencido`)),
+  ];
 }
 
 export async function ownerContactForProperty(propertyId: string) {
@@ -167,6 +205,8 @@ export async function holdVisitQr(input: {
   sentido: "in" | "out";
   deviceId?: string | null;
   at?: Date;
+  /** Aviso informativo al lote (QR preautorizado). Walk-in pasa false. */
+  notifyLot?: boolean;
 }): Promise<{
   held: boolean;
   passId?: string;
@@ -273,6 +313,39 @@ export async function holdVisitQr(input: {
     createdAt: now.getTime(),
   });
 
+  if (input.notifyLot !== false && input.tenantId && existing?.reason !== "walk_in") {
+    const dup = await db
+      .select({ id: ownerNotices.id })
+      .from(ownerNotices)
+      .where(
+        and(
+          eq(ownerNotices.passId, pass.id),
+          eq(ownerNotices.kind, "visit_qr"),
+          eq(ownerNotices.status, "pending"),
+        ),
+      )
+      .get();
+    if (!dup) {
+      const until =
+        pass.validUntil instanceof Date ? pass.validUntil.getTime() : Number(pass.validUntil) || 0;
+      const remaining = until ? until - now.getTime() : 3_600_000;
+      const ttlMs = Math.max(60_000, Math.min(3_600_000, Number.isFinite(remaining) ? remaining : 3_600_000));
+      const lot = property?.lotNumber || "";
+      await createOwnerNotice({
+        siteId: input.siteId,
+        tenantId: input.tenantId,
+        propertyId: pass.propertyId,
+        passId: pass.id,
+        approvalId: approvalId || null,
+        kind: "visit_qr",
+        title: "Visita en portería",
+        message: `${pass.guestName} llegó a portería (QR). Lote ${lot || "—"}. Portería abre.`,
+        payload: { guestName: pass.guestName, lotNumber: lot || null },
+        ttlMs,
+      });
+    }
+  }
+
   return {
     held: true,
     passId: pass.id,
@@ -281,6 +354,71 @@ export async function holdVisitQr(input: {
     guestName: pass.guestName,
     lotNumber: property?.lotNumber ?? null,
   };
+}
+
+async function patchVisitLaneEvent(input: {
+  siteId: string;
+  tenantId: string;
+  passId: string;
+  approvalId: string;
+  guestName: string;
+  lotNumber?: string | null;
+  visitStatus: "approved" | "denied";
+  decidedAt: Date;
+  decidedByUserId: string;
+}) {
+  const guard = await db.select().from(users).where(eq(users.id, input.decidedByUserId)).get();
+  const rows = await db
+    .select()
+    .from(events)
+    .where(and(eq(events.siteId, input.siteId), inArray(events.type, ["dahua_access", "qr_access"])))
+    .orderBy(desc(events.createdAt))
+    .limit(40);
+  let target: { row: typeof rows[number]; payload: Record<string, unknown> } | null = null;
+  for (const row of rows) {
+    let p: Record<string, unknown> = {};
+    try {
+      p = JSON.parse(row.payload) as Record<string, unknown>;
+    } catch {
+      continue;
+    }
+    const passHit =
+      String(p.visitPassId ?? p.passId ?? "") === input.passId ||
+      String(p.approvalId ?? "") === input.approvalId;
+    if (!passHit) continue;
+    target = { row, payload: p };
+    break;
+  }
+  if (!target) return;
+  const approved = input.visitStatus === "approved";
+  const payload: Record<string, unknown> = {
+    ...target.payload,
+    guestName: input.guestName,
+    personName: input.guestName,
+    lotNumber: input.lotNumber ?? target.payload.lotNumber ?? null,
+    accessKind: "visita",
+    visitHold: !approved,
+    visitPassId: input.passId,
+    approvalId: input.approvalId,
+    guardApproved: approved,
+    approved,
+    visitStatus: input.visitStatus,
+    approvedAt: input.decidedAt.getTime(),
+    approvedByName: guard?.name || null,
+  };
+  await db.update(events).set({ payload: JSON.stringify(payload) }).where(eq(events.id, target.row.id));
+  const createdAt =
+    target.row.createdAt instanceof Date
+      ? target.row.createdAt.getTime()
+      : Number(target.row.createdAt) || input.decidedAt.getTime();
+  broadcastRealtimeEvent({
+    id: target.row.id,
+    siteId: input.siteId,
+    tenantId: input.tenantId,
+    type: target.row.type,
+    payload,
+    createdAt,
+  });
 }
 
 async function openForVisit(
@@ -338,6 +476,26 @@ export async function decideGuardApproval(input: {
     if (pass.visitRecordId) {
       await db.update(visitRecords).set({ status: "denied" }).where(eq(visitRecords.id, pass.visitRecordId));
     }
+    const deniedLot = await db.select().from(properties).where(eq(properties.id, pass.propertyId)).get();
+    await patchVisitLaneEvent({
+      siteId: input.site.id,
+      tenantId: input.site.tenantId,
+      passId: pass.id,
+      approvalId: row.id,
+      guestName: pass.guestName,
+      lotNumber: deniedLot?.lotNumber ?? null,
+      visitStatus: "denied",
+      decidedAt: now,
+      decidedByUserId: input.guardUserId,
+    });
+    broadcastRealtimeEvent({
+      id: nid(),
+      siteId: input.site.id,
+      tenantId: input.site.tenantId,
+      type: "visit_hold",
+      payload: { passId: pass.id, approvalId: row.id, decided: "denied", sentido: row.sentido },
+      createdAt: now.getTime(),
+    });
     return { ok: true };
   }
 
@@ -353,8 +511,15 @@ export async function decideGuardApproval(input: {
     }
   }
 
-  const missing = await missingVisitFields(pass.id);
-  if (missing.length) return { ok: false, error: "Faltan datos obligatorios", missing };
+  const gaps = await visitFieldGaps(pass.id);
+  if (gaps.missing.length) return { ok: false, error: "Faltan datos obligatorios", missing: gaps.missing };
+  if (gaps.expired.length && row.ownerAuthStatus !== "owner_approved") {
+    return {
+      ok: false,
+      error: "Hay un documento vencido. Pedí autorización al titular o denegá.",
+      missing: gaps.expired.map((k) => (k === "licencia" ? "licencia_vencida" : `${k}_vencido`)),
+    };
+  }
   if (needsVehicleDocs(pass.arrivalMode) && !input.trunkChecked) {
     return { ok: false, error: "Hay que revisar el baúl antes de aprobar" };
   }
@@ -421,6 +586,17 @@ export async function decideGuardApproval(input: {
     }),
     createdAt: now,
   });
+  await patchVisitLaneEvent({
+    siteId: input.site.id,
+    tenantId: input.site.tenantId,
+    passId: pass.id,
+    approvalId: row.id,
+    guestName: pass.guestName,
+    lotNumber: property?.lotNumber ?? null,
+    visitStatus: "approved",
+    decidedAt: now,
+    decidedByUserId: input.guardUserId,
+  });
   broadcastRealtimeEvent({
     id: nid(),
     siteId: input.site.id,
@@ -441,11 +617,12 @@ export async function serializePassFicha(
   const property = await db.select().from(properties).where(eq(properties.id, pass.propertyId)).get();
   const contact = await ownerContactForProperty(pass.propertyId);
   const companions = await listCompanions(pass.id);
-  const missing = await missingVisitFields(pass.id);
-  let insurance: { company: string; policyNumber: string; validUntil: Date | number } | null = null;
+  const gaps = await visitFieldGaps(pass.id);
+  const missing = gaps.missing;
+  let insurance: { company: string; policyNumber: string; validUntil: Date | number; cardPhotoUrl?: string | null } | null = null;
   if (pass.insuranceId) {
     const ins = await db.select().from(vehicleInsurances).where(eq(vehicleInsurances.id, pass.insuranceId)).get();
-    if (ins) insurance = { company: ins.company, policyNumber: ins.policyNumber, validUntil: ins.validUntil };
+    if (ins) insurance = { company: ins.company, policyNumber: ins.policyNumber, validUntil: ins.validUntil, cardPhotoUrl: ins.cardPhotoUrl };
   } else if (pass.vehicleId) {
     const ins = await db
       .select()
@@ -453,7 +630,25 @@ export async function serializePassFicha(
       .where(eq(vehicleInsurances.vehicleId, pass.vehicleId))
       .orderBy(desc(vehicleInsurances.createdAt))
       .get();
-    if (ins) insurance = { company: ins.company, policyNumber: ins.policyNumber, validUntil: ins.validUntil };
+    if (ins) insurance = { company: ins.company, policyNumber: ins.policyNumber, validUntil: ins.validUntil, cardPhotoUrl: ins.cardPhotoUrl };
+  }
+  let personInsurance: { id: string; kind: string; company: string | null; validUntil: Date | number; hasDocument: boolean } | null = null;
+  if (pass.personInsuranceId) {
+    const pi = await db.select().from(personInsurances).where(eq(personInsurances.id, pass.personInsuranceId)).get();
+    if (pi) {
+      personInsurance = {
+        id: pi.id,
+        kind: pi.kind,
+        company: pi.company,
+        validUntil: pi.validUntil,
+        hasDocument: Boolean(pi.documentPath),
+      };
+    }
+  }
+  let license: { id: string; licenseNumber: string; validUntil: Date | number } | null = null;
+  if (pass.licenseId) {
+    const lic = await db.select().from(driverLicenses).where(eq(driverLicenses.id, pass.licenseId)).get();
+    if (lic) license = { id: lic.id, licenseNumber: lic.licenseNumber, validUntil: lic.validUntil };
   }
   const awaitingOut = pass.status === "in_site" || pass.status === "awaiting_exit";
   const pending = Boolean(row && row.status === "pending");
@@ -480,7 +675,9 @@ export async function serializePassFicha(
     horaHasta: pass.horaHasta,
     windowState: passWindowState(pass),
     needsTrunk: needsVehicleDocs(pass.arrivalMode),
+    needsArt: pass.visitKind === "contractor",
     missing,
+    expiredDocs: gaps.expired,
     companions: companions.map((x) => ({
       id: x.id,
       name: x.name,
@@ -490,6 +687,8 @@ export async function serializePassFicha(
       situation: x.situation,
     })),
     insurance,
+    personInsurance,
+    license,
     lotNumber: property?.lotNumber ?? null,
     propertyId: pass.propertyId,
     mapLat: property?.mapLat ?? null,
@@ -562,7 +761,13 @@ export function isOpenVisitStatus(status: string) {
 export async function attachVehicleInsurance(
   tenantId: string,
   passId: string,
-  input: { plate?: string; company?: string; policyNumber?: string; validUntil?: string },
+  input: {
+    plate?: string;
+    company?: string;
+    policyNumber?: string;
+    validUntil?: string;
+    cardPhotoBase64?: string | null;
+  },
 ) {
   const pass = await db.select().from(visitPasses).where(eq(visitPasses.id, passId)).get();
   if (!pass) return;
@@ -592,6 +797,23 @@ export async function attachVehicleInsurance(
     }
   }
   const insId = nid();
+  let cardPhotoUrl: string | null = null;
+  if (input.cardPhotoBase64) {
+    const raw = input.cardPhotoBase64.replace(/^data:[\w/+.-]+;base64,/, "").trim();
+    try {
+      let buf = Buffer.from(raw, "base64");
+      if (buf.length > 80 && buf.length < 4 * 1024 * 1024) {
+        try {
+          buf = Buffer.from((await processDocumentImage(buf)).jpeg);
+        } catch {
+          /* se guarda igual */
+        }
+        cardPhotoUrl = saveVisitorDoc(pass.siteId, `veh-ins-${insId}`, "image/jpeg", buf);
+      }
+    } catch {
+      /* sin foto */
+    }
+  }
   await db.insert(vehicleInsurances).values({
     id: insId,
     tenantId,
@@ -601,7 +823,7 @@ export async function attachVehicleInsurance(
     validFrom: null,
     validUntil: new Date(input.validUntil),
     coverageType: "responsabilidad_civil",
-    cardPhotoUrl: null,
+    cardPhotoUrl,
     verifiedBy: null,
     status: "active",
     createdAt: new Date(),
@@ -610,6 +832,183 @@ export async function attachVehicleInsurance(
     .update(visitPasses)
     .set({ vehicleId, insuranceId: insId, patente: plate, completeness: "full" })
     .where(eq(visitPasses.id, passId));
+}
+
+async function ensurePersonForPass(tenantId: string, pass: typeof visitPasses.$inferSelect) {
+  const dni = String(pass.guestDni || "").replace(/\D/g, "");
+  if (!dni) return null;
+  const existing = await db
+    .select()
+    .from(visitorIdentities)
+    .where(and(eq(visitorIdentities.tenantId, tenantId), eq(visitorIdentities.dniNumber, dni)))
+    .get();
+  if (existing) return existing;
+  const parts = String(pass.guestName || "").trim().split(/\s+/);
+  const firstName = parts[0] || "Visita";
+  const lastName = parts.slice(1).join(" ") || firstName;
+  const now = new Date();
+  const id = nid();
+  await db.insert(visitorIdentities).values({
+    id,
+    tenantId,
+    dniNumber: dni,
+    firstName,
+    lastName,
+    gender: null,
+    birthDate: null,
+    issueDate: null,
+    address: null,
+    rawPdf417: null,
+    phone: null,
+    blacklisted: false,
+    blacklistReason: null,
+    tramiteNumber: null,
+    createdAt: now,
+    updatedAt: now,
+  });
+  return db.select().from(visitorIdentities).where(eq(visitorIdentities.id, id)).get();
+}
+
+export async function attachPersonInsuranceToPass(
+  tenantId: string,
+  passId: string,
+  input: {
+    kind?: "life" | "art";
+    company?: string;
+    validUntil?: string;
+    documentBase64?: string | null;
+    documentMime?: string;
+    source?: "scan" | "upload";
+  },
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const pass = await db.select().from(visitPasses).where(eq(visitPasses.id, passId)).get();
+  if (!pass) return { ok: false, error: "El pase ya no existe" };
+  if (!input.validUntil) return { ok: false, error: "Falta la fecha de vencimiento de la ART" };
+  const person = await ensurePersonForPass(tenantId, pass);
+  if (!person) return { ok: false, error: "Primero cargá el DNI" };
+  const validUntilDate = new Date(input.validUntil);
+  if (!Number.isFinite(validUntilDate.getTime())) return { ok: false, error: "Fecha de ART inválida" };
+  let documentPath: string | null = null;
+  let documentMime: string | null = null;
+  if (input.documentBase64) {
+    const mime = input.documentMime === "application/pdf" ? "application/pdf" : "image/jpeg";
+    const raw = input.documentBase64.replace(/^data:[\w/+.-]+;base64,/, "").trim();
+    try {
+      let buf = Buffer.from(raw, "base64");
+      if (buf.length < 80 || buf.length > 4 * 1024 * 1024) {
+        return { ok: false, error: "La constancia está vacía o pesa de más (máx. 4 MB)" };
+      }
+      if (mime !== "application/pdf") {
+        try {
+          buf = Buffer.from((await processDocumentImage(buf)).jpeg);
+        } catch {
+          /* se guarda igual */
+        }
+      }
+      const id = nid();
+      documentPath = saveVisitorDoc(pass.siteId, id, mime, buf);
+      documentMime = mime;
+    } catch {
+      return { ok: false, error: "La constancia no se pudo leer" };
+    }
+  }
+  const id = nid();
+  await db.insert(personInsurances).values({
+    id,
+    tenantId,
+    personId: person.id,
+    kind: input.kind === "art" ? "art" : "life",
+    company: input.company?.trim() || null,
+    policyNumber: null,
+    validUntil: validUntilDate,
+    documentPath,
+    documentMime,
+    source: input.source === "scan" ? "scan" : "upload",
+    createdAt: new Date(),
+  });
+  await db.update(visitPasses).set({ personInsuranceId: id }).where(eq(visitPasses.id, passId));
+  return { ok: true };
+}
+
+export async function attachLicenseToPass(
+  tenantId: string,
+  passId: string,
+  input: { licenseNumber?: string; validUntil?: string; photoBase64?: string | null },
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const pass = await db.select().from(visitPasses).where(eq(visitPasses.id, passId)).get();
+  if (!pass) return { ok: false, error: "El pase ya no existe" };
+  if (!input.validUntil) return { ok: false, error: "Falta el vencimiento de la licencia" };
+  const person = await ensurePersonForPass(tenantId, pass);
+  if (!person) return { ok: false, error: "Primero cargá el DNI" };
+  const validUntilDate = new Date(input.validUntil);
+  if (!Number.isFinite(validUntilDate.getTime())) return { ok: false, error: "Fecha de licencia inválida" };
+  let photoUrl: string | null = null;
+  if (input.photoBase64) {
+    const raw = input.photoBase64.replace(/^data:[\w/+.-]+;base64,/, "").trim();
+    try {
+      let buf = Buffer.from(raw, "base64");
+      if (buf.length > 80 && buf.length < 4 * 1024 * 1024) {
+        try {
+          buf = Buffer.from((await processDocumentImage(buf)).jpeg);
+        } catch {
+          /* igual */
+        }
+        photoUrl = saveVisitorDoc(pass.siteId, `lic-${nid()}`, "image/jpeg", buf);
+      }
+    } catch {
+      /* sin foto */
+    }
+  }
+  const id = nid();
+  await db.insert(driverLicenses).values({
+    id,
+    tenantId,
+    personId: person.id,
+    licenseNumber: (input.licenseNumber || person.dniNumber).trim(),
+    classes: "B.1",
+    jurisdiction: null,
+    validUntil: validUntilDate,
+    photoUrl,
+    createdAt: new Date(),
+  });
+  await db.update(visitPasses).set({ licenseId: id }).where(eq(visitPasses.id, passId));
+  return { ok: true };
+}
+
+export async function requestExpiredDocsAuth(input: {
+  site: { id: string; tenantId: string };
+  approvalId: string;
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  const row = await db
+    .select()
+    .from(guardApprovals)
+    .where(and(eq(guardApprovals.id, input.approvalId), eq(guardApprovals.siteId, input.site.id)))
+    .get();
+  if (!row || row.status !== "pending") return { ok: false, error: "No hay una solicitud pendiente" };
+  const pass = await db.select().from(visitPasses).where(eq(visitPasses.id, row.passId)).get();
+  if (!pass) return { ok: false, error: "El pase ya no existe" };
+  const gaps = await visitFieldGaps(pass.id);
+  if (!gaps.expired.length) return { ok: false, error: "No hay un documento vencido en esta ficha" };
+  const labels = gaps.expired
+    .map((k) => (k === "art" ? "ART / seguro de vida" : k === "licencia" ? "licencia" : "seguro del auto"))
+    .join(", ");
+  await db
+    .update(guardApprovals)
+    .set({ ownerAuthStatus: "pending_owner" })
+    .where(eq(guardApprovals.id, row.id));
+  await createOwnerNotice({
+    siteId: input.site.id,
+    tenantId: input.site.tenantId,
+    propertyId: pass.propertyId,
+    passId: pass.id,
+    approvalId: row.id,
+    kind: "expired_docs",
+    title: "Autorizar excepción (documento vencido)",
+    message: `${pass.guestName} tiene ${labels} vencido. Si autorizás, portería puede dejar pasar.`,
+    payload: { expired: gaps.expired, guestName: pass.guestName },
+    ttlMs: 4 * 60 * 60 * 1000,
+  });
+  return { ok: true };
 }
 
 export async function announceWalkIn(input: {
@@ -664,6 +1063,7 @@ export async function announceWalkIn(input: {
     cardRaw: token,
     sentido: "in",
     at: now,
+    notifyLot: false,
   });
   if (hold.approvalId) {
     await db

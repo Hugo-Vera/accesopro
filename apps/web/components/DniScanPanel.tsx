@@ -9,7 +9,10 @@ import { useHidWedge } from "@/hooks/useHidWedge";
 
 type Props = {
   onScan: (raw: string) => void;
+  /** Si devuelve true, se consume el código (QR de visita). */
+  onRaw?: (raw: string) => boolean;
   active?: boolean;
+  title?: string;
 };
 
 const QR_GUIDE: ScanBox = { x: 0.18, y: 0.08, w: 0.64, h: 0.72 };
@@ -58,7 +61,7 @@ function drawCorners(
   ctx.stroke();
 }
 
-export function DniScanPanel({ onScan, active = true }: Props) {
+export function DniScanPanel({ onScan, onRaw, active = true, title = "Escanear DNI con cámara (opcional)" }: Props) {
   const [open, setOpen] = useState(false);
   const [hint, setHint] = useState<string | null>(null);
   const [camError, setCamError] = useState<string | null>(null);
@@ -70,12 +73,18 @@ export function DniScanPanel({ onScan, active = true }: Props) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const onScanRef = useRef(onScan);
   onScanRef.current = onScan;
+  const onRawRef = useRef(onRaw);
+  onRawRef.current = onRaw;
   const liveHintsRef = useRef<ScanHint[]>([]);
   const liveHitRef = useRef<ScanHit | null>(null);
   const statusRef = useRef(status);
   statusRef.current = status;
 
   const applyIfParsed = useCallback((text: string) => {
+    if (onRawRef.current?.(text)) {
+      setHint("Código leído");
+      return true;
+    }
     const parsed = parseDniScan(text);
     if (!parsed) return false;
     onScanRef.current(text);
@@ -283,7 +292,7 @@ export function DniScanPanel({ onScan, active = true }: Props) {
       >
         <ScanLine className="h-3.5 w-3.5 text-slate-500" />
         <span className="text-[11px] font-semibold text-slate-600 dark:text-slate-300">
-          Escanear DNI con cámara (opcional)
+          {title}
         </span>
         <ChevronDown className={`ml-auto h-4 w-4 text-slate-400 transition-transform ${open ? "rotate-180" : ""}`} />
       </button>

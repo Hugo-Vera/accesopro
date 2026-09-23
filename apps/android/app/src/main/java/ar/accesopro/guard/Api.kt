@@ -19,7 +19,10 @@ data class ApprovalItem(
     val guestDni: String?,
     val patente: String?,
     val needsTrunk: Boolean,
+    val needsArt: Boolean,
+    val visitKind: String,
     val missing: List<String>,
+    val expiredDocs: List<String>,
     val lotNumber: String?,
     val ownerName: String,
     val ownerPhone: String?,
@@ -55,6 +58,7 @@ data class OwnerNotice(
     val title: String,
     val message: String,
     val status: String,
+    val kind: String,
     val decidedByName: String?,
 )
 
@@ -108,6 +112,7 @@ class GuardApi(
                         title = o.optString("title"),
                         message = o.optString("message"),
                         status = o.optString("status"),
+                        kind = o.optString("kind"),
                         decidedByName = o.optString("decidedByName").ifBlank { null },
                     ),
                 )
@@ -177,16 +182,6 @@ class GuardApi(
             .put("comment", comment)
             .put("trunkChecked", trunkChecked)
             .put("guestDni", guestDni)
-        if (company.isNotBlank() && policy.isNotBlank()) {
-            body.put(
-                "insurance",
-                JSONObject()
-                    .put("plate", plate)
-                    .put("company", company)
-                    .put("policyNumber", policy)
-                    .put("validUntil", until),
-            )
-        }
         post("/api/visitors/approvals/$id/decide", body)
         Unit
     }
@@ -208,7 +203,13 @@ class GuardApi(
             guestDni = o.optString("guestDni").ifBlank { null },
             patente = o.optString("patente").ifBlank { null },
             needsTrunk = o.optBoolean("needsTrunk"),
+            needsArt = o.optBoolean("needsArt"),
+            visitKind = o.optString("visitKind"),
             missing = (0 until missing.length()).map { missing.getString(it) },
+            expiredDocs = (0 until (o.optJSONArray("expiredDocs") ?: JSONArray()).length()).let { n ->
+                val arr = o.optJSONArray("expiredDocs") ?: JSONArray()
+                (0 until arr.length()).map { arr.getString(it) }
+            },
             lotNumber = o.optString("lotNumber").ifBlank { null },
             ownerName = o.optString("ownerName"),
             ownerPhone = o.optString("ownerPhone").ifBlank { null },
@@ -223,6 +224,67 @@ class GuardApi(
                 Emergency(e.optString("label"), e.optString("phone"))
             },
         )
+    }
+
+    suspend fun scanQr(cardRaw: String, sentido: String = "in"): ApprovalItem? = withContext(Dispatchers.IO) {
+        val json = post("/api/visitors/approvals/scan-qr", JSONObject().put("cardRaw", cardRaw).put("sentido", sentido))
+        val item = json.optJSONObject("item") ?: return@withContext null
+        parseItem(item)
+    }
+
+    suspend fun parseDni(raw: String): String? = withContext(Dispatchers.IO) {
+        val json = post("/api/visitors/parse-dni", JSONObject().put("raw", raw))
+        json.optString("dni").ifBlank { null }
+    }
+
+    suspend fun documentScan(imageBase64: String): String = withContext(Dispatchers.IO) {
+        val json = post("/api/visitors/document-scan", JSONObject().put("imageBase64", imageBase64))
+        json.optString("imageBase64")
+    }
+
+    suspend fun saveFicha(
+        id: String,
+        guestDni: String,
+        plate: String,
+        company: String,
+        policy: String,
+        until: String,
+        cardPhoto: String?,
+        artUntil: String,
+        artCompany: String,
+        artPhoto: String?,
+        licUntil: String,
+        licNumber: String,
+        licPhoto: String?,
+    ) = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("guestDni", guestDni)
+        if (plate.isNotBlank()) body.put("patente", plate)
+        if (company.isNotBlank() && policy.isNotBlank()) {
+            val ins = JSONObject()
+                .put("plate", plate)
+                .put("company", company)
+                .put("policyNumber", policy)
+                .put("validUntil", until)
+            if (!cardPhoto.isNullOrBlank()) ins.put("cardPhotoBase64", cardPhoto)
+            body.put("insurance", ins)
+        }
+        if (artUntil.isNotBlank()) {
+            val art = JSONObject().put("kind", "art").put("company", artCompany).put("validUntil", artUntil)
+            if (!artPhoto.isNullOrBlank()) art.put("documentBase64", artPhoto).put("source", "scan")
+            body.put("personInsurance", art)
+        }
+        if (licUntil.isNotBlank()) {
+            val lic = JSONObject().put("validUntil", licUntil).put("licenseNumber", licNumber)
+            if (!licPhoto.isNullOrBlank()) lic.put("photoBase64", licPhoto)
+            body.put("driverLicense", lic)
+        }
+        post("/api/visitors/approvals/$id/ficha", body)
+        Unit
+    }
+
+    suspend fun expiredException(id: String) = withContext(Dispatchers.IO) {
+        post("/api/visitors/approvals/$id/expired-exception", JSONObject())
+        Unit
     }
 
     private fun get(path: String): JSONObject = request("GET", path, null, true)

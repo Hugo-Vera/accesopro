@@ -330,6 +330,8 @@ export async function ensureSchema() {
   await addColumn("visit_passes", "completeness", "TEXT NOT NULL DEFAULT 'basic'");
   await addColumn("visit_passes", "vehicle_id", "TEXT");
   await addColumn("visit_passes", "insurance_id", "TEXT");
+  await addColumn("visit_passes", "person_insurance_id", "TEXT");
+  await addColumn("visit_passes", "license_id", "TEXT");
   await addColumn("visit_passes", "visit_record_id", "TEXT");
   await addColumn("visit_passes", "notes", "TEXT");
   await db.run(sql`

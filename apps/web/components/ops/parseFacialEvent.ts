@@ -13,6 +13,31 @@ export type EventRow = {
 /** Evita reintentar capturas que ya fallaron (HMR / remount / 404 Dahua). */
 const failedSnapshots = new Set<string>();
 
+const BOGUS_NAMES = new Set([
+  "rostro no identificado",
+  "rostro no reconocido",
+  "usuario facial",
+  "usuario asi",
+  "apertura remota",
+  "visita / qr",
+]);
+
+function cleanPersonName(raw: unknown): string | null {
+  const s = String(raw ?? "").trim();
+  if (!s || BOGUS_NAMES.has(s.toLowerCase())) return null;
+  return s;
+}
+
+function hhmm(raw: unknown): string | null {
+  const n = typeof raw === "number" ? raw : Date.parse(String(raw ?? ""));
+  if (!Number.isFinite(n) || n <= 0) return null;
+  const d = new Date(n > 0 && n < 1e12 ? n * 1000 : n);
+  if (!Number.isFinite(d.getTime())) return null;
+  const hh = String(d.getHours()).padStart(2, "0");
+  const min = String(d.getMinutes()).padStart(2, "0");
+  return `${hh}:${min}`;
+}
+
 export function normalizeSnapshotUrl(raw: unknown): string | undefined {
   const s = String(raw ?? "").trim();
   if (!s || s === "undefined" || s === "null" || s === "None") return undefined;
@@ -43,33 +68,65 @@ export function parseFacialEvent(
 ): FacialEventAlert | null {
   if (!ev?.id) return null;
   const p = (ev.payload || {}) as Record<string, unknown>;
-  const isVisit = p.visitHold === true || String(p.accessKind ?? "") === "visita";
+  const visitStatusRaw = String(p.visitStatus ?? "").trim();
+  const isVisit =
+    p.visitHold === true ||
+    String(p.accessKind ?? "") === "visita" ||
+    visitStatusRaw === "pending" ||
+    visitStatusRaw === "approved" ||
+    visitStatusRaw === "denied";
+  const visitStatus: FacialEventAlert["visitStatus"] = isVisit
+    ? visitStatusRaw === "approved" || p.guardApproved === true
+      ? "approved"
+      : visitStatusRaw === "denied"
+        ? "denied"
+        : "pending"
+    : undefined;
   const isApproved = isVisit
-    ? false
+    ? visitStatus === "approved"
     : p.approved === true || String(p.status ?? p.Status ?? "0") === "1";
-  const personName = String(
-    (isVisit ? p.guestName || p.personName : p.personName) ||
-      p.CardName ||
-      p.userName ||
-      p.UserID ||
-      (isVisit ? "Visita" : isApproved ? "Usuario ASI" : "Rostro no reconocido"),
-  );
-  // Etiqueta ya resuelta contra el catálogo: el código crudo manda sobre el nombre guardado.
-  const method = isVisit ? "QR visita" : asiMethodLabel(p.methodCode ?? p.Method, p.method);
+  const qrString = String(p.qrPayload ?? p.QRCode ?? p.QRCodeEx ?? "").trim();
+  const personName = isVisit
+    ? cleanPersonName(p.guestName) || cleanPersonName(p.personName) || "Visita"
+    : cleanPersonName(p.personName) ||
+      cleanPersonName(p.CardName) ||
+      cleanPersonName(p.userName) ||
+      (!isApproved && qrString ? "QR no autorizado" : "") ||
+      String(p.UserID || "") ||
+      (isApproved ? "Usuario ASI" : "Rostro no reconocido");
+  const opened = hhmm(p.approvedAt);
+  const method = isVisit
+    ? visitStatus === "approved"
+      ? opened
+        ? `QR visita · abierto ${opened}`
+        : "QR visita · abierto"
+      : visitStatus === "denied"
+        ? "QR visita · denegado"
+        : "QR visita · espera aprobación"
+    : !isApproved && qrString
+      ? "Código QR"
+      : asiMethodLabel(p.methodCode ?? p.Method, p.method);
   const deviceName = String(p.deviceName || "Lector Facial Dahua");
   const deviceId = String(p.deviceId || "");
   const snapshotUrl = normalizeSnapshotUrl(p.snapshotUrl || p.URL);
   const reason = isVisit
-    ? "Identificado · espera portería"
+    ? visitStatus === "approved"
+      ? undefined
+      : visitStatus === "denied"
+        ? "Visita denegada"
+        : "QR visita · espera aprobación"
     : isApproved
       ? undefined
-      : String(p.reason || "Rostro no registrado en el sistema");
+      : qrString
+        ? "QR no autorizado"
+        : String(p.reason || "Rostro no registrado en el sistema");
   const code = Number(p.laneCode ?? ev.laneCode ?? 0);
   const stamped = String(p.sentido ?? ev.sentido ?? "").trim();
   const lane: "in" | "out" = code === 2 || stamped === "out" ? "out" : "in";
   const lotNumber = p.lotNumber != null && String(p.lotNumber).trim() ? String(p.lotNumber) : undefined;
   const approvalId = p.approvalId != null ? String(p.approvalId) : undefined;
   const passId = p.visitPassId != null ? String(p.visitPassId) : p.passId != null ? String(p.passId) : undefined;
+  const approvedAt = typeof p.approvedAt === "number" ? p.approvedAt : undefined;
 
   return {
     id: ev.id,
@@ -84,6 +141,8 @@ export function parseFacialEvent(
     lane,
     photoStored: p.photoStored === true,
     kind: isVisit ? "visit" : "facial",
+    visitStatus,
+    approvedAt,
     lotNumber,
     approvalId,
     passId,

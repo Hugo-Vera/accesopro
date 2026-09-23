@@ -152,7 +152,7 @@ export function useOpsEvents({ tenantId, enabled, onAlert }: Options) {
         if (!raw?.id) continue;
         const row = toRow(raw);
         if (seenRef.current.has(row.id)) {
-          if (row.payload.photoStored === true) updates.push(row);
+          updates.push(row);
           continue;
         }
         seenRef.current.add(row.id);

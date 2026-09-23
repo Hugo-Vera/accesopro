@@ -11,8 +11,10 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -25,6 +27,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AccountBox
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.ArrowDropDown
@@ -136,6 +139,7 @@ fun GuardApp(prefs: android.content.SharedPreferences) {
     var selected by remember { mutableStateOf<ApprovalItem?>(null) }
     var showCensus by remember { mutableStateOf(false) }
     var census by remember { mutableStateOf<CensusSnapshot?>(null) }
+    var scanOpen by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val api = remember(baseUrl, cloudUrl, token) { GuardApi(baseUrl, cloudUrl, token) }
 
@@ -156,6 +160,10 @@ fun GuardApp(prefs: android.content.SharedPreferences) {
                 knownIds = ids
                 val fresh = if (prev == null) emptyList() else next.filter { it.id !in prev }
                 items = next
+                val cur = selectedNow.value
+                if (cur != null) {
+                    selected = next.find { it.id == cur.id } ?: cur
+                }
                 if (fresh.isNotEmpty()) {
                     pingGuard(ctx)
                     if (selectedNow.value == null && !censusNow.value) selected = fresh.first()
@@ -193,6 +201,12 @@ fun GuardApp(prefs: android.content.SharedPreferences) {
                         role = session.role
                         userName = session.name
                         token = session.token
+                        val fcm = prefs.getString("fcmToken", "") ?: ""
+                        if (fcm.isNotBlank()) {
+                            runCatching {
+                                GuardApi(baseUrl, cloudUrl, session.token).registerPush(fcm)
+                            }
+                        }
                     }.onFailure {
                         error = it.message ?: "Error de conexión o credenciales inválidas"
                     }
@@ -204,6 +218,33 @@ fun GuardApp(prefs: android.content.SharedPreferences) {
     }
 
     val current = selected
+    if (scanOpen) {
+        BarcodeScanScreen(
+            title = "QR de visita o DNI",
+            onClose = { scanOpen = false },
+            onResult = { raw ->
+                scope.launch {
+                    scanOpen = false
+                    isLoading = true
+                    error = null
+                    runCatching {
+                        val dni = runCatching { api.parseDni(raw) }.getOrNull()
+                        val item = runCatching { api.scanQr(raw) }.getOrNull()
+                        if (item != null) {
+                            items = api.listApprovals()
+                            selected = items.find { it.id == item.id } ?: item
+                        } else if (!dni.isNullOrBlank()) {
+                            error = "DNI $dni leído. Escaneá el QR de la visita para abrir la ficha."
+                        } else {
+                            error = "QR no autorizado"
+                        }
+                    }.onFailure { error = it.message }
+                    isLoading = false
+                }
+            },
+        )
+        return
+    }
     if (role == "resident") {
         ResidentHome(
             name = userName,
@@ -233,6 +274,7 @@ fun GuardApp(prefs: android.content.SharedPreferences) {
     if (current != null) {
         ApprovalDetail(
             item = current,
+            api = api,
             error = error,
             busy = isLoading,
             onBack = { selected = null; error = null },
@@ -286,6 +328,9 @@ fun GuardApp(prefs: android.content.SharedPreferences) {
                     }
                 },
                 actions = {
+                    IconButton(onClick = { scanOpen = true }) {
+                        Icon(Icons.Default.Add, contentDescription = "Escanear QR")
+                    }
                     IconButton(onClick = {
                         prefs.edit().remove("token").remove("role").apply()
                         token = ""
@@ -383,12 +428,15 @@ fun GuardApp(prefs: android.content.SharedPreferences) {
                             style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold)
                         )
                         Text(
-                            text = "Cuando escaneen un QR en la garita, la ficha aparece acá.",
+                            text = "Cuando escaneen un QR en la garita, o escanealo vos desde la app, la ficha aparece acá.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(horizontal = 32.dp),
                             textAlign = TextAlign.Center
                         )
+                        Button(onClick = { scanOpen = true }) {
+                            Text("Escanear QR de visita")
+                        }
                     }
                 }
             } else {
@@ -447,6 +495,13 @@ fun GuardApp(prefs: android.content.SharedPreferences) {
                                             text = "Pase vencido",
                                             style = MaterialTheme.typography.labelSmall,
                                             color = MaterialTheme.colorScheme.error,
+                                            modifier = Modifier.padding(top = 2.dp),
+                                        )
+                                    } else {
+                                        Text(
+                                            text = if (row.reason == "walk_in") "Walk-in · espera titular" else "QR presentado · espera aprobación",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             modifier = Modifier.padding(top = 2.dp),
                                         )
                                     }
@@ -806,33 +861,41 @@ fun ResidentHome(
                             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                                 Text(n.title, fontWeight = FontWeight.SemiBold)
                                 Text(n.message, style = MaterialTheme.typography.bodySmall)
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Button(
-                                        enabled = !busy,
-                                        onClick = {
-                                            scope.launch {
-                                                busy = true
-                                                runCatching {
-                                                    api.decideNotice(n.id, "approved")
-                                                    notices = api.listNotices()
-                                                }.onFailure { onError(it.message) }
-                                                busy = false
-                                            }
-                                        },
-                                    ) { Text("Autorizar") }
-                                    OutlinedButton(
-                                        enabled = !busy,
-                                        onClick = {
-                                            scope.launch {
-                                                busy = true
-                                                runCatching {
-                                                    api.decideNotice(n.id, "denied")
-                                                    notices = api.listNotices()
-                                                }.onFailure { onError(it.message) }
-                                                busy = false
-                                            }
-                                        },
-                                    ) { Text("Denegar") }
+                                if (n.kind == "visit_qr") {
+                                    Text(
+                                        "Aviso informativo. Portería abre; no hace falta autorizar.",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                } else {
+                                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                        Button(
+                                            enabled = !busy,
+                                            onClick = {
+                                                scope.launch {
+                                                    busy = true
+                                                    runCatching {
+                                                        api.decideNotice(n.id, "approved")
+                                                        notices = api.listNotices()
+                                                    }.onFailure { onError(it.message) }
+                                                    busy = false
+                                                }
+                                            },
+                                        ) { Text("Autorizar") }
+                                        OutlinedButton(
+                                            enabled = !busy,
+                                            onClick = {
+                                                scope.launch {
+                                                    busy = true
+                                                    runCatching {
+                                                        api.decideNotice(n.id, "denied")
+                                                        notices = api.listNotices()
+                                                    }.onFailure { onError(it.message) }
+                                                    busy = false
+                                                }
+                                            },
+                                        ) { Text("Denegar") }
+                                    }
                                 }
                             }
                         }
@@ -1066,6 +1129,7 @@ private fun MetricCard(
 @Composable
 fun ApprovalDetail(
     item: ApprovalItem,
+    api: GuardApi? = null,
     error: String? = null,
     busy: Boolean = false,
     onBack: () -> Unit,
@@ -1081,6 +1145,80 @@ fun ApprovalDetail(
     var policy by remember { mutableStateOf("") }
     var until by remember { mutableStateOf("") }
     var guardCode by remember { mutableStateOf("") }
+    var artUntil by remember { mutableStateOf("") }
+    var artCompany by remember { mutableStateOf("") }
+    var licUntil by remember { mutableStateOf("") }
+    var licNumber by remember { mutableStateOf("") }
+    var vehPhoto by remember { mutableStateOf<String?>(null) }
+    var artPhoto by remember { mutableStateOf<String?>(null) }
+    var licPhoto by remember { mutableStateOf<String?>(null) }
+    var docTarget by remember { mutableStateOf("veh") }
+    var scanDni by remember { mutableStateOf(false) }
+    var localError by remember { mutableStateOf<String?>(null) }
+    var saving by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val takePic = rememberLauncherForActivityResult(ActivityResultContracts.TakePicturePreview()) { bmp ->
+        if (bmp == null || api == null) return@rememberLauncherForActivityResult
+        val out = java.io.ByteArrayOutputStream()
+        bmp.compress(android.graphics.Bitmap.CompressFormat.JPEG, 82, out)
+        val raw = android.util.Base64.encodeToString(out.toByteArray(), android.util.Base64.NO_WRAP)
+        scope.launch {
+            runCatching {
+                val cropped = api.documentScan(raw)
+                when (docTarget) {
+                    "art" -> artPhoto = cropped
+                    "lic" -> licPhoto = cropped
+                    else -> vehPhoto = cropped
+                }
+            }
+        }
+    }
+
+    fun persistFichaThen(decision: String?) {
+        val a = api
+        scope.launch {
+            saving = true
+            localError = null
+            runCatching {
+                if (a != null) {
+                    a.saveFicha(
+                        item.id,
+                        dni,
+                        plate,
+                        company,
+                        policy,
+                        until,
+                        vehPhoto,
+                        artUntil,
+                        artCompany,
+                        artPhoto,
+                        licUntil,
+                        licNumber,
+                        licPhoto,
+                    )
+                }
+                if (decision != null) {
+                    onDecide(decision, comment, trunk, dni, company, policy, until, plate)
+                }
+            }.onFailure { localError = it.message ?: "No se pudo guardar la ficha" }
+            saving = false
+        }
+    }
+
+    if (scanDni) {
+        BarcodeScanScreen(
+            title = "DNI (PDF417 o QR)",
+            onClose = { scanDni = false },
+            onResult = { raw ->
+                scanDni = false
+                scope.launch {
+                    val n = runCatching { api?.parseDni(raw) }.getOrNull()
+                    if (!n.isNullOrBlank()) dni = n
+                }
+            },
+        )
+        return
+    }
 
     val out = item.sentido == "out"
 
@@ -1098,6 +1236,11 @@ fun ApprovalDetail(
                         Text(
                             text = "Lote ${item.lotNumber ?: "—"}",
                             style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            text = if (item.reason == "walk_in") "Walk-in · espera titular" else "QR presentado · espera aprobación",
+                            style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
@@ -1127,7 +1270,7 @@ fun ApprovalDetail(
                         .padding(horizontal = 16.dp, vertical = 12.dp),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    if (error != null) {
+                    if (error != null || localError != null) {
                         Surface(
                             color = MaterialTheme.colorScheme.errorContainer,
                             shape = RoundedCornerShape(8.dp),
@@ -1144,12 +1287,21 @@ fun ApprovalDetail(
                                     tint = MaterialTheme.colorScheme.onErrorContainer
                                 )
                                 Text(
-                                    text = error,
+                                    text = error ?: localError ?: "",
                                     style = MaterialTheme.typography.bodyMedium,
                                     color = MaterialTheme.colorScheme.onErrorContainer
                                 )
                             }
                         }
+                    }
+
+                    OutlinedButton(
+                        onClick = { persistFichaThen(null) },
+                        enabled = !busy && !saving,
+                        modifier = Modifier.fillMaxWidth().height(44.dp),
+                        shape = RoundedCornerShape(10.dp),
+                    ) {
+                        Text("Guardar ficha", fontWeight = FontWeight.SemiBold)
                     }
 
                     Row(
@@ -1158,7 +1310,7 @@ fun ApprovalDetail(
                     ) {
                         OutlinedButton(
                             onClick = { onDecide("denied", comment, trunk, dni, company, policy, until, plate) },
-                            enabled = !busy,
+                            enabled = !busy && !saving,
                             modifier = Modifier
                                 .weight(1f)
                                 .height(48.dp),
@@ -1173,8 +1325,8 @@ fun ApprovalDetail(
                         }
 
                         Button(
-                            onClick = { onDecide("approved", comment, trunk, dni, company, policy, until, plate) },
-                            enabled = !busy,
+                            onClick = { persistFichaThen("approved") },
+                            enabled = !busy && !saving,
                             modifier = Modifier
                                 .weight(1f)
                                 .height(48.dp),
@@ -1183,7 +1335,7 @@ fun ApprovalDetail(
                                 containerColor = MaterialTheme.colorScheme.primary
                             )
                         ) {
-                            if (busy) {
+                            if (busy || saving) {
                                 CircularProgressIndicator(
                                     modifier = Modifier.size(20.dp),
                                     color = MaterialTheme.colorScheme.onPrimary,
@@ -1210,7 +1362,7 @@ fun ApprovalDetail(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            if (item.reason == "expired" || item.missing.isNotEmpty() || item.goodsAlert) {
+            if (item.reason == "expired" || item.missing.isNotEmpty() || item.goodsAlert || item.expiredDocs.isNotEmpty()) {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (item.reason == "expired") {
                         Surface(
@@ -1286,6 +1438,46 @@ fun ApprovalDetail(
                             }
                         }
                     }
+                    if (item.expiredDocs.isNotEmpty()) {
+                        Surface(
+                            color = MaterialTheme.colorScheme.tertiaryContainer,
+                            shape = RoundedCornerShape(10.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Text(
+                                    text = "Vencido: ${item.expiredDocs.joinToString(", ")}. Sin autorización del titular no se puede abrir.",
+                                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
+                                )
+                                when (item.ownerAuthStatus) {
+                                    "owner_approved" -> Text(
+                                        "El titular autorizó la excepción.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                    "pending_owner" -> Text(
+                                        "Esperando al lote.",
+                                        style = MaterialTheme.typography.bodySmall,
+                                    )
+                                    else -> OutlinedButton(
+                                        onClick = {
+                                            val a = api ?: return@OutlinedButton
+                                            scope.launch {
+                                                localError = null
+                                                runCatching { a.expiredException(item.id) }
+                                                    .onFailure { localError = it.message }
+                                            }
+                                        },
+                                        enabled = !busy && !saving,
+                                    ) {
+                                        Text("Pedir autorización al titular")
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
 
@@ -1319,6 +1511,9 @@ fun ApprovalDetail(
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(10.dp)
                     )
+                    OutlinedButton(onClick = { scanDni = true }, modifier = Modifier.fillMaxWidth()) {
+                        Text("Escanear DNI")
+                    }
                 }
             }
 
@@ -1380,6 +1575,40 @@ fun ApprovalDetail(
                             modifier = Modifier.fillMaxWidth(),
                             shape = RoundedCornerShape(10.dp)
                         )
+                        OutlinedButton(
+                            onClick = {
+                                docTarget = "veh"
+                                takePic.launch(null)
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(if (vehPhoto != null) "Tarjeta de seguro lista" else "Foto tarjeta de seguro")
+                        }
+                        OutlinedTextField(
+                            value = licUntil,
+                            onValueChange = { licUntil = it },
+                            label = { Text("Licencia vence (opcional)") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(10.dp)
+                        )
+                        OutlinedTextField(
+                            value = licNumber,
+                            onValueChange = { licNumber = it },
+                            label = { Text("Nro. de licencia") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(10.dp)
+                        )
+                        OutlinedButton(
+                            onClick = {
+                                docTarget = "lic"
+                                takePic.launch(null)
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(if (licPhoto != null) "Foto de licencia lista" else "Foto licencia")
+                        }
 
                         Surface(
                             shape = RoundedCornerShape(10.dp),
@@ -1403,6 +1632,53 @@ fun ApprovalDetail(
                                     color = MaterialTheme.colorScheme.onSurface
                                 )
                             }
+                        }
+                    }
+                }
+            }
+
+            if (item.needsArt) {
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(8.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline),
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Text(
+                            text = "ART / SEGURO DE VIDA",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                        OutlinedTextField(
+                            value = artCompany,
+                            onValueChange = { artCompany = it },
+                            label = { Text("Compañía") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(10.dp)
+                        )
+                        OutlinedTextField(
+                            value = artUntil,
+                            onValueChange = { artUntil = it },
+                            label = { Text("Vence (AAAA-MM-DD)") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(10.dp)
+                        )
+                        OutlinedButton(
+                            onClick = {
+                                docTarget = "art"
+                                takePic.launch(null)
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Text(if (artPhoto != null) "Constancia recortada lista" else "Foto ART / seguro de vida")
                         }
                     }
                 }
@@ -1612,7 +1888,10 @@ fun ApprovalDetailPreview() {
         guestDni = "32984102",
         patente = "AA 123 BB",
         needsTrunk = true,
+        needsArt = false,
+        visitKind = "social",
         missing = listOf("Seguro al día"),
+        expiredDocs = emptyList(),
         lotNumber = "42",
         ownerName = "Juan Pérez",
         ownerPhone = "+5491155551234",

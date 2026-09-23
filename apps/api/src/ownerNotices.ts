@@ -6,7 +6,7 @@ import { nid } from "./scope.js";
 import { fanoutLotNotice } from "./pushNotify.js";
 import { publishNoticeToHub } from "./hubSync.js";
 
-export type OwnerNoticeKind = "walk_in" | "goods" | "minor_transfer";
+export type OwnerNoticeKind = "walk_in" | "goods" | "minor_transfer" | "visit_qr" | "expired_docs";
 
 export async function expireOwnerNotices(now = new Date()) {
   const pending = await db.select().from(ownerNotices).where(eq(ownerNotices.status, "pending"));
@@ -15,7 +15,7 @@ export async function expireOwnerNotices(now = new Date()) {
     const exp = row.expiresAt instanceof Date ? row.expiresAt.getTime() : Number(row.expiresAt || 0);
     if (!exp || exp > t) continue;
     await db.update(ownerNotices).set({ status: "expired" }).where(eq(ownerNotices.id, row.id));
-    if (row.approvalId && row.kind === "walk_in") {
+    if (row.approvalId && (row.kind === "walk_in" || row.kind === "expired_docs")) {
       await db
         .update(guardApprovals)
         .set({ ownerAuthStatus: "owner_expired" })
@@ -123,6 +123,7 @@ export async function decideOwnerNotice(input: {
     .where(and(eq(ownerNotices.id, input.noticeId), eq(ownerNotices.propertyId, input.propertyId)))
     .get();
   if (!row) return { ok: false, error: "Aviso no encontrado" };
+  if (row.kind === "visit_qr") return { ok: false, error: "Este aviso es informativo" };
   if (row.status !== "pending") return { ok: false, error: "Ese aviso ya se resolvió" };
   const now = new Date();
   await db
@@ -135,7 +136,7 @@ export async function decideOwnerNotice(input: {
     .where(eq(ownerNotices.id, row.id));
 
   if (row.approvalId) {
-    if (row.kind === "walk_in") {
+    if (row.kind === "walk_in" || row.kind === "expired_docs") {
       await db
         .update(guardApprovals)
         .set({

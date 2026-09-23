@@ -539,6 +539,11 @@ export function OwnerPortal() {
               >
                 <p className="text-sm font-bold text-amber-900 dark:text-amber-200">{n.title}</p>
                 <p className="mt-1 text-xs text-amber-800 dark:text-amber-300">{n.message}</p>
+                {n.kind === "visit_qr" ? (
+                  <p className="mt-2 text-[11px] font-semibold text-amber-700 dark:text-amber-400">
+                    Aviso informativo. Portería abre; no hace falta autorizar.
+                  </p>
+                ) : (
                 <div className="mt-3 flex gap-2">
                   <button
                     type="button"
@@ -565,6 +570,7 @@ export function OwnerPortal() {
                     Rechazar
                   </button>
                 </div>
+                )}
               </article>
             ))}
           {notices
