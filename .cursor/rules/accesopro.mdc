@@ -27,4 +27,4 @@ Leer `AGENTS.md` antes de tocar auth, módulos, actuadores, plano, alarmas o pun
 - No inventar otro listener de teclado por pantalla (salvo `useHidWedge` para pistola DNI).
 - Inputs de formulario **sin** `placeholder`. La etiqueta (`label`) nombra el campo. Búsquedas: `aria-label` si no hay label visible.
 
-- **App Android:** si el cambio toca avisos, cola de portería, QR de visita, push o estados de visita, incluir `apps/android` en el mismo trabajo (sin bumpear `versionCode`).
+- **App Android:** si el cambio toca avisos, cola de portería, QR de visita, push o estados de visita, incluir `apps/android` en el mismo trabajo (sin bumpear `versionCode`). Toda pantalla o paso nuevo en la app: `BackHandler` que vuelva atrás (si no, Atrás cierra la app) e inputs dentro de scroll; no quitar el `imePadding()` de la raíz. Detalle: `.cursor/rules/android-play-release.mdc`.

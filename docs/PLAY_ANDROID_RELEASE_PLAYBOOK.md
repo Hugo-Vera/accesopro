@@ -10,6 +10,8 @@ App: **AccesoPro Guardia** (`ar.accesopro.guard`) · código en `apps/android`.
 2. `compileSdk` / `targetSdk` 36.
 3. Release: `minifyEnabled` + `shrinkResources` + conservar `mapping.txt`.
 4. Edge-to-edge: `enableEdgeToEdge()`; no lockear orientación.
+   - Anti-error teclado: con edge-to-edge el `adjustResize` no achica la ventana y el teclado tapa el input. Fix en la raíz: `Box(Modifier.imePadding())` alrededor de `GuardApp`. No quitarlo.
+   - Anti-error Atrás: navegación por estado sin NavHost → sin `BackHandler` el Atrás cierra la app. Cada pantalla/paso nuevo registra su `BackHandler` (ver `backAction` en `GuardApp` y `ApprovalDetail`).
 
 ## Qué hace
 

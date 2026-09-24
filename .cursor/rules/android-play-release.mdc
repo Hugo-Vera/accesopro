@@ -11,3 +11,9 @@ Playbook: `docs/PLAY_ANDROID_RELEASE_PLAYBOOK.md`
 - No bumpear `versionCode` ni generar/subir AAB sin pedido explícito.
 - `versionCode` monótono; `targetSdk`/`compileSdk` al nivel que Play exige.
 - Release: minify + shrinkResources; conservar `mapping.txt`.
+
+## UX obligatoria en cada pantalla nueva
+
+- **Teclado:** con `enableEdgeToEdge()` el `adjustResize` del manifest ya no achica la ventana. La raíz (`MainActivity` → `Box(Modifier.imePadding())`) lo resuelve para toda la app: no sacarlo. Pantallas con inputs van dentro de un `verticalScroll` / `LazyColumn` para que el campo con foco suba solo. Un `Dialog` con `decorFitsSystemWindows = false` y campos necesita su propio `imePadding()`.
+- **Atrás:** la navegación es por estado (sin NavHost). Toda pantalla o paso nuevo que se muestre con `if (estado) { … return }` necesita su `BackHandler` que vuelva al paso anterior; si no, el Atrás del sistema cierra la app. El `BackHandler` general está en `GuardApp` (`backAction`); los pasos internos (páginas de la ficha, lote → tipo de ingreso) registran el suyo y tienen prioridad. Solo la pantalla raíz (cola / login) sale de la app.
+- Probar las dos cosas en el celular antes de dar por cerrada una pantalla: tocar un input abajo de todo y apretar Atrás en cada paso.

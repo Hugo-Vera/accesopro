@@ -1,5 +1,6 @@
 package ar.accesopro.guard
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -284,6 +285,7 @@ fun LotPickerScreen(
     }
 
     val lotPicked = picked
+    BackHandler(enabled = step == "type") { step = "lot" }
     if (step == "type" && lotPicked != null) {
         VisitTypeScreen(
             mode = mode,

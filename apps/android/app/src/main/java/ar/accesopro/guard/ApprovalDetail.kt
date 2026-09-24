@@ -2,6 +2,7 @@ package ar.accesopro.guard
 
 import android.content.Intent
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -253,6 +254,15 @@ fun ApprovalDetail(
                 }
                 .onFailure { showApiError(it) }
             saving = false
+        }
+    }
+
+    BackHandler {
+        when {
+            scanDni -> scanDni = false
+            scanCompanion -> scanCompanion = false
+            page > 0 -> pageKey = pages[page - 1]
+            else -> onBack()
         }
     }
 

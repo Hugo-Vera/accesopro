@@ -10,6 +10,7 @@ import android.os.VibrationEffect
 import android.os.Vibrator
 import android.os.VibratorManager
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -177,8 +178,12 @@ class MainActivity : ComponentActivity() {
         val prefs = getSharedPreferences("guard", MODE_PRIVATE)
         setContent {
             GuardTheme {
+                // Con enableEdgeToEdge el adjustResize ya no achica la ventana: el teclado tapaba los inputs.
+                // imePadding en la raíz achica toda la app y Scaffold/NavigationBar descuentan el inset consumido.
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    GuardApp(prefs)
+                    Box(Modifier.fillMaxSize().imePadding()) {
+                        GuardApp(prefs)
+                    }
                 }
             }
         }
@@ -290,6 +295,19 @@ fun GuardApp(prefs: android.content.SharedPreferences) {
         )
         return
     }
+
+    // Pantallas por estado, sin NavHost: sin esto el Atrás del sistema cierra la app.
+    // Las pantallas hijas registran su BackHandler después y tienen prioridad (pasos internos).
+    val backAction: (() -> Unit)? = when {
+        scanOpen -> { { scanOpen = false } }
+        pendingScan != null -> { { pendingScan = null } }
+        pendingParsedDni != null && dniVisitMode != null -> { { dniVisitMode = null; error = null } }
+        pendingParsedDni != null -> { { pendingParsedDni = null; pendingScanRaw = null; error = null } }
+        role != "resident" && selected != null -> { { selected = null; error = null } }
+        role != "resident" && mainTab != "cola" -> { { mainTab = "cola" } }
+        else -> null
+    }
+    BackHandler(enabled = backAction != null) { backAction?.invoke() }
 
     val current = selected
     if (scanOpen) {
@@ -1024,6 +1042,7 @@ fun ResidentHome(
             delay(2000)
         }
     }
+    BackHandler(enabled = showMyQr) { showMyQr = false }
     if (showMyQr) {
         Scaffold(
             topBar = {
