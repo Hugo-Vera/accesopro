@@ -4,15 +4,23 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { QrCode, X } from "lucide-react";
 import { useEscapeKey } from "@/hooks/useEscapeKey";
+import { EventPhoto } from "@/components/ops/EventPhoto";
+import { useDash } from "@/components/DashboardProvider";
 
 export type VisitHoldAlert = {
   id: string;
   passId: string;
   approvalId?: string;
   guestName: string;
+  guestDni?: string | null;
+  qrHint?: string | null;
+  scanChannelLabel?: string | null;
+  scannedByName?: string | null;
   lotNumber?: string | null;
   sentido: "in" | "out";
   reason?: string;
+  photoStored?: boolean;
+  dwellLabel?: string | null;
 };
 
 type Props = {
@@ -22,6 +30,7 @@ type Props = {
 };
 
 export function LiveVisitHoldToast({ alert, onDismiss, onOpenFicha }: Props) {
+  const { tenantId } = useDash();
   const onDismissRef = useRef(onDismiss);
   onDismissRef.current = onDismiss;
   const [animKey, setAnimKey] = useState(0);
@@ -114,8 +123,22 @@ export function LiveVisitHoldToast({ alert, onDismiss, onOpenFicha }: Props) {
               placeItems: "center",
               background: isDark ? "#78350f" : "#fde68a",
               borderRight: "2px solid #fbbf24",
+              overflow: "hidden",
+              position: "relative",
             }}
           >
+            {alert.id ? (
+              <EventPhoto
+                eventId={alert.id}
+                tenantId={tenantId}
+                photoStored={alert.photoStored}
+                createdAt={Date.now()}
+                alt={alert.guestName}
+                forceRetry
+                className="h-full w-full object-cover"
+                style={{ width: "100%", height: "100%", objectFit: "cover", position: "absolute", inset: 0 }}
+              />
+            ) : null}
             <QrCode size={36} color={isDark ? "#fde68a" : "#92400e"} />
           </div>
           <div style={{ flex: 1, minWidth: 0, padding: "12px 12px 12px 14px" }}>
@@ -181,6 +204,21 @@ export function LiveVisitHoldToast({ alert, onDismiss, onOpenFicha }: Props) {
               {alert.guestName}
               {alert.lotNumber ? ` · Lote ${alert.lotNumber}` : ""}
             </div>
+            <div style={{ marginTop: 4, fontSize: 12, color: isDark ? "#cbd5e1" : "#475569", lineHeight: 1.35 }}>
+              {alert.guestDni ? `DNI ${alert.guestDni}` : "DNI pendiente"}
+              {alert.qrHint ? ` · QR ${alert.qrHint}` : ""}
+            </div>
+            {alert.scanChannelLabel ? (
+              <div style={{ marginTop: 2, fontSize: 11, color: isDark ? "#94a3b8" : "#64748b" }}>
+                {alert.scanChannelLabel}
+                {alert.scannedByName ? ` · ${alert.scannedByName}` : ""}
+              </div>
+            ) : null}
+            {alert.dwellLabel ? (
+              <div style={{ marginTop: 2, fontSize: 11, fontWeight: 700, color: isDark ? "#fcd34d" : "#b45309" }}>
+                {alert.dwellLabel}
+              </div>
+            ) : null}
             <div style={{ marginTop: 6, fontSize: 12, fontWeight: 700, color: isDark ? "#fcd34d" : "#b45309" }}>
               Aprobá para abrir. El QR no abre solo.
             </div>

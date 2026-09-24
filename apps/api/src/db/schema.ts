@@ -481,6 +481,8 @@ export const visitPasses = sqliteTable("visit_passes", {
   dahuaCardNo: text("dahua_card_no"),
   scannedInAt: integer("scanned_in_at", { mode: "timestamp_ms" }),
   scannedOutAt: integer("scanned_out_at", { mode: "timestamp_ms" }),
+  /** Menores vistos en el ingreso (solo cantidad, sin identificar). */
+  minorsInCount: integer("minors_in_count").notNull().default(0),
   createdByUserId: text("created_by_user_id")
     .notNull()
     .references(() => users.id),
@@ -519,6 +521,14 @@ export const guardApprovals = sqliteTable("guard_approvals", {
   comment: text("comment"),
   guardUserId: text("guard_user_id").references(() => users.id),
   deviceId: text("device_id"),
+  /** totem | web | app */
+  scanChannel: text("scan_channel"),
+  scannedByUserId: text("scanned_by_user_id").references(() => users.id),
+  /** login | guard_code */
+  approvedVia: text("approved_via"),
+  phoneAuthVia: text("phone_auth_via"),
+  /** Carril del lector ASI si el QR se presentó en un tótem (puede diferir del sentido de la visita). */
+  readerSentido: text("reader_sentido"),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
   decidedAt: integer("decided_at", { mode: "timestamp_ms" }),
   /** none | pending_owner | owner_approved | owner_denied | owner_expired */
@@ -531,6 +541,9 @@ export const guardApprovals = sqliteTable("guard_approvals", {
   goodsAuthorizedByUserId: text("goods_authorized_by_user_id").references(() => users.id),
   exitAdultsCount: integer("exit_adults_count"),
   exitMinorsCount: integer("exit_minors_count"),
+  /** Cantidad de menores observada en esta presentación (ingreso o egreso). */
+  minorsCount: integer("minors_count"),
+  minorsMismatchNotified: integer("minors_mismatch_notified", { mode: "boolean" }).notNull().default(false),
   originPropertyId: text("origin_property_id").references(() => properties.id),
   minorTransferAuthorizedByUserId: text("minor_transfer_authorized_by_user_id").references(() => users.id),
 });

@@ -234,6 +234,8 @@ export function OwnerPortal() {
   const [inviteFamily, setInviteFamily] = useState<FamilyMember | null>(null);
   const [inviteShare, setInviteShare] = useState<{ waUrl: string; shareText: string; activateUrl: string } | null>(null);
   const [canManageFamily, setCanManageFamily] = useState(true);
+  const [canManageStaff, setCanManageStaff] = useState(true);
+  const [canManageSchedules, setCanManageSchedules] = useState(true);
   const [isTitular, setIsTitular] = useState(true);
   const [showServiceModal, setShowServiceModal] = useState(false);
   const [showVisitModal, setShowVisitModal] = useState(false);
@@ -283,6 +285,8 @@ export function OwnerPortal() {
         features?: PortalFeatures;
         isTitular?: boolean;
         canManageFamily?: boolean;
+        canManageStaff?: boolean;
+        canManageSchedules?: boolean;
         visitAuthDefaultHours?: number;
         tenantName?: string | null;
       }>("/api/residents/me");
@@ -295,6 +299,8 @@ export function OwnerPortal() {
       setPanicEnabled(Boolean(me.panicEnabled));
       setIsTitular(me.isTitular !== false);
       setCanManageFamily(me.canManageFamily !== false);
+      setCanManageStaff(me.canManageStaff === true);
+      setCanManageSchedules(me.canManageSchedules === true);
       if (me.visitAuthDefaultHours) setVisitAuthDefaultHours(me.visitAuthDefaultHours);
       setTenantName(me.tenantName || "");
       if (me.features) setFeatures(me.features);
@@ -544,7 +550,13 @@ export function OwnerPortal() {
                     Aviso informativo. Portería abre; no hace falta autorizar.
                   </p>
                 ) : (
-                <div className="mt-3 flex gap-2">
+                <div className="mt-3 space-y-2">
+                  {n.kind === "minors_mismatch" ? (
+                    <p className="text-[11px] font-semibold text-amber-800 dark:text-amber-300">
+                      Portería marcó una diferencia de menores al salir de tu lote. Autorizá si corresponde.
+                    </p>
+                  ) : null}
+                <div className="flex gap-2">
                   <button
                     type="button"
                     className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white"
@@ -570,6 +582,7 @@ export function OwnerPortal() {
                     Rechazar
                   </button>
                 </div>
+                </div>
                 )}
               </article>
             ))}
@@ -588,7 +601,8 @@ export function OwnerPortal() {
       <nav className="flex flex-wrap gap-2 rounded-xl border border-slate-200 bg-white p-1.5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
         {ALL_TABS.filter((t) => {
           if ("needQr" in t && t.needQr && !features.qr) return false;
-          if (!canManageFamily && (t.key === "familia" || t.key === "servicios")) return false;
+          if (t.key === "familia" && !canManageFamily) return false;
+          if (t.key === "servicios" && !canManageStaff) return false;
           return true;
         }).map((t) => {
           const Icon = t.icon;
@@ -1573,6 +1587,8 @@ export function OwnerPortal() {
                 />
               </div>
 
+              {canManageSchedules ? (
+              <>
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">
@@ -1596,9 +1612,6 @@ export function OwnerPortal() {
                     className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100"
                   />
                 </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">Vigente desde</label>
                   <input type="date" name="fechaDesde" className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100" />
@@ -1608,14 +1621,6 @@ export function OwnerPortal() {
                   <input type="date" name="fechaHasta" className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100" />
                 </div>
               </div>
-
-              {features.face ? (
-                <div>
-                  <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">Foto facial</label>
-                  <input type="file" name="photo" accept="image/*" className="mt-1 w-full text-xs" />
-                </div>
-              ) : null}
-
               <div>
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1.5">
                   Días Permitidos
@@ -1637,6 +1642,8 @@ export function OwnerPortal() {
                   ))}
                 </div>
               </div>
+              </>
+              ) : null}
 
               <div className="mt-6 flex justify-end gap-2 border-t border-slate-100 pt-3 dark:border-slate-800">
                 <button

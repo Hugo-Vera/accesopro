@@ -451,6 +451,8 @@ residents.get("/me", async (c) => {
     features,
     isTitular: ctx.isTitular !== false,
     canManageFamily: ctx.canManageFamily !== false && (await userHasCapability(c.get("user"), "access.family.manage")),
+    canManageStaff: await userHasCapability(c.get("user"), "staff.employees"),
+    canManageSchedules: await userHasCapability(c.get("user"), "staff.schedules"),
     visitAuthDefaultHours: await getVisitAuthDefaultHours(scoped.tenantId),
     tenantName: tenant?.name ?? null,
   });
@@ -756,6 +758,10 @@ residents.post("/me/services", async (c) => {
   if ("error" in scoped) return scoped.error;
   const ctx = await ownerContext(c.get("user"));
   if (!ctx) return c.json({ error: "Perfil de propietario no encontrado" }, 404);
+  if (!(await userHasCapability(c.get("user"), "staff.employees"))) {
+    return c.json({ error: "Sin permiso para cargar personal del lote" }, 403);
+  }
+  const canSchedules = await userHasCapability(c.get("user"), "staff.schedules");
   const body = await c.req.json<{
     role?: string;
     name?: string;
@@ -777,6 +783,9 @@ residents.post("/me/services", async (c) => {
   const dahuaUserId = `svc_${id.slice(-8)}`;
   const fechaDesde = body.fechaDesde ? parseDateInput(body.fechaDesde) : null;
   const fechaHasta = body.fechaHasta ? parseDateInput(body.fechaHasta) : null;
+  const horaDesde = canSchedules ? body.horaDesde?.trim() || null : null;
+  const horaHasta = canSchedules ? body.horaHasta?.trim() || null : null;
+  const diasSemana = canSchedules && body.diasSemana ? JSON.stringify(body.diasSemana) : null;
   await db.insert(propertyServices).values({
     id,
     propertyId: ctx.property.id,
@@ -785,11 +794,11 @@ residents.post("/me/services", async (c) => {
     dni: body.dni?.trim() || null,
     patente: body.patente ? normalizePlate(body.patente) : null,
     phone: body.phone?.trim() || null,
-    horaDesde: body.horaDesde?.trim() || null,
-    horaHasta: body.horaHasta?.trim() || null,
-    diasSemana: body.diasSemana ? JSON.stringify(body.diasSemana) : null,
-    fechaDesde,
-    fechaHasta,
+    horaDesde,
+    horaHasta,
+    diasSemana,
+    fechaDesde: canSchedules ? fechaDesde : null,
+    fechaHasta: canSchedules ? fechaHasta : null,
     notes: body.notes?.trim() || null,
     photoBase64: body.photoBase64 || null,
     dahuaUserId,
@@ -813,11 +822,11 @@ residents.post("/me/services", async (c) => {
         userType: 0,
       },
       {
-        horaDesde: body.horaDesde,
-        horaHasta: body.horaHasta,
-        diasSemana: body.diasSemana,
-        fechaDesde,
-        fechaHasta,
+        horaDesde: canSchedules ? body.horaDesde : undefined,
+        horaHasta: canSchedules ? body.horaHasta : undefined,
+        diasSemana: canSchedules ? body.diasSemana : undefined,
+        fechaDesde: canSchedules ? fechaDesde : undefined,
+        fechaHasta: canSchedules ? fechaHasta : undefined,
       },
     );
     await db.update(propertyServices).set({ dahuaSynced: enrollOk(results) }).where(eq(propertyServices.id, id));
@@ -831,6 +840,9 @@ residents.delete("/me/services/:id", async (c) => {
   if ("error" in scoped) return scoped.error;
   const ctx = await ownerContext(c.get("user"));
   if (!ctx) return c.json({ error: "Perfil de propietario no encontrado" }, 404);
+  if (!(await userHasCapability(c.get("user"), "staff.employees"))) {
+    return c.json({ error: "Sin permiso para quitar personal del lote" }, 403);
+  }
   const row = await db
     .select()
     .from(propertyServices)

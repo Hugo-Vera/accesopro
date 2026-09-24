@@ -103,3 +103,35 @@ export function parseDniScan(raw: string): ParsedDniScan | null {
 
   return null;
 }
+
+export function dniDigits(raw: string | null | undefined) {
+  return String(raw || "").replace(/\D/g, "");
+}
+
+export function foldPersonName(raw: string | null | undefined) {
+  return String(raw || "")
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export function parsedFullName(parsed: ParsedDniScan) {
+  return `${parsed.lastName} ${parsed.firstName}`.replace(/\s+/g, " ").trim();
+}
+
+/** DNI y nombre del plástico coinciden con lo precargado por el titular. */
+export function parsedIdentityMatches(parsed: ParsedDniScan, guestDni?: string | null, guestName?: string | null) {
+  const dniOk = Boolean(parsed.dni) && dniDigits(parsed.dni) === dniDigits(guestDni);
+  if (!dniOk) return false;
+  const expected = foldPersonName(guestName);
+  const a = foldPersonName(parsedFullName(parsed));
+  const b = foldPersonName(`${parsed.firstName} ${parsed.lastName}`);
+  if (!expected || !a) return dniOk && !expected;
+  if (expected === a || expected === b) return true;
+  const last = foldPersonName(parsed.lastName);
+  const first = foldPersonName(parsed.firstName);
+  return Boolean(last && first && expected.includes(last) && expected.includes(first));
+}

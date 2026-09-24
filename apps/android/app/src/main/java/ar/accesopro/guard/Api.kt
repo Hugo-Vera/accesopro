@@ -33,7 +33,23 @@ data class ApprovalItem(
     val needsPhoneAuth: Boolean,
     val ownerAuthorizedByName: String?,
     val emergencies: List<Emergency>,
+    val qrHint: String? = null,
+    val scanChannelLabel: String? = null,
+    val scannedByName: String? = null,
+    val approvedByName: String? = null,
+    val approvedVia: String? = null,
+    val phoneAuthVia: String? = null,
+    val readerSentido: String? = null,
+    val laneMismatch: Boolean = false,
+    val minorsInCount: Int = 0,
+    val minorsCount: Int = 0,
+    val minorsMismatchNotified: Boolean = false,
+    val minorTransferAuthorized: Boolean = false,
+    val dwellLabel: String? = null,
+    val companions: List<CompanionItem> = emptyList(),
 )
+
+data class CompanionItem(val name: String, val dni: String?)
 
 data class CensusLot(
     val lotNumber: String,
@@ -61,6 +77,17 @@ data class OwnerNotice(
     val kind: String,
     val decidedByName: String?,
 )
+
+data class ParsedDni(
+    val dni: String,
+    val firstName: String,
+    val lastName: String,
+    val tramite: String,
+    val gender: String,
+    val birthDate: String,
+) {
+    fun fullName(): String = "$lastName $firstName".replace(Regex("\\s+"), " ").trim()
+}
 
 data class LoginResult(
     val token: String,
@@ -223,18 +250,46 @@ class GuardApi(
                 val e = em.getJSONObject(it)
                 Emergency(e.optString("label"), e.optString("phone"))
             },
+            qrHint = o.optString("qrHint").ifBlank { null },
+            scanChannelLabel = o.optString("scanChannelLabel").ifBlank { null },
+            scannedByName = o.optString("scannedByName").ifBlank { null },
+            approvedByName = o.optString("approvedByName").ifBlank { null },
+            approvedVia = o.optString("approvedVia").ifBlank { null },
+            phoneAuthVia = o.optString("phoneAuthVia").ifBlank { null },
+            readerSentido = o.optString("readerSentido").ifBlank { null },
+            laneMismatch = o.optBoolean("laneMismatch"),
+            minorsInCount = o.optInt("minorsInCount"),
+            minorsCount = o.optInt("minorsCount"),
+            minorsMismatchNotified = o.optBoolean("minorsMismatchNotified"),
+            minorTransferAuthorized = o.optBoolean("minorTransferAuthorized"),
+            dwellLabel = o.optString("dwellLabel").ifBlank { null },
+            companions = (0 until (o.optJSONArray("companions") ?: JSONArray()).length()).let {
+                val arr = o.optJSONArray("companions") ?: JSONArray()
+                (0 until arr.length()).map { i ->
+                    val c = arr.getJSONObject(i)
+                    CompanionItem(c.optString("name"), c.optString("dni").ifBlank { null })
+                }
+            },
         )
     }
 
-    suspend fun scanQr(cardRaw: String, sentido: String = "in"): ApprovalItem? = withContext(Dispatchers.IO) {
-        val json = post("/api/visitors/approvals/scan-qr", JSONObject().put("cardRaw", cardRaw).put("sentido", sentido))
+    suspend fun scanQr(cardRaw: String): ApprovalItem? = withContext(Dispatchers.IO) {
+        val json = post("/api/visitors/approvals/scan-qr", JSONObject().put("cardRaw", cardRaw).put("scanChannel", "app"))
         val item = json.optJSONObject("item") ?: return@withContext null
         parseItem(item)
     }
 
-    suspend fun parseDni(raw: String): String? = withContext(Dispatchers.IO) {
+    suspend fun parseDni(raw: String): ParsedDni? = withContext(Dispatchers.IO) {
         val json = post("/api/visitors/parse-dni", JSONObject().put("raw", raw))
-        json.optString("dni").ifBlank { null }
+        val dni = json.optString("dni").ifBlank { return@withContext null }
+        ParsedDni(
+            dni = dni,
+            firstName = json.optString("firstName"),
+            lastName = json.optString("lastName"),
+            tramite = json.optString("tramite"),
+            gender = json.optString("gender"),
+            birthDate = json.optString("birthDate"),
+        )
     }
 
     suspend fun documentScan(imageBase64: String): String = withContext(Dispatchers.IO) {
@@ -245,6 +300,7 @@ class GuardApi(
     suspend fun saveFicha(
         id: String,
         guestDni: String,
+        guestName: String,
         plate: String,
         company: String,
         policy: String,
@@ -256,8 +312,11 @@ class GuardApi(
         licUntil: String,
         licNumber: String,
         licPhoto: String?,
+        minorsCount: Int = 0,
+        companions: List<CompanionItem> = emptyList(),
     ) = withContext(Dispatchers.IO) {
         val body = JSONObject().put("guestDni", guestDni)
+        if (guestName.isNotBlank()) body.put("guestName", guestName)
         if (plate.isNotBlank()) body.put("patente", plate)
         if (company.isNotBlank() && policy.isNotBlank()) {
             val ins = JSONObject()
@@ -278,7 +337,25 @@ class GuardApi(
             if (!licPhoto.isNullOrBlank()) lic.put("photoBase64", licPhoto)
             body.put("driverLicense", lic)
         }
+        body.put("minorsCount", minorsCount)
+        if (companions.isNotEmpty()) {
+            val arr = JSONArray()
+            companions.forEach { c ->
+                arr.put(JSONObject().put("name", c.name).put("dni", c.dni ?: ""))
+            }
+            body.put("companions", arr)
+        }
         post("/api/visitors/approvals/$id/ficha", body)
+        Unit
+    }
+
+    suspend fun setMinorsCount(id: String, count: Int) = withContext(Dispatchers.IO) {
+        post("/api/visitors/approvals/$id/minors-count", JSONObject().put("count", count))
+        Unit
+    }
+
+    suspend fun notifyMinorsMismatch(id: String) = withContext(Dispatchers.IO) {
+        post("/api/visitors/approvals/$id/minors-mismatch", JSONObject())
         Unit
     }
 

@@ -62,7 +62,7 @@ export async function siteCensus(siteId: string) {
         const minorComps = comps.filter((x) => companionIsMinor(x));
         const adultComps = comps.filter((x) => !companionIsMinor(x));
         const a = 1 + adultComps.length;
-        const m = minorComps.length;
+        const m = Math.max(p.minorsInCount ?? 0, minorComps.length);
         adults += a;
         minors += m;
         guests.push({

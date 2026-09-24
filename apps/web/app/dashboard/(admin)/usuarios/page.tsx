@@ -7,8 +7,16 @@ import { useDash } from "@/components/DashboardProvider";
 import { CapabilityGate, PageHeader } from "@/components/PageHeader";
 import { useEscapeKey } from "@/hooks/useEscapeKey";
 import { Users, UserPlus, Shield, X, CheckCircle2, RotateCcw, Key } from "lucide-react";
+import { HelpTip } from "@/components/ui/HelpTip";
 
-type CapDef = { key: string; group: string; name: string; summary: string };
+type CapDef = {
+  key: string;
+  group: string;
+  name: string;
+  summary: string;
+  help?: string;
+  audience?: "staff" | "resident" | "both";
+};
 type StaffUser = {
   id: string;
   email: string;
@@ -146,7 +154,8 @@ export default function UsuariosPage() {
   const staff = rows.filter((u) => u.role !== "resident");
   const selectedUser = staff.find((r) => r.id === selected);
   const editable = selectedUser && selectedUser.role !== "tenant_admin";
-  const groups = [...new Set(catalog.map((c) => c.group))];
+  const staffCatalog = catalog.filter((c) => c.audience !== "resident");
+  const groups = [...new Set(staffCatalog.map((c) => c.group))];
 
   return (
     <CapabilityGate capability="core.users.read">
@@ -287,12 +296,15 @@ export default function UsuariosPage() {
                       {g}
                     </p>
                     <ul className="space-y-2">
-                      {catalog
+                      {staffCatalog
                         .filter((c) => c.group === g)
                         .map((c) => {
                           const pack = packByCap.get(c.key);
                           const packOff = Boolean(pack && !pack.enabled);
                           const isChecked = editCaps.includes(c.key);
+                          const helpText = packOff
+                            ? `${c.help || c.summary} El pack de este barrio está apagado: tildar esto no abre el menú.`
+                            : c.help || c.summary;
 
                           return (
                             <li key={c.key} className="flex items-start gap-2.5 text-xs">
@@ -308,17 +320,15 @@ export default function UsuariosPage() {
                                 }}
                               />
                               <div className="min-w-0 flex-1">
-                                <span className="font-semibold text-slate-800 dark:text-slate-200">
+                                <span className="inline-flex items-center gap-1 font-semibold text-slate-800 dark:text-slate-200">
                                   {c.name}
+                                  <HelpTip label={c.name} text={helpText} />
                                 </span>
                                 {packOff ? (
                                   <span className="ml-2 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-semibold text-amber-800 dark:bg-amber-950 dark:text-amber-300">
                                     Pack barrio apagado
                                   </span>
                                 ) : null}
-                                <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
-                                  {c.summary}
-                                </p>
                               </div>
                             </li>
                           );

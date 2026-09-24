@@ -5,6 +5,7 @@ import { useDash } from "@/components/DashboardProvider";
 import { PageHeader } from "@/components/PageHeader";
 import { ServerUpdatePanel } from "@/components/ServerUpdatePanel";
 import { api } from "@/lib/api";
+import { HelpTip } from "@/components/ui/HelpTip";
 
 export function ConfigPage() {
   const { plan, plans, modules, features, isPlatform, toggleModule, toggleFeature, assignPlan, can } = useDash();
@@ -132,6 +133,7 @@ export function ConfigPage() {
                       <div>
                         <div className="flex items-center gap-2">
                           <p className="text-sm font-medium text-slate-900 dark:text-white">{m.name}</p>
+                          <HelpTip label={m.name} text={m.help || m.summary} />
                           {locked ? (
                             <span className="rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-600 dark:bg-slate-800 dark:text-slate-400">
                               Fuera de plan
@@ -143,7 +145,6 @@ export function ConfigPage() {
                             </span>
                           ) : null}
                         </div>
-                        <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{m.summary}</p>
                       </div>
 
                       {isPlatform ? (
@@ -190,9 +191,9 @@ export function ConfigPage() {
                       <div>
                         <div className="flex items-center gap-2">
                           <p className="text-sm font-medium text-slate-900 dark:text-white">{f.name}</p>
+                          <HelpTip label={f.name} text={f.help || f.summary} />
                           <span className="font-mono text-[10px] text-slate-400 dark:text-slate-500">{f.key}</span>
                         </div>
-                        <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">{f.summary}</p>
                       </div>
 
                       <label className="relative flex cursor-pointer items-center gap-2 text-xs font-medium text-slate-700 dark:text-slate-300">

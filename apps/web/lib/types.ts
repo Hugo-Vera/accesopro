@@ -12,6 +12,7 @@ export type ModuleRow = {
   key: string;
   name: string;
   summary: string;
+  help?: string;
   alwaysOn: boolean;
   enabled: boolean;
   inPlan?: boolean;
@@ -41,6 +42,7 @@ export type FeatureRow = {
   parentModule: string;
   name: string;
   summary: string;
+  help?: string;
   capabilityKey: string;
   href: string | null;
   defaultOn: boolean;

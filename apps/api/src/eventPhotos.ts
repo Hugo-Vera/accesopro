@@ -12,6 +12,14 @@ export function saveEventPhoto(siteId: string, eventId: string, buf: Buffer) {
   writeFileSync(eventPhotoPath(siteId, eventId), buf);
 }
 
+export function copyEventPhoto(siteId: string, fromEventId: string, toEventId: string) {
+  if (!fromEventId || !toEventId || fromEventId === toEventId) return false;
+  const buf = readEventPhoto(siteId, fromEventId);
+  if (!buf) return false;
+  saveEventPhoto(siteId, toEventId, buf);
+  return true;
+}
+
 export function readEventPhoto(siteId: string, eventId: string): Buffer | null {
   const p = eventPhotoPath(siteId, eventId);
   if (!existsSync(p)) return null;

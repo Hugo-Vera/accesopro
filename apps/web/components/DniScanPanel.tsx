@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronDown, ScanLine } from "lucide-react";
 import { parseDniScan } from "@/lib/parseDni";
 import { cameraBlockReason, cameraHttpsUrl, cameraNeedsHttps, getCameraStream } from "@/lib/camera";
-import { createDniLiveDecoder, type ScanBox, type ScanHint, type ScanHit } from "@/lib/dniLiveScan";
+import { createDniLiveDecoder, type ScanBox, type ScanHit } from "@/lib/dniLiveScan";
 import { useHidWedge } from "@/hooks/useHidWedge";
 
 type Props = {
@@ -14,9 +14,6 @@ type Props = {
   active?: boolean;
   title?: string;
 };
-
-const QR_GUIDE: ScanBox = { x: 0.18, y: 0.08, w: 0.64, h: 0.72 };
-const PDF_GUIDE: ScanBox = { x: 0.08, y: 0.66, w: 0.84, h: 0.22 };
 
 function videoToDisplay(box: ScanBox, vw: number, vh: number, elW: number, elH: number) {
   const scale = Math.min(elW / vw, elH / vh);
@@ -65,20 +62,18 @@ export function DniScanPanel({ onScan, onRaw, active = true, title = "Escanear D
   const [open, setOpen] = useState(false);
   const [hint, setHint] = useState<string | null>(null);
   const [camError, setCamError] = useState<string | null>(null);
-  const [status, setStatus] = useState("Buscando QR o PDF417…");
+  const [status, setStatus] = useState("QR del frente o PDF417 del dorso");
   const [locked, setLocked] = useState(false);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const overlayRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
+  const streamRef = useRef<MediaStream | null>(null);
   const onScanRef = useRef(onScan);
   onScanRef.current = onScan;
   const onRawRef = useRef(onRaw);
   onRawRef.current = onRaw;
-  const liveHintsRef = useRef<ScanHint[]>([]);
   const liveHitRef = useRef<ScanHit | null>(null);
-  const statusRef = useRef(status);
-  statusRef.current = status;
 
   const applyIfParsed = useCallback((text: string) => {
     if (onRawRef.current?.(text)) {
@@ -95,17 +90,39 @@ export function DniScanPanel({ onScan, onRaw, active = true, title = "Escanear D
   useHidWedge(applyIfParsed, active);
 
   function stopCamera() {
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
     const video = videoRef.current;
-    const stream = video?.srcObject as MediaStream | null;
-    stream?.getTracks().forEach((t) => t.stop());
     if (video) video.srcObject = null;
-    liveHintsRef.current = [];
     liveHitRef.current = null;
     setLocked(false);
   }
 
   useEffect(() => {
-    if (!open || !active) return;
+    function onHide() {
+      if (document.visibilityState === "hidden") {
+        stopCamera();
+        setOpen(false);
+      }
+    }
+    function onPageHide() {
+      stopCamera();
+      setOpen(false);
+    }
+    document.addEventListener("visibilitychange", onHide);
+    window.addEventListener("pagehide", onPageHide);
+    return () => {
+      document.removeEventListener("visibilitychange", onHide);
+      window.removeEventListener("pagehide", onPageHide);
+      stopCamera();
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!open || !active) {
+      stopCamera();
+      return;
+    }
     const blocked = cameraBlockReason();
     if (blocked) {
       setCamError(blocked);
@@ -122,7 +139,7 @@ export function DniScanPanel({ onScan, onRaw, active = true, title = "Escanear D
       setCamError(null);
       setHint(null);
       setLocked(false);
-      setStatus("Buscando QR (frente) o PDF417 (dorso)…");
+      setStatus("QR del frente o PDF417 del dorso");
       try {
         const stream = await getCameraStream({
           video: {
@@ -137,9 +154,11 @@ export function DniScanPanel({ onScan, onRaw, active = true, title = "Escanear D
           stream.getTracks().forEach((t) => t.stop());
           return;
         }
+        streamRef.current = stream;
         const video = videoRef.current;
         if (!video) {
           stream.getTracks().forEach((t) => t.stop());
+          streamRef.current = null;
           return;
         }
         video.srcObject = stream;
@@ -177,12 +196,9 @@ export function DniScanPanel({ onScan, onRaw, active = true, title = "Escanear D
             const vw = video.videoWidth;
             const vh = video.videoHeight;
             const hit = liveHitRef.current;
-            const hints = liveHintsRef.current;
-            const map = (box: ScanBox) => videoToDisplay(box, vw, vh, cssW, cssH);
-
+            const card = videoToDisplay({ x: 0.08, y: 0.1, w: 0.84, h: 0.78 }, vw, vh, cssW, cssH);
             ctx.fillStyle = "rgba(2, 6, 23, 0.38)";
             ctx.fillRect(0, 0, cssW, cssH);
-            const card = map({ x: 0.06, y: 0.08, w: 0.88, h: 0.84 });
             ctx.save();
             ctx.beginPath();
             ctx.rect(card.x, card.y, card.w, card.h);
@@ -190,46 +206,6 @@ export function DniScanPanel({ onScan, onRaw, active = true, title = "Escanear D
             ctx.clearRect(card.x, card.y, card.w, card.h);
             ctx.restore();
             drawCorners(ctx, card.x, card.y, card.w, card.h, hit ? "#34d399" : "#93c5fd", 2.5);
-
-            const qrBox = hints.find((h) => h.kind === "qr") || (!hit ? QR_GUIDE : null);
-            const pdfBox = hints.find((h) => h.kind === "pdf417") || (!hit ? PDF_GUIDE : null);
-            if (qrBox && !hit) {
-              const q = map(qrBox);
-              ctx.strokeStyle = hints.some((h) => h.kind === "qr") ? "#38bdf8" : "rgba(148,163,184,0.7)";
-              ctx.setLineDash(hints.some((h) => h.kind === "qr") ? [] : [5, 4]);
-              ctx.lineWidth = 1.5;
-              ctx.strokeRect(q.x, q.y, q.w, q.h);
-              ctx.setLineDash([]);
-              ctx.font = "600 10px ui-sans-serif, system-ui";
-              ctx.fillStyle = "#e2e8f0";
-              ctx.fillText("QR frente · DNI nuevo", q.x + 6, q.y + 14);
-            }
-            if (pdfBox && !hit) {
-              const p = map(pdfBox);
-              ctx.strokeStyle = hints.some((h) => h.kind === "pdf417") ? "#fbbf24" : "rgba(148,163,184,0.7)";
-              ctx.setLineDash(hints.some((h) => h.kind === "pdf417") ? [] : [5, 4]);
-              ctx.lineWidth = 1.5;
-              ctx.strokeRect(p.x, p.y, p.w, p.h);
-              ctx.setLineDash([]);
-              ctx.font = "600 10px ui-sans-serif, system-ui";
-              ctx.fillStyle = "#e2e8f0";
-              ctx.fillText("PDF417 dorso · tarjeta vieja o nueva", p.x + 6, p.y + 14);
-            }
-
-            if (hit?.box) {
-              const b = map(hit.box);
-              ctx.strokeStyle = "#34d399";
-              ctx.lineWidth = 3;
-              ctx.strokeRect(b.x, b.y, b.w, b.h);
-            } else {
-              const lineY = card.y + ((now / 18) % card.h);
-              const grad = ctx.createLinearGradient(0, lineY - 12, 0, lineY + 12);
-              grad.addColorStop(0, "rgba(56,189,248,0)");
-              grad.addColorStop(0.5, "rgba(56,189,248,0.85)");
-              grad.addColorStop(1, "rgba(56,189,248,0)");
-              ctx.fillStyle = grad;
-              ctx.fillRect(card.x, lineY - 12, card.w, 24);
-            }
           }
         }
 
@@ -241,12 +217,13 @@ export function DniScanPanel({ onScan, onRaw, active = true, title = "Escanear D
             .then((frame) => {
               decoding = false;
               if (cancelled || liveHitRef.current) return;
-              liveHintsRef.current = frame.hints;
               if (!frame.hit) {
                 if (frame.hints.some((h) => h.kind === "qr")) {
-                  setStatus("QR detectado. Lo estoy leyendo…");
+                  setStatus("QR a la vista. Lo estoy leyendo…");
                 } else if (frame.hints.some((h) => h.kind === "pdf417")) {
                   setStatus("Código de barras a la vista. Acercá el dorso…");
+                } else {
+                  setStatus("QR del frente o PDF417 del dorso");
                 }
                 return;
               }
@@ -262,7 +239,7 @@ export function DniScanPanel({ onScan, onRaw, active = true, title = "Escanear D
                 return;
               }
               const preview = frame.hit.text.replace(/\s+/g, " ").slice(0, 48);
-              setStatus(`QR leído, no es el DNI (${preview}). Usá el PDF417 del dorso.`);
+              setStatus(`Código leído, no es el DNI (${preview}). Probá el dorso.`);
             })
             .catch(() => {
               decoding = false;

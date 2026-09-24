@@ -627,7 +627,7 @@ export const MANUAL_CHAPTERS: ManualChapter[] = [
   {
     id: "checkin-visita-porteria",
     title: "Check-in de visita (QR, DNI y constancias)",
-    updated: "23/09/2026",
+    updated: "24/09/2026",
     summary:
       "El QR preautorizado solo identifica. El lote ya viene del pase. Portería completa DNI y papeles (bordes + vencimiento) desde el dashboard o la app, sin mandar a la visita al tótem si llueve. Un documento vencido pide excepción al titular (no son los 120 s del walk-in).",
     sections: [
@@ -706,7 +706,60 @@ export const MANUAL_CHAPTERS: ManualChapter[] = [
               ["Seguro vencido → Pedir autorización al titular", "Aviso ~4 h con Autorizar/Denegar; visit_qr sigue informativo"],
               ["Contratista: DNI + ART + vence", "Sin ART no aprueba"],
               ["App: Escanear DNI + foto de constancia", "Mismos campos que la web. versionCode sin bumpear"],
+              ["Botón Menor en la ficha", "Modal con cantidad 1 y +/−; no pide nombre ni DNI"],
+              ["Salida con distinta cantidad", "Banner: ingresaron X. Marcar diferencia y avisar al lote de donde sale"],
+              ["Más menores de los que entraron", "El lote tiene que Autorizar; si no, no abre"],
+              ["Menos menores de los que entraron", "Aviso al lote; el guardia puede abrir después de marcar"],
+              ["QR de nuevo en el tótem < 25 s", "No duplica toast ni push a la app de portería"],
+              ["Tótem + app de guardia logueada", "Push «Visita en tótem»; ficha con permanencia (entró HH:MM · N min)"],
             ],
+          },
+        ],
+      },
+      {
+        id: "menores-cantidad",
+        title: "Menores: solo cantidad",
+        blocks: [
+          {
+            type: "p",
+            text: "Si el guardia ve menores en el vehículo, pulsa Menor. Sale un modal con cantidad (empieza en 1) y botones +/−. No se identifican. En el ingreso se guarda cuántos entraron; en la salida se muestra bien claro «ingresaron X» y se anota cuántos salen.",
+          },
+          {
+            type: "ul",
+            items: [
+              "Si salen más o menos que los que entraron: Marcar diferencia y avisar al lote de donde está saliendo (el del pase, no un lote de procedencia aparte).",
+              "Más de los que entraron: el titular Autoriza o Rechaza en el portal o la app; sin eso no se abre.",
+              "Menos: aviso al lote (quedan N en el barrio) y el guardia puede abrir.",
+              "Acompañantes adultos van aparte: misma cámara o pistola de DNI en la hoja Acompañantes. Los menores no se cargan ahí.",
+              "El aviso visit_qr al lote queda con el medio (tótem / web / app) y, al abrir, quién pulsó Aprobar. No llega un segundo push de «abrir barrera».",
+            ],
+          },
+        ],
+      },
+      {
+        id: "ficha-hojas-dni",
+        title: "Ficha por hojas, DNI y cámara",
+        blocks: [
+          {
+            type: "p",
+            text: "La ficha de visita precargada (web y app) avanza como hojas: Identidad, Vehículo si hay auto, ART si es contratista, Acompañantes, Egreso si es salida, y al final Aprobar y abrir. Cada Siguiente guarda. El QR solo identifica; el relé dispara en la última hoja.",
+          },
+          {
+            type: "ul",
+            items: [
+              "Si el titular precargó DNI y nombre, el scan del plástico tiene que coincidir. Si no coinciden o faltan datos, Escanear DNI pisa nombre, número y el resto de campos del PDF417/QR y los guarda.",
+              "Entrada: DNI + seguro/baúl si viene en auto + ART si es contratista. Salida: baúl si hay vehículo; bien no registrado (foto + aviso al lote, barrera retenida); menores solo por cantidad (botón Menor), sin nombre ni DNI.",
+              "Cámara DNI: un solo recuadro. Lee QR del frente o PDF417 del dorso (más pistola HID). En Acompañantes la misma cámara carga DNI de adultos. Al salir de la página o ocultar la pestaña se apaga el stream.",
+              "Carril automático: si el pase nunca entró, es ingreso. Si ya está in_site, es salida. No se elige IN/OUT a mano en web ni en la app.",
+              "La lectura queda auditada: Tótem ASI, dashboard web o app de portería, y quién aprobó (sesión logueada o código de guardia en autorización telefónica).",
+              "Si no es facial, toast e historial muestran nombre, DNI y el QR que lo acredita (últimos 4, sin el token completo). Si hay snapshot ASI, el toast de visita muestra esa foto.",
+              "Un toast de Method 4 no dice Usuario ASI: es Apertura remota / relé abierto, no identidad facial. El nombre «Lector Fasial» es el del equipo en la base, no un texto del sistema.",
+              "Misma lectura en el tótem antes de 25 s: no arma otro toast ni otro push a la app.",
+            ],
+          },
+          {
+            type: "note",
+            text: "HTTPS :3443 para webcam. Si el LED de la cámara sigue prendido al cambiar de menú, recargá una vez: el stream ahora se corta en pagehide y visibilitychange.",
           },
         ],
       },
@@ -735,6 +788,55 @@ export const MANUAL_CHAPTERS: ManualChapter[] = [
           {
             type: "note",
             text: "No se mezcló Bootstrap. El corte de las tres columnas coincide con el menú lateral (1024 px). Claro y oscuro del modal son los mismos paneles blancos / slate-900.",
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: "permisos-ayuda",
+    title: "Permisos: icono i",
+    updated: "23/09/2026",
+    summary:
+      "En Usuarios y en Módulos cada ítem tiene un icono i. Hover o clic abre el propósito. El grant del guardia no lista funciones del portal. QR de visita y QR del lector son cosas distintas.",
+    sections: [
+      {
+        id: "donde",
+        title: "Dónde se ve",
+        blocks: [
+          {
+            type: "p",
+            text: "Sistema → Usuarios: al elegir un guardia, cada permiso muestra el nombre y el i. Configuración → Módulos: igual en módulos contratados y en packs del equipo.",
+          },
+          {
+            type: "ul",
+            items: [
+              "Hover en escritorio; clic o tap en tablet. Escape o tap afuera cierra.",
+              "Pack barrio apagado: tildar el grant no abre el menú hasta que el admin enciende el pack.",
+              "Autorizar lote, Familia, Empleados y Cronogramas son del portal del vecino: no se tildan al guardia.",
+            ],
+          },
+        ],
+      },
+      {
+        id: "anti-error",
+        title: "Anti-errores",
+        blocks: [
+          {
+            type: "table",
+            headers: ["Confusión", "Qué es"],
+            rows: [
+              ["QR en el lector", "QR nativo del ASI (pack dahua.qr)"],
+              ["QR de visita", "Pase del portal; identifica, no abre solo (módulo Visitas)"],
+              ["Abrir barreras", "Relé AccesoPro cableado al punto"],
+              ["Abrir desde Dahua", "openDoor del terminal ASI"],
+              ["Fichadas", "Asistencia del personal en el dashboard; pide grant y módulo"],
+              ["Empleados / Cronogramas", "Personal del lote en el portal del titular"],
+            ],
+          },
+          {
+            type: "note",
+            text: "Intercom, parámetros de puerta y alarma de tamper están en el catálogo. El i dice si la pantalla todavía no está o si falta FreePBX en la LAN. No hace falta generar APK.",
           },
         ],
       },

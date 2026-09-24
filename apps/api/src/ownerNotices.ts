@@ -6,7 +6,7 @@ import { nid } from "./scope.js";
 import { fanoutLotNotice } from "./pushNotify.js";
 import { publishNoticeToHub } from "./hubSync.js";
 
-export type OwnerNoticeKind = "walk_in" | "goods" | "minor_transfer" | "visit_qr" | "expired_docs";
+export type OwnerNoticeKind = "walk_in" | "goods" | "minor_transfer" | "visit_qr" | "expired_docs" | "minors_mismatch";
 
 export async function expireOwnerNotices(now = new Date()) {
   const pending = await db.select().from(ownerNotices).where(eq(ownerNotices.status, "pending"));
@@ -149,7 +149,7 @@ export async function decideOwnerNotice(input: {
         .update(guardApprovals)
         .set({ goodsAuthorizedByUserId: input.userId })
         .where(eq(guardApprovals.id, row.approvalId));
-    } else if (row.kind === "minor_transfer" && input.decision === "approved") {
+    } else if ((row.kind === "minor_transfer" || row.kind === "minors_mismatch") && input.decision === "approved") {
       await db
         .update(guardApprovals)
         .set({ minorTransferAuthorizedByUserId: input.userId })

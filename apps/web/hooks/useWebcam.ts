@@ -71,9 +71,20 @@ export function useWebcam(active: boolean) {
       }
     }
 
+    function onHide() {
+      if (document.visibilityState === "hidden") stop();
+    }
+    function onPageHide() {
+      stop();
+    }
+    document.addEventListener("visibilitychange", onHide);
+    window.addEventListener("pagehide", onPageHide);
+
     void run();
     return () => {
       cancelled = true;
+      document.removeEventListener("visibilitychange", onHide);
+      window.removeEventListener("pagehide", onPageHide);
       stop();
     };
   }, [active, deviceId]);

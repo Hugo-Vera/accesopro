@@ -1,5 +1,5 @@
 import type { FacialEventAlert } from "@/components/LiveFacialAlertToast";
-import { asiMethodLabel } from "@accesopro/catalog";
+import { asiMethodKey, asiMethodLabel } from "@accesopro/catalog";
 import { apiUrl } from "@/lib/api";
 
 export type EventRow = {
@@ -25,6 +25,8 @@ const BOGUS_NAMES = new Set([
 function cleanPersonName(raw: unknown): string | null {
   const s = String(raw ?? "").trim();
   if (!s || BOGUS_NAMES.has(s.toLowerCase())) return null;
+  if (/^\d+$/.test(s)) return null;
+  if (!/[a-zA-ZáéíóúñÁÉÍÓÚÑ]/.test(s)) return null;
   return s;
 }
 
@@ -86,14 +88,24 @@ export function parseFacialEvent(
     ? visitStatus === "approved"
     : p.approved === true || String(p.status ?? p.Status ?? "0") === "1";
   const qrString = String(p.qrPayload ?? p.QRCode ?? p.QRCodeEx ?? "").trim();
+  const qrHintRaw = String(p.qrHint ?? "").trim();
+  const qrHint = qrHintRaw || (qrString ? `****${qrString.slice(-4)}` : undefined);
+  const guestDni = String(p.guestDni ?? p.dni ?? "").trim() || undefined;
+  const scanChannelLabel = String(p.scanChannelLabel ?? "").trim() || undefined;
+  const scannedByName = String(p.scannedByName ?? "").trim() || undefined;
+  const approvedByName = String(p.approvedByName ?? "").trim() || undefined;
+  const approvedVia = String(p.approvedVia ?? "").trim() || undefined;
+  const methodKey = asiMethodKey(p.methodCode ?? p.Method, p.method);
+  const isRemote = methodKey === "remote";
   const personName = isVisit
     ? cleanPersonName(p.guestName) || cleanPersonName(p.personName) || "Visita"
-    : cleanPersonName(p.personName) ||
+    : cleanPersonName(p.guestName) ||
+      cleanPersonName(p.personName) ||
       cleanPersonName(p.CardName) ||
       cleanPersonName(p.userName) ||
+      (isRemote ? "Apertura remota" : "") ||
       (!isApproved && qrString ? "QR no autorizado" : "") ||
-      String(p.UserID || "") ||
-      (isApproved ? "Usuario ASI" : "Rostro no reconocido");
+      (isApproved ? "No identificado" : "Rostro no reconocido");
   const opened = hhmm(p.approvedAt);
   const method = isVisit
     ? visitStatus === "approved"
@@ -103,6 +115,8 @@ export function parseFacialEvent(
       : visitStatus === "denied"
         ? "QR visita · denegado"
         : "QR visita · espera aprobación"
+    : isRemote
+      ? "Apertura remota"
     : !isApproved && qrString
       ? "Código QR"
       : asiMethodLabel(p.methodCode ?? p.Method, p.method);
@@ -141,11 +155,18 @@ export function parseFacialEvent(
     lane,
     photoStored: p.photoStored === true,
     kind: isVisit ? "visit" : "facial",
+    isRemote,
     visitStatus,
     approvedAt,
     lotNumber,
     approvalId,
     passId,
+    guestDni,
+    qrHint,
+    scanChannelLabel: scanChannelLabel || (isVisit && deviceName ? deviceName : undefined),
+    scannedByName,
+    approvedByName,
+    approvedVia,
   };
 }
 

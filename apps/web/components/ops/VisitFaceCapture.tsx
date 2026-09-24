@@ -45,7 +45,21 @@ export function VisitFaceCapture({ preview, onCapture, onClear }: Props) {
     setLive(false);
   }
 
-  useEffect(() => () => stop(), []);
+  useEffect(() => {
+    function onHide() {
+      if (document.visibilityState === "hidden") stop();
+    }
+    function onPageHide() {
+      stop();
+    }
+    document.addEventListener("visibilitychange", onHide);
+    window.addEventListener("pagehide", onPageHide);
+    return () => {
+      document.removeEventListener("visibilitychange", onHide);
+      window.removeEventListener("pagehide", onPageHide);
+      stop();
+    };
+  }, []);
 
   async function start() {
     setError(null);

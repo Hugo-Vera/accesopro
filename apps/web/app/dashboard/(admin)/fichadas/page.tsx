@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useMemo } from "react";
 import { useDash } from "@/components/DashboardProvider";
-import { ModuleGate, PageHeader } from "@/components/PageHeader";
+import { ModuleGate, CapabilityGate, PageHeader } from "@/components/PageHeader";
 import { api, withTenant } from "@/lib/api";
 import { useEscapeKey } from "@/hooks/useEscapeKey";
 import {
@@ -256,6 +256,7 @@ export default function FichadasPage() {
 
   return (
     <ModuleGate module="attendance">
+      <CapabilityGate capability="access.attendance">
       <div className="space-y-6">
         <PageHeader
           title="Control de Fichadas y Asistencia"
@@ -700,6 +701,7 @@ export default function FichadasPage() {
           </div>
         )}
       </div>
+      </CapabilityGate>
     </ModuleGate>
   );
 }

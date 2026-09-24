@@ -95,17 +95,28 @@ function laneLabel(p: Record<string, unknown>) {
 
 function personDisplay(p: Record<string, unknown>, isApproved: boolean) {
   const id = String(p.userId ?? p.UserID ?? p.cardNo ?? p.CardNo ?? p.qrPayload ?? p.QRCode ?? "").trim();
-  const raw = String(p.personName ?? p.CardName ?? p.userName ?? "").trim();
+  const raw = String(p.guestName ?? p.personName ?? p.CardName ?? p.userName ?? "").trim();
+  const method = asiMethodKey(p.methodCode ?? p.Method, p.method);
+  const isVisit = p.accessKind === "visita" || p.visitHold === true;
   const bogus =
     !raw ||
     raw === "Rostro no identificado" ||
     raw === "Rostro no reconocido" ||
     raw === "Usuario ASI" ||
-    raw === "Usuario Facial";
+    raw === "Usuario Facial" ||
+    raw === "Apertura remota" ||
+    /^\d+$/.test(raw);
+  const qrHint = String(p.qrHint ?? "").trim();
   const qr = String(p.qrPayload ?? p.QRCode ?? "").trim();
-  if (bogus && qr) return { name: "Visita / QR", id: qr };
-  if (bogus) return { name: isApproved ? "Usuario ASI" : "No identificado", id: id || "—" };
-  return { name: raw, id: id || "—" };
+  const dni = String(p.guestDni ?? p.dni ?? "").trim();
+  const cred = [dni ? `DNI ${dni}` : null, qrHint || (qr ? `QR ****${qr.slice(-4)}` : null)].filter(Boolean).join(" · ");
+  if (isVisit) {
+    return { name: bogus ? "Visita" : raw, id: cred || "QR de visita" };
+  }
+  if (bogus && qr) return { name: "Visita / QR", id: cred || `QR ****${qr.slice(-4)}` };
+  if (method === "remote" && bogus) return { name: "Apertura remota", id: id || "—" };
+  if (bogus) return { name: "No identificado", id: id || "—" };
+  return { name: raw, id: cred || id || "—" };
 }
 
 function EventosInner() {
@@ -671,7 +682,7 @@ function EventosInner() {
                 <div>
                   <p className="text-[10px] uppercase font-bold text-slate-500 dark:text-slate-400">Persona</p>
                   <p className="font-bold text-slate-900 dark:text-white">
-                    {selectedPhotoEvent.payload.personName || selectedPhotoEvent.payload.CardName || "Usuario Facial"}
+                    {personDisplay(selectedPhotoEvent.payload, selectedPhotoEvent.payload.approved === true).name}
                   </p>
                 </div>
                 <div>

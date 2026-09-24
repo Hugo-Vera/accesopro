@@ -237,6 +237,25 @@ function EventDetailModal({
               >
                 {alert.personName}
               </h2>
+              {isVisit || alert.isRemote || (alert.qrHint && !alert.snapshotUrl) ? (
+                <div style={{ marginTop: 8, fontSize: 15, color: "#334155", lineHeight: 1.4 }}>
+                  {alert.guestDni ? <div>DNI {alert.guestDni}</div> : isVisit ? <div>DNI pendiente</div> : null}
+                  {alert.qrHint ? <div>QR que lo acredita: {alert.qrHint}</div> : null}
+                  {alert.scanChannelLabel ? (
+                    <div style={{ fontSize: 13, color: "#64748b" }}>
+                      {alert.scanChannelLabel}
+                      {alert.scannedByName ? ` · ${alert.scannedByName}` : ""}
+                    </div>
+                  ) : null}
+                  {alert.approvedByName ? (
+                    <div style={{ fontSize: 13, color: "#64748b" }}>
+                      Aprobó {alert.approvedByName}
+                      {alert.approvedVia === "login" ? " (sesión)" : ""}
+                      {alert.approvedVia === "guard_code" ? " (código de guardia)" : ""}
+                    </div>
+                  ) : null}
+                </div>
+              ) : null}
               <div style={{ marginTop: 8, fontSize: 15, color: "#475569", lineHeight: 1.35 }}>
                 {alert.deviceName}
                 <span style={{ opacity: 0.55 }}> · </span>
@@ -263,7 +282,7 @@ function EventDetailModal({
                 </div>
               ) : (
                 <div style={{ marginTop: 10, fontSize: 15, fontWeight: 600, color: "#047857" }}>
-                  Identidad validada
+                  {alert.isRemote ? "Relé abierto desde portería" : "Identidad validada"}
                 </div>
               )}
               {alert.doorName ? (
@@ -387,6 +406,21 @@ export function LiveFacialFeed({
                   >
                     {alert.personName}
                   </p>
+                  {alert.kind === "visit" || alert.isRemote ? (
+                    <p
+                      className={`min-w-0 truncate text-slate-600 dark:text-slate-400 ${
+                        compact ? "text-[11.5px]" : "text-[12px]"
+                      }`}
+                    >
+                      {[
+                        alert.guestDni ? `DNI ${alert.guestDni}` : null,
+                        alert.qrHint ? `QR ${alert.qrHint}` : null,
+                        compact ? null : alert.scanChannelLabel,
+                      ]
+                        .filter(Boolean)
+                        .join(" · ") || alert.method}
+                    </p>
+                  ) : (
                   <p
                     className={`min-w-0 truncate text-slate-600 dark:text-slate-400 ${
                       compact ? "text-[11.5px]" : "text-[12px]"
@@ -394,6 +428,7 @@ export function LiveFacialFeed({
                   >
                     {compact ? alert.method : `${alert.deviceName} · ${alert.method}`}
                   </p>
+                  )}
                   <div className="flex min-w-0 items-center justify-between gap-2">
                     <time
                       dateTime={new Date(e.createdAt).toISOString()}

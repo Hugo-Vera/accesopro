@@ -28,7 +28,9 @@ import {
   attachVehicleInsurance,
   attachPersonInsuranceToPass,
   attachLicenseToPass,
+  applyPassIdentity,
   decideGuardApproval,
+  findVisitPassByDni,
   holdVisitQr,
   isArrivalMode,
   listPendingApprovals,
@@ -37,6 +39,8 @@ import {
   announceWalkIn,
   attachGoodsAlert,
   requestMinorTransfer,
+  notifyMinorsMismatch,
+  setApprovalMinorsCount,
   confirmPhoneAuth,
   requestExpiredDocsAuth,
 } from "./visitHold.js";
@@ -156,17 +160,34 @@ visitorsApi.post("/visitors/approvals/scan-qr", async (c) => {
   if (denied) return denied;
   const scoped = await scopedSiteWithModule(c, "visitors");
   if ("error" in scoped) return scoped.error;
-  const body = await c.req.json<{ cardRaw?: string; sentido?: string }>();
+  const body = await c.req.json<{ cardRaw?: string; sentido?: string; scanChannel?: string }>();
   const cardRaw = String(body.cardRaw || "").trim();
   if (!cardRaw) return c.json({ error: "Acercá el QR de la visita" }, 400);
-  const sentido = body.sentido === "out" ? "out" : "in";
-  const hold = await holdVisitQr({
+  const user = c.get("user");
+  const scanChannel = body.scanChannel === "app" ? "app" : "web";
+  const parsed = parseDniScan(cardRaw);
+  const holdOpts = {
     siteId: scoped.site.id,
     tenantId: scoped.site.tenantId,
-    cardRaw,
-    sentido,
-  });
+    scanChannel,
+    scannedByUserId: user.id,
+  };
+  if (parsed?.dni) {
+    const pass = await findVisitPassByDni(scoped.site.id, parsed.dni);
+    if (!pass) {
+      return c.json({ error: "DNI leído. Escaneá el QR de la visita para abrir la ficha.", parsed }, 404);
+    }
+    const hold = await holdVisitQr({ ...holdOpts, cardRaw: pass.token });
+    if (hold.reason === "closed") {
+      return c.json({ error: "Ese pase ya se cerró. No se puede entrar ni salir.", parsed }, 409);
+    }
+    const pending = (await listPendingApprovals(scoped.site.id)).find((x) => x.passId === pass.id);
+    const item = pending || (await serializePassFicha(pass.id));
+    return c.json({ ok: true, passId: pass.id, item, parsed, dniMatch: true, sentido: hold.sentido });
+  }
+  const hold = await holdVisitQr({ ...holdOpts, cardRaw });
   if (!hold.held) return c.json({ error: "QR no autorizado" }, 404);
+  if (hold.reason === "closed") return c.json({ error: "Ese pase ya se cerró. No se puede entrar ni salir." }, 409);
   const pending = (await listPendingApprovals(scoped.site.id)).find((x) => x.passId === hold.passId);
   const item = pending || (hold.passId ? await serializePassFicha(hold.passId) : null);
   return c.json({ ok: true, ...hold, item });
@@ -181,6 +202,12 @@ visitorsApi.post("/visitors/approvals/:id/ficha", async (c) => {
   if (!pending) return c.json({ error: "No hay una solicitud pendiente" }, 404);
   const body = await c.req.json<{
     guestDni?: string;
+    guestName?: string;
+    firstName?: string;
+    lastName?: string;
+    tramite?: string;
+    gender?: string;
+    birthDate?: string;
     patente?: string;
     arrivalMode?: string;
     companions?: { name?: string; dni?: string }[];
@@ -194,12 +221,23 @@ visitorsApi.post("/visitors/approvals/:id/ficha", async (c) => {
       source?: "scan" | "upload";
     };
     driverLicense?: { licenseNumber?: string; validUntil?: string; photoBase64?: string };
+    minorsCount?: number;
   }>();
-  if (body.guestDni?.trim()) {
-    await db
-      .update(visitPasses)
-      .set({ guestDni: body.guestDni.replace(/\D/g, "") })
-      .where(eq(visitPasses.id, pending.passId));
+  if (
+    body.guestDni?.trim() ||
+    body.guestName?.trim() ||
+    body.firstName?.trim() ||
+    body.lastName?.trim()
+  ) {
+    await applyPassIdentity(pending.passId, {
+      guestDni: body.guestDni,
+      guestName: body.guestName,
+      firstName: body.firstName,
+      lastName: body.lastName,
+      tramite: body.tramite,
+      gender: body.gender,
+      birthDate: body.birthDate,
+    });
   }
   if (body.patente?.trim()) {
     await db
@@ -221,6 +259,9 @@ visitorsApi.post("/visitors/approvals/:id/ficha", async (c) => {
   if (body.driverLicense) {
     const r = await attachLicenseToPass(scoped.tenantId, pending.passId, body.driverLicense);
     if (!r.ok) return c.json({ error: r.error }, 400);
+  }
+  if (typeof body.minorsCount === "number") {
+    await setApprovalMinorsCount({ siteId: scoped.site.id, approvalId: pending.id, count: body.minorsCount });
   }
   const fresh = (await listPendingApprovals(scoped.site.id)).find((x) => x.id === pending.id);
   return c.json({ ok: true, item: fresh || pending });
@@ -622,6 +663,12 @@ visitorsApi.post("/visitors/approvals/:id/decide", async (c) => {
     insurance?: { plate?: string; company?: string; policyNumber?: string; validUntil?: string; cardPhotoBase64?: string };
     companions?: { name?: string; dni?: string }[];
     guestDni?: string;
+    guestName?: string;
+    firstName?: string;
+    lastName?: string;
+    tramite?: string;
+    gender?: string;
+    birthDate?: string;
     patente?: string;
     arrivalMode?: string;
     personInsurance?: {
@@ -633,6 +680,7 @@ visitorsApi.post("/visitors/approvals/:id/decide", async (c) => {
       source?: "scan" | "upload";
     };
     driverLicense?: { licenseNumber?: string; validUntil?: string; photoBase64?: string };
+    minorsCount?: number;
   }>();
   const decision = body.decision === "denied" ? "denied" : body.decision === "approved" ? "approved" : null;
   if (!decision) return c.json({ error: "Indicá aprobar o denegar" }, 400);
@@ -640,8 +688,21 @@ visitorsApi.post("/visitors/approvals/:id/decide", async (c) => {
   const approvalId = c.req.param("id");
   const pending = (await listPendingApprovals(scoped.site.id)).find((x) => x.id === approvalId);
   if (pending && decision === "approved") {
-    if (body.guestDni?.trim()) {
-      await db.update(visitPasses).set({ guestDni: body.guestDni.replace(/\D/g, "") }).where(eq(visitPasses.id, pending.passId));
+    if (
+      body.guestDni?.trim() ||
+      body.guestName?.trim() ||
+      body.firstName?.trim() ||
+      body.lastName?.trim()
+    ) {
+      await applyPassIdentity(pending.passId, {
+        guestDni: body.guestDni,
+        guestName: body.guestName,
+        firstName: body.firstName,
+        lastName: body.lastName,
+        tramite: body.tramite,
+        gender: body.gender,
+        birthDate: body.birthDate,
+      });
     }
     if (body.patente?.trim()) {
       await db.update(visitPasses).set({ patente: body.patente.trim().toUpperCase() }).where(eq(visitPasses.id, pending.passId));
@@ -660,6 +721,9 @@ visitorsApi.post("/visitors/approvals/:id/decide", async (c) => {
     if (body.driverLicense) {
       const r = await attachLicenseToPass(scoped.tenantId, pending.passId, body.driverLicense);
       if (!r.ok) return c.json({ error: r.error }, 400);
+    }
+    if (typeof body.minorsCount === "number") {
+      await setApprovalMinorsCount({ siteId: scoped.site.id, approvalId, count: body.minorsCount });
     }
   }
 
@@ -733,6 +797,36 @@ visitorsApi.get("/visitors/approvals/:id/goods-photo", async (c) => {
   const buf = readEventPhoto(scoped.site.id, `goods-${c.req.param("id")}`);
   if (!buf) return c.json({ error: "No hay foto" }, 404);
   return c.body(new Uint8Array(buf), 200, { "Content-Type": "image/jpeg", "Cache-Control": "private, max-age=60" });
+});
+
+visitorsApi.post("/visitors/approvals/:id/minors-count", async (c) => {
+  const denied = await denyUnlessCapability(c.get("user"), "access.visitors.manage");
+  if (denied) return denied;
+  const scoped = await scopedSiteWithModule(c, "visitors");
+  if ("error" in scoped) return scoped.error;
+  const body = await c.req.json<{ count?: number }>();
+  const result = await setApprovalMinorsCount({
+    siteId: scoped.site.id,
+    approvalId: c.req.param("id"),
+    count: Number(body.count),
+  });
+  if (!result.ok) return c.json({ error: result.error }, 400);
+  const item = (await listPendingApprovals(scoped.site.id)).find((x) => x.id === c.req.param("id"));
+  return c.json({ ...result, item });
+});
+
+visitorsApi.post("/visitors/approvals/:id/minors-mismatch", async (c) => {
+  const denied = await denyUnlessCapability(c.get("user"), "access.visitors.manage");
+  if (denied) return denied;
+  const scoped = await scopedSiteWithModule(c, "visitors");
+  if ("error" in scoped) return scoped.error;
+  const result = await notifyMinorsMismatch({
+    site: scoped.site,
+    approvalId: c.req.param("id"),
+  });
+  if (!result.ok) return c.json({ error: result.error }, 400);
+  const item = (await listPendingApprovals(scoped.site.id)).find((x) => x.id === c.req.param("id"));
+  return c.json({ ok: true, item });
 });
 
 visitorsApi.post("/visitors/approvals/:id/minors", async (c) => {
@@ -1277,6 +1371,8 @@ visitorsApi.post("/visitors/checkin", async (c) => {
     tenantId,
     cardRaw: token,
     sentido: "in",
+    scanChannel: "web",
+    scannedByUserId: c.get("user").id,
     at: now,
   });
 
@@ -1354,6 +1450,8 @@ visitorsApi.post("/visitors/records/:id/checkout", async (c) => {
       tenantId: scoped.tenantId,
       cardRaw: pass.token,
       sentido: "out",
+      scanChannel: "web",
+      scannedByUserId: c.get("user").id,
     });
     return c.json({
       ok: true,

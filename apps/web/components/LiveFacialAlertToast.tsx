@@ -24,11 +24,19 @@ export type FacialEventAlert = {
   photoStored?: boolean;
   /** QR de visita: no es denegación facial. */
   kind?: "facial" | "visit";
+  /** Method 4 / relé desde portería: no es identidad facial. */
+  isRemote?: boolean;
   visitStatus?: "pending" | "approved" | "denied";
   approvedAt?: number;
   lotNumber?: string;
   approvalId?: string;
   passId?: string;
+  guestDni?: string;
+  qrHint?: string;
+  scanChannelLabel?: string;
+  scannedByName?: string;
+  approvedByName?: string;
+  approvedVia?: string;
 };
 
 interface Props {
@@ -278,18 +286,29 @@ export function LiveFacialAlertToast({ alert, onDismiss, onOpenRelay }: Props) {
               <div style={{ marginTop: 10, fontSize: 17, fontWeight: 800, lineHeight: 1.15, wordBreak: "break-word" }}>
                 {shown.personName}
               </div>
+              {shown.guestDni || shown.qrHint || shown.scanChannelLabel ? (
+                <div style={{ marginTop: 4, fontSize: 12, color: "#475569", lineHeight: 1.35 }}>
+                  {shown.guestDni ? `DNI ${shown.guestDni}` : ""}
+                  {shown.guestDni && shown.qrHint ? " · " : ""}
+                  {shown.qrHint ? `QR ${shown.qrHint}` : ""}
+                  {shown.scanChannelLabel ? (
+                    <div style={{ marginTop: 2, fontSize: 11, color: "#64748b" }}>{shown.scanChannelLabel}</div>
+                  ) : null}
+                </div>
+              ) : (
               <div style={{ marginTop: 4, fontSize: 12, color: "#475569", lineHeight: 1.35 }}>
                 {shown.deviceName}
                 <span style={{ opacity: 0.55 }}> · </span>
                 {shown.method}
               </div>
+              )}
               {!isApproved ? (
                 <div style={{ marginTop: 6, fontSize: 12, fontWeight: 700, color: isDark ? "#fda4af" : "#be123c", lineHeight: 1.35 }}>
                   {shown.reason || "Rostro no registrado"}
                 </div>
               ) : (
                 <div style={{ marginTop: 6, fontSize: 12, fontWeight: 600, color: isDark ? "#6ee7b7" : "#047857" }}>
-                  Identidad validada
+                  {shown.isRemote ? "Relé abierto desde portería" : "Identidad validada"}
                 </div>
               )}
             </div>

@@ -834,6 +834,14 @@ async function backfillAccessPointsFromLegacy() {
   await addColumn("hub_sites", "last_sync_at", "INTEGER");
   await addColumn("hub_sites", "last_sync_json", "TEXT");
   await addColumn("property_family_members", "user_id", "TEXT");
+  await addColumn("guard_approvals", "scan_channel", "TEXT");
+  await addColumn("guard_approvals", "scanned_by_user_id", "TEXT");
+  await addColumn("guard_approvals", "approved_via", "TEXT");
+  await addColumn("guard_approvals", "phone_auth_via", "TEXT");
+  await addColumn("guard_approvals", "reader_sentido", "TEXT");
+  await addColumn("visit_passes", "minors_in_count", "INTEGER NOT NULL DEFAULT 0");
+  await addColumn("guard_approvals", "minors_count", "INTEGER");
+  await addColumn("guard_approvals", "minors_mismatch_notified", "INTEGER NOT NULL DEFAULT 0");
   await db.run(sql`
     CREATE TABLE IF NOT EXISTS push_devices (
       id TEXT PRIMARY KEY,

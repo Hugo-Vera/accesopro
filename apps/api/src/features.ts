@@ -102,6 +102,7 @@ export function serializeFeature(pack: FeaturePackDef & { parentOn?: boolean; en
     parentModule: pack.parentModule,
     name: pack.name,
     summary: pack.summary,
+    help: pack.help,
     capabilityKey: pack.capabilityKey,
     href: pack.href ?? null,
     defaultOn: pack.defaultOn,

@@ -4,7 +4,7 @@ import { Hono } from "hono";
 import type { AuthUser } from "./auth.js";
 import { requireAuth } from "./auth.js";
 import { db } from "./db/client.js";
-import { ownerProfiles, properties, propertyFamilyMembers, pushDevices, users } from "./db/schema.js";
+import { ownerProfiles, properties, propertyFamilyMembers, pushDevices, userGrants, users } from "./db/schema.js";
 import { nid } from "./scope.js";
 import { normalizeArWhatsapp } from "./ownerInvite.js";
 
@@ -207,4 +207,36 @@ export async function fanoutLotNotice(input: {
     }
   }
   return { fcm, whatsapp, adults: adults.length, waHint: `https://wa.me/?text=${encodeURIComponent(text)}`, link: portal };
+}
+
+export async function notifyStaff(input: {
+  tenantId?: string | null;
+  title: string;
+  message: string;
+  data?: Record<string, string>;
+}) {
+  if (!input.tenantId) return { fcm: 0 };
+  const staff = await db.select().from(users).where(eq(users.tenantId, input.tenantId));
+  const grants = await db
+    .select({ userId: userGrants.userId })
+    .from(userGrants)
+    .where(eq(userGrants.capabilityKey, "access.visitors.manage"));
+  const granted = new Set(grants.map((g) => g.userId));
+  const ids = staff
+    .filter((u) => u.role === "guard" || u.role === "admin" || granted.has(u.id))
+    .filter((u) => u.role !== "resident")
+    .map((u) => u.id);
+  if (!ids.length) return { fcm: 0 };
+  const origin = publicWebOrigin();
+  const link = `${origin}/dashboard`;
+  let fcm = 0;
+  const devices = await db.select().from(pushDevices).where(inArray(pushDevices.userId, ids));
+  for (const d of devices) {
+    const ok = await sendFcm(d.token, input.title, input.message, {
+      ...(input.data || {}),
+      link,
+    });
+    if (ok) fcm += 1;
+  }
+  return { fcm };
 }

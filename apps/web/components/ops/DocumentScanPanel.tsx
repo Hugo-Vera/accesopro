@@ -97,6 +97,9 @@ export function DocumentScanPanel({
     source: "scan" | "upload";
   } | null>(null);
 
+  const onOverlayChangeRef = useRef(onOverlayChange);
+  onOverlayChangeRef.current = onOverlayChange;
+
   function stopCam() {
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
@@ -106,7 +109,27 @@ export function DocumentScanPanel({
     boxRef.current = null;
   }
 
-  useEffect(() => () => stopCam(), []);
+  useEffect(() => {
+    function onHide() {
+      if (document.visibilityState === "hidden") {
+        const wasLive = Boolean(streamRef.current);
+        stopCam();
+        if (wasLive) onOverlayChangeRef.current(false);
+      }
+    }
+    function onPageHide() {
+      const wasLive = Boolean(streamRef.current);
+      stopCam();
+      if (wasLive) onOverlayChangeRef.current(false);
+    }
+    document.addEventListener("visibilitychange", onHide);
+    window.addEventListener("pagehide", onPageHide);
+    return () => {
+      document.removeEventListener("visibilitychange", onHide);
+      window.removeEventListener("pagehide", onPageHide);
+      stopCam();
+    };
+  }, []);
 
   useEffect(() => {
     if (!overlayOpen) {

@@ -5,6 +5,7 @@ import { events } from "./db/schema.js";
 import { nid, scopedSiteWithModule } from "./scope.js";
 import type { AuthUser } from "./auth.js";
 import { asiMethodKey } from "@accesopro/catalog";
+import { denyUnlessCapability } from "./grants.js";
 
 type AttendanceEnv = { Variables: { user: AuthUser } };
 
@@ -59,6 +60,8 @@ function parseDirection(rawType: unknown, rawState: unknown, rawSentido: unknown
 }
 
 attendanceApi.get("/attendance", async (c) => {
+  const denied = await denyUnlessCapability(c.get("user"), "access.attendance");
+  if (denied) return denied;
   const scoped = await scopedSiteWithModule(c, "attendance");
   if ("error" in scoped) return scoped.error;
 
@@ -198,6 +201,8 @@ attendanceApi.get("/attendance", async (c) => {
 });
 
 attendanceApi.post("/attendance/manual", async (c) => {
+  const denied = await denyUnlessCapability(c.get("user"), "access.attendance");
+  if (denied) return denied;
   const scoped = await scopedSiteWithModule(c, "attendance");
   if ("error" in scoped) return scoped.error;
 

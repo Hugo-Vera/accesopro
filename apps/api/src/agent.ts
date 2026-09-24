@@ -7,7 +7,7 @@ import { actuatorsForDahuaDevice, actuatorsForSentido, resolveDeviceLane } from 
 import { enqueue, fireActuator, waitCommand } from "./actuatorExec.js";
 import { matchesSentido, sentidoOf } from "./engineBridge.js";
 import { broadcastRealtimeEvent } from "./eventStream.js";
-import { looksLikeJpeg, saveEventPhoto } from "./eventPhotos.js";
+import { copyEventPhoto, looksLikeJpeg, saveEventPhoto } from "./eventPhotos.js";
 import { markVisitStayByCard } from "./visitPass.js";
 import { findVisitPassByCard, holdVisitQr } from "./visitHold.js";
 import { findCredentialByPayload, incrementCredentialUse } from "./credentials.js";
@@ -251,6 +251,7 @@ agentRoutes.post("/events", async (c) => {
         cardRaw: qrString || card,
         sentido,
         deviceId: deviceId || null,
+        scanChannel: "totem",
         at: eventDate,
       });
       payload.accessKind = "visita";
@@ -259,10 +260,19 @@ agentRoutes.post("/events", async (c) => {
       payload.approvalId = hold.approvalId;
       payload.holdReason = hold.reason;
       payload.guestName = hold.guestName;
+      payload.guestDni = hold.guestDni;
+      payload.qrHint = hold.qrHint;
       payload.lotNumber = hold.lotNumber;
+      payload.scanChannel = "totem";
+      payload.scanChannelLabel = hold.scanChannelLabel;
+      payload.sentido = hold.sentido || sentido;
+      payload.laneCode = hold.sentido === "out" ? 2 : 1;
+      payload.visitHoldEventId = hold.eventId;
       if (hold.guestName) payload.personName = hold.guestName;
       payload.approved = false;
       failed = true;
+      eventSentido = hold.sentido || eventSentido;
+      eventLaneCode = hold.sentido === "out" ? 2 : 1;
     } else if (
       failed &&
       matchedCred &&
@@ -448,6 +458,37 @@ agentRoutes.post("/events/:id/photo", async (c) => {
   }
   payload.photoStored = true;
   await db.update(events).set({ payload: JSON.stringify(payload) }).where(eq(events.id, eventId));
+
+  const holdId = String(payload.visitHoldEventId || "").trim();
+  if (holdId) {
+    copyEventPhoto(siteId, eventId, holdId);
+    const holdRow = await db
+      .select()
+      .from(events)
+      .where(and(eq(events.id, holdId), eq(events.siteId, siteId)))
+      .get();
+    if (holdRow) {
+      let hp: Record<string, unknown> = {};
+      try {
+        hp = JSON.parse(holdRow.payload) as Record<string, unknown>;
+      } catch {
+        hp = {};
+      }
+      hp.photoStored = true;
+      await db.update(events).set({ payload: JSON.stringify(hp) }).where(eq(events.id, holdId));
+      const siteHold = await db.select().from(sites).where(eq(sites.id, siteId)).get();
+      const holdCreated =
+        holdRow.createdAt instanceof Date ? holdRow.createdAt.getTime() : Number(holdRow.createdAt) || Date.now();
+      broadcastRealtimeEvent({
+        id: holdId,
+        siteId,
+        tenantId: siteHold?.tenantId,
+        type: "visit_hold",
+        payload: hp,
+        createdAt: holdCreated,
+      });
+    }
+  }
 
   const site = await db.select().from(sites).where(eq(sites.id, siteId)).get();
   const createdAt =

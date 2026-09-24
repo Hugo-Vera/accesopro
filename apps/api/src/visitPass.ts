@@ -91,7 +91,7 @@ export async function scanVisitPass(
     siteId: site.id,
     tenantId: site.tenantId,
     cardRaw: token,
-    sentido,
+    scanChannel: "web",
   });
   if (!hold.held) return { ok: false, error: "QR no encontrado" };
   if (hold.reason === "closed") return { ok: false, error: "QR revocado o denegado" };
@@ -103,7 +103,7 @@ export async function scanVisitPass(
     approvalId: hold.approvalId,
     passId: hold.passId,
     reason: hold.reason,
-    sentido,
+    sentido: hold.sentido || sentido,
     actuatorsFired: [] as string[],
     accessKind: "visita",
     message:

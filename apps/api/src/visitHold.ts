@@ -15,6 +15,7 @@ import {
   personInsurances,
   driverLicenses,
   visitorIdentities,
+  dahuaDevices,
 } from "./db/schema.js";
 import { fireActuator } from "./actuatorExec.js";
 import { actuatorsForDahuaDevice, actuatorsForSentido, laneCodeOf } from "./accessPoints.js";
@@ -27,12 +28,61 @@ import { saveEventPhoto } from "./eventPhotos.js";
 import { verifyUserGuardCode } from "./users.js";
 import { getVisitAuthDefaultHours } from "./retention.js";
 import { processDocumentImage } from "./documentScan.js";
+import { notifyStaff } from "./pushNotify.js";
 import { saveVisitorDoc } from "./visitorDocs.js";
 
 export type ArrivalMode = "peatonal" | "plataforma" | "vehiculo";
 export type VisitKind = "social" | "service" | "contractor" | "delivery";
 
 const OPEN_STATUSES = new Set(["preauthorized", "active", "awaiting_entry", "in_site", "awaiting_exit"]);
+
+export type ScanChannel = "totem" | "web" | "app";
+
+/** No se sale si no se entró: primer acceso = in; ya en el predio = out. */
+export function visitSentidoFromPass(pass: { status: string }): "in" | "out" {
+  return pass.status === "in_site" || pass.status === "awaiting_exit" ? "out" : "in";
+}
+
+export function qrHintOf(token?: string | null, dahuaCardNo?: string | null) {
+  const raw = String(token || dahuaCardNo || "").trim();
+  if (!raw) return "";
+  return `****${raw.slice(-4)}`;
+}
+
+export function scanChannelLabel(channel?: string | null, deviceName?: string | null) {
+  if (channel === "totem") return deviceName?.trim() ? `Tótem · ${deviceName.trim()}` : "Tótem ASI";
+  if (channel === "app") return "App de portería";
+  if (channel === "web") return "Dashboard web";
+  return deviceName?.trim() || "Portería";
+}
+
+const HOLD_DEBOUNCE_MS = 25_000;
+
+export function dwellLabel(scannedInAt: Date | number | null | undefined, now = Date.now()) {
+  if (scannedInAt == null) return null;
+  const t = scannedInAt instanceof Date ? scannedInAt.getTime() : Number(scannedInAt);
+  if (!t) return null;
+  const mins = Math.max(0, Math.floor((now - t) / 60_000));
+  const d = new Date(t);
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  return `entró ${hh}:${mm} · ${mins} min`;
+}
+
+function normalizeScanChannel(raw: unknown, deviceId?: string | null): ScanChannel {
+  if (raw === "app" || raw === "web" || raw === "totem") return raw;
+  return deviceId ? "totem" : "web";
+}
+
+async function userNameOf(id?: string | null) {
+  if (!id) return null;
+  return (await db.select({ name: users.name }).from(users).where(eq(users.id, id)).get())?.name ?? null;
+}
+
+async function deviceNameOf(id?: string | null) {
+  if (!id) return null;
+  return (await db.select({ name: dahuaDevices.name }).from(dahuaDevices).where(eq(dahuaDevices.id, id)).get())?.name ?? null;
+}
 
 export function isArrivalMode(v: unknown): v is ArrivalMode {
   return v === "peatonal" || v === "plataforma" || v === "vehiculo";
@@ -82,6 +132,60 @@ export async function findVisitPassByCard(siteId: string, cardRaw: string) {
       return false;
     }) ?? null
   );
+}
+
+export async function findVisitPassByDni(siteId: string, dniRaw: string) {
+  const dni = String(dniRaw || "").replace(/\D/g, "");
+  if (dni.length < 7) return null;
+  const rows = await db.select().from(visitPasses).where(eq(visitPasses.siteId, siteId));
+  const open = rows.filter(
+    (p) => OPEN_STATUSES.has(p.status) && String(p.guestDni || "").replace(/\D/g, "") === dni,
+  );
+  const rank = (s: string) =>
+    s === "awaiting_exit" || s === "in_site" ? 0 : s === "awaiting_entry" ? 1 : 2;
+  open.sort((a, b) => rank(a.status) - rank(b.status));
+  return open[0] ?? null;
+}
+
+export async function applyPassIdentity(
+  passId: string,
+  input: {
+    guestDni?: string;
+    guestName?: string;
+    firstName?: string;
+    lastName?: string;
+    tramite?: string;
+    gender?: string;
+    birthDate?: string;
+  },
+) {
+  const pass = await db.select().from(visitPasses).where(eq(visitPasses.id, passId)).get();
+  if (!pass) return;
+  const name =
+    String(input.guestName || "").trim() ||
+    `${input.lastName || ""} ${input.firstName || ""}`.replace(/\s+/g, " ").trim();
+  const dni = String(input.guestDni || "").replace(/\D/g, "");
+  const patch: { guestDni?: string; guestName?: string } = {};
+  if (dni) patch.guestDni = dni;
+  if (name) patch.guestName = name;
+  if (Object.keys(patch).length) {
+    await db.update(visitPasses).set(patch).where(eq(visitPasses.id, passId));
+  }
+  if (!pass.visitRecordId) return;
+  const rec = await db.select().from(visitRecords).where(eq(visitRecords.id, pass.visitRecordId)).get();
+  if (!rec?.personId) return;
+  await db
+    .update(visitorIdentities)
+    .set({
+      ...(dni ? { dniNumber: dni } : {}),
+      ...(input.firstName?.trim() ? { firstName: input.firstName.trim() } : {}),
+      ...(input.lastName?.trim() ? { lastName: input.lastName.trim() } : {}),
+      ...(input.tramite?.trim() ? { tramiteNumber: input.tramite.trim() } : {}),
+      ...(input.gender?.trim() ? { gender: input.gender.trim().slice(0, 1).toUpperCase() } : {}),
+      ...(input.birthDate?.trim() ? { birthDate: input.birthDate.trim() } : {}),
+      updatedAt: new Date(),
+    })
+    .where(eq(visitorIdentities.id, rec.personId));
 }
 
 export async function listCompanions(passId: string) {
@@ -202,8 +306,11 @@ export async function holdVisitQr(input: {
   siteId: string;
   tenantId?: string | null;
   cardRaw: string;
-  sentido: "in" | "out";
+  /** Carril del lector (tótem). El sentido de la visita sale del estado del pase. */
+  sentido?: "in" | "out";
   deviceId?: string | null;
+  scanChannel?: ScanChannel | string | null;
+  scannedByUserId?: string | null;
   at?: Date;
   /** Aviso informativo al lote (QR preautorizado). Walk-in pasa false. */
   notifyLot?: boolean;
@@ -213,7 +320,15 @@ export async function holdVisitQr(input: {
   approvalId?: string;
   reason?: string;
   guestName?: string;
+  guestDni?: string | null;
   lotNumber?: string | null;
+  sentido?: "in" | "out";
+  qrHint?: string;
+  scanChannel?: ScanChannel;
+  scanChannelLabel?: string;
+  scannedByName?: string | null;
+  eventId?: string;
+  deduped?: boolean;
 }> {
   const pass = await findVisitPassByCard(input.siteId, input.cardRaw);
   if (!pass) return { held: false };
@@ -221,11 +336,12 @@ export async function holdVisitQr(input: {
     const row = await db.select().from(properties).where(eq(properties.id, propertyId)).get();
     return row?.lotNumber ?? null;
   };
-  if (pass.status === "revoked" || pass.status === "denied") {
+  if (pass.status === "revoked" || pass.status === "denied" || pass.status === "completed" || pass.status === "expired") {
     return {
       held: true,
       passId: pass.id,
       guestName: pass.guestName,
+      guestDni: pass.guestDni,
       lotNumber: await lotOf(pass.propertyId),
       reason: "closed",
     };
@@ -235,8 +351,15 @@ export async function holdVisitQr(input: {
   const window = passWindowState(pass, now);
   const missing = await missingVisitFields(pass.id);
   const reason = window === "expired" || window === "too_early" ? "expired" : missing.length ? "incomplete" : "ok";
-  const sentido = input.sentido;
+  const sentido = visitSentidoFromPass(pass);
   const nextStatus = sentido === "out" ? "awaiting_exit" : "awaiting_entry";
+  const scanChannel = normalizeScanChannel(input.scanChannel, input.deviceId);
+  const readerSentido =
+    scanChannel === "totem" && (input.sentido === "in" || input.sentido === "out") ? input.sentido : null;
+  const deviceName = await deviceNameOf(input.deviceId);
+  const scannedByName = await userNameOf(input.scannedByUserId);
+  const channelLabel = scanChannelLabel(scanChannel, deviceName);
+  const qrHint = qrHintOf(pass.token, pass.dahuaCardNo);
 
   const existing = await db
     .select()
@@ -257,14 +380,44 @@ export async function holdVisitQr(input: {
       comment: null,
       guardUserId: null,
       deviceId: input.deviceId || null,
+      scanChannel,
+      scannedByUserId: input.scannedByUserId || null,
+      readerSentido,
+      minorsCount: sentido === "out" ? pass.minorsInCount ?? 0 : 0,
       createdAt: now,
       decidedAt: null,
     });
   } else {
     await db
       .update(guardApprovals)
-      .set({ reason, sentido, deviceId: input.deviceId || existing.deviceId })
+      .set({
+        reason,
+        sentido,
+        deviceId: input.deviceId || existing.deviceId,
+        scanChannel: existing.scanChannel || scanChannel,
+        scannedByUserId: existing.scannedByUserId || input.scannedByUserId || null,
+        readerSentido: existing.readerSentido || readerSentido,
+      })
       .where(eq(guardApprovals.id, existing.id));
+    const age = now.getTime() - (existing.createdAt instanceof Date ? existing.createdAt.getTime() : Number(existing.createdAt) || 0);
+    if (age >= 0 && age < HOLD_DEBOUNCE_MS) {
+      const lotNumber = await lotOf(pass.propertyId);
+      return {
+        held: true,
+        passId: pass.id,
+        approvalId,
+        reason,
+        guestName: pass.guestName,
+        guestDni: pass.guestDni,
+        lotNumber,
+        sentido,
+        qrHint,
+        scanChannel,
+        scanChannelLabel: channelLabel,
+        scannedByName,
+        deduped: true,
+      };
+    }
   }
 
   if (pass.status !== nextStatus && pass.status !== "completed") {
@@ -275,24 +428,34 @@ export async function holdVisitQr(input: {
   const property = await db.select().from(properties).where(eq(properties.id, pass.propertyId)).get();
   const contact = await ownerContactForProperty(pass.propertyId);
   const eventId = nid();
+  const holdPayload = {
+    passId: pass.id,
+    approvalId,
+    sentido,
+    reason,
+    guestName: pass.guestName,
+    guestDni: pass.guestDni,
+    qrHint,
+    lotNumber: property?.lotNumber,
+    arrivalMode: pass.arrivalMode,
+    missing,
+    expired: reason === "expired",
+    scanChannel,
+    scanChannelLabel: channelLabel,
+    scannedByName,
+    readerSentido,
+    accessKind: "visita" as const,
+    dwellLabel: dwellLabel(pass.scannedInAt),
+    minorsInCount: pass.minorsInCount ?? 0,
+    photoStored: false,
+  };
   await db.insert(events).values({
     id: eventId,
     siteId: input.siteId,
     type: "visit_hold",
     sentido,
     laneCode: laneCodeOf(sentido),
-    payload: JSON.stringify({
-      passId: pass.id,
-      approvalId,
-      sentido,
-      reason,
-      guestName: pass.guestName,
-      guestDni: pass.guestDni,
-      lotNumber: property?.lotNumber,
-      arrivalMode: pass.arrivalMode,
-      missing,
-      expired: reason === "expired",
-    }),
+    payload: JSON.stringify(holdPayload),
     createdAt: now,
   });
   broadcastRealtimeEvent({
@@ -301,14 +464,8 @@ export async function holdVisitQr(input: {
     tenantId: input.tenantId ?? undefined,
     type: "visit_hold",
     payload: {
-      passId: pass.id,
-      approvalId,
-      sentido,
-      reason,
-      guestName: pass.guestName,
-      lotNumber: property?.lotNumber,
+      ...holdPayload,
       ownerPhone: contact.ownerPhone,
-      expired: reason === "expired",
     },
     createdAt: now.getTime(),
   });
@@ -339,11 +496,25 @@ export async function holdVisitQr(input: {
         approvalId: approvalId || null,
         kind: "visit_qr",
         title: "Visita en portería",
-        message: `${pass.guestName} llegó a portería (QR). Lote ${lot || "—"}. Portería abre.`,
-        payload: { guestName: pass.guestName, lotNumber: lot || null },
+        message: `${pass.guestName} llegó a portería (QR). Lote ${lot || "—"}. Lectura: ${channelLabel}. Portería abre.`,
+        payload: { guestName: pass.guestName, lotNumber: lot || null, scanChannel, scanChannelLabel: channelLabel },
         ttlMs,
       });
     }
+  }
+
+  if (scanChannel === "totem" && input.tenantId) {
+    void notifyStaff({
+      tenantId: input.tenantId,
+      title: sentido === "out" ? "Visita en salida" : "Visita en tótem",
+      message: `${pass.guestName}${property?.lotNumber ? ` · lote ${property.lotNumber}` : ""} · ${channelLabel}`,
+      data: {
+        type: "visit_hold",
+        passId: pass.id,
+        approvalId: approvalId || "",
+        sentido,
+      },
+    });
   }
 
   return {
@@ -352,7 +523,14 @@ export async function holdVisitQr(input: {
     approvalId,
     reason,
     guestName: pass.guestName,
+    guestDni: pass.guestDni,
     lotNumber: property?.lotNumber ?? null,
+    sentido,
+    qrHint,
+    scanChannel,
+    scanChannelLabel: channelLabel,
+    scannedByName,
+    eventId,
   };
 }
 
@@ -362,10 +540,15 @@ async function patchVisitLaneEvent(input: {
   passId: string;
   approvalId: string;
   guestName: string;
+  guestDni?: string | null;
+  qrHint?: string | null;
   lotNumber?: string | null;
   visitStatus: "approved" | "denied";
   decidedAt: Date;
   decidedByUserId: string;
+  approvedVia?: string | null;
+  scanChannel?: string | null;
+  scanChannelLabel?: string | null;
 }) {
   const guard = await db.select().from(users).where(eq(users.id, input.decidedByUserId)).get();
   const rows = await db
@@ -395,6 +578,8 @@ async function patchVisitLaneEvent(input: {
     ...target.payload,
     guestName: input.guestName,
     personName: input.guestName,
+    guestDni: input.guestDni ?? target.payload.guestDni ?? null,
+    qrHint: input.qrHint ?? target.payload.qrHint ?? null,
     lotNumber: input.lotNumber ?? target.payload.lotNumber ?? null,
     accessKind: "visita",
     visitHold: !approved,
@@ -405,6 +590,9 @@ async function patchVisitLaneEvent(input: {
     visitStatus: input.visitStatus,
     approvedAt: input.decidedAt.getTime(),
     approvedByName: guard?.name || null,
+    approvedVia: input.approvedVia ?? "login",
+    scanChannel: input.scanChannel ?? target.payload.scanChannel ?? null,
+    scanChannelLabel: input.scanChannelLabel ?? target.payload.scanChannelLabel ?? null,
   };
   await db.update(events).set({ payload: JSON.stringify(payload) }).where(eq(events.id, target.row.id));
   const createdAt =
@@ -469,6 +657,7 @@ export async function decideGuardApproval(input: {
         comment: input.comment?.trim() || null,
         trunkChecked: Boolean(input.trunkChecked),
         guardUserId: input.guardUserId,
+        approvedVia: "login",
         decidedAt: now,
       })
       .where(eq(guardApprovals.id, row.id));
@@ -483,10 +672,15 @@ export async function decideGuardApproval(input: {
       passId: pass.id,
       approvalId: row.id,
       guestName: pass.guestName,
+      guestDni: pass.guestDni,
+      qrHint: qrHintOf(pass.token, pass.dahuaCardNo),
       lotNumber: deniedLot?.lotNumber ?? null,
       visitStatus: "denied",
       decidedAt: now,
       decidedByUserId: input.guardUserId,
+      approvedVia: "login",
+      scanChannel: row.scanChannel,
+      scanChannelLabel: scanChannelLabel(row.scanChannel, await deviceNameOf(row.deviceId)),
     });
     broadcastRealtimeEvent({
       id: nid(),
@@ -531,14 +725,21 @@ export async function decideGuardApproval(input: {
         error: "Hay un bien no registrado: el titular del lote tiene que autorizar la salida",
       };
     }
-    const comps = await listCompanions(pass.id);
-    const minorsIn = comps.filter((x) => companionIsMinor(x)).length;
-    const exitMinors = row.exitMinorsCount ?? minorsIn;
-    if (exitMinors > minorsIn && !row.minorTransferAuthorizedByUserId) {
-      return {
-        ok: false,
-        error: "Sale un menor de más: pedí autorización al lote de procedencia",
-      };
+    const inCount = pass.minorsInCount ?? 0;
+    const outCount = row.minorsCount ?? row.exitMinorsCount ?? 0;
+    if (inCount !== outCount) {
+      if (!row.minorsMismatchNotified) {
+        return {
+          ok: false,
+          error: `Ingresaron ${inCount} menor(es) y ahora salen ${outCount}. Avisá al lote antes de abrir.`,
+        };
+      }
+      if (outCount > inCount && !row.minorTransferAuthorizedByUserId) {
+        return {
+          ok: false,
+          error: "Salen más menores de los que ingresaron. Esperá autorización del lote de donde está saliendo.",
+        };
+      }
     }
   }
 
@@ -549,7 +750,10 @@ export async function decideGuardApproval(input: {
 
   const nextStatus = row.sentido === "out" ? "completed" : "in_site";
   const patch: Partial<typeof visitPasses.$inferInsert> = { status: nextStatus };
-  if (row.sentido === "in") patch.scannedInAt = pass.scannedInAt ?? now;
+  if (row.sentido === "in") {
+    patch.scannedInAt = pass.scannedInAt ?? now;
+    patch.minorsInCount = row.minorsCount ?? 0;
+  }
   if (row.sentido === "out") {
     patch.scannedOutAt = now;
     if (!pass.scannedInAt) patch.scannedInAt = now;
@@ -564,11 +768,15 @@ export async function decideGuardApproval(input: {
       comment: input.comment?.trim() || null,
       trunkChecked: Boolean(input.trunkChecked),
       guardUserId: input.guardUserId,
+      approvedVia: "login",
       decidedAt: now,
     })
     .where(eq(guardApprovals.id, row.id));
 
   const property = await db.select().from(properties).where(eq(properties.id, pass.propertyId)).get();
+  const approvedByName = await userNameOf(input.guardUserId);
+  const channelLabel = scanChannelLabel(row.scanChannel, await deviceNameOf(row.deviceId));
+  const qrHint = qrHintOf(pass.token, pass.dahuaCardNo);
   await db.insert(events).values({
     id: nid(),
     siteId: input.site.id,
@@ -579,10 +787,16 @@ export async function decideGuardApproval(input: {
       passId: pass.id,
       approvalId: row.id,
       guestName: pass.guestName,
+      guestDni: pass.guestDni,
+      qrHint,
       lotNumber: property?.lotNumber,
       actuatorsFired: pulse.fired,
       accessKind: "visita",
       guardApproved: true,
+      approvedByName,
+      approvedVia: "login",
+      scanChannel: row.scanChannel,
+      scanChannelLabel: channelLabel,
     }),
     createdAt: now,
   });
@@ -592,10 +806,15 @@ export async function decideGuardApproval(input: {
     passId: pass.id,
     approvalId: row.id,
     guestName: pass.guestName,
+    guestDni: pass.guestDni,
+    qrHint,
     lotNumber: property?.lotNumber ?? null,
     visitStatus: "approved",
     decidedAt: now,
     decidedByUserId: input.guardUserId,
+    approvedVia: "login",
+    scanChannel: row.scanChannel,
+    scanChannelLabel: channelLabel,
   });
   broadcastRealtimeEvent({
     id: nid(),
@@ -605,6 +824,30 @@ export async function decideGuardApproval(input: {
     payload: { passId: pass.id, approvalId: row.id, decided: "approved", sentido: row.sentido },
     createdAt: now.getTime(),
   });
+  const qrNotice = await db
+    .select()
+    .from(ownerNotices)
+    .where(and(eq(ownerNotices.passId, pass.id), eq(ownerNotices.kind, "visit_qr")))
+    .orderBy(desc(ownerNotices.createdAt))
+    .get();
+  if (qrNotice) {
+    let extra: Record<string, unknown> = {};
+    try {
+      extra = qrNotice.payload ? (JSON.parse(qrNotice.payload) as Record<string, unknown>) : {};
+    } catch {
+      extra = {};
+    }
+    extra.approvedByName = approvedByName;
+    extra.approvedVia = "login";
+    extra.scanChannelLabel = channelLabel;
+    await db
+      .update(ownerNotices)
+      .set({
+        payload: JSON.stringify(extra),
+        message: `${qrNotice.message} Abrió ${approvedByName || "portería"} (${channelLabel}).`,
+      })
+      .where(eq(ownerNotices.id, qrNotice.id));
+  }
   return { ok: true, actuatorsFired: pulse.fired };
 }
 
@@ -652,6 +895,8 @@ export async function serializePassFicha(
   }
   const awaitingOut = pass.status === "in_site" || pass.status === "awaiting_exit";
   const pending = Boolean(row && row.status === "pending");
+  const deviceName = await deviceNameOf(row?.deviceId);
+  const channel = row?.scanChannel || null;
   return {
     id: row?.id ?? `preview:${pass.id}`,
     pending,
@@ -664,6 +909,20 @@ export async function serializePassFicha(
     createdAt: row?.createdAt ?? pass.createdAt,
     guestName: pass.guestName,
     guestDni: pass.guestDni,
+    qrHint: qrHintOf(pass.token, pass.dahuaCardNo),
+    scanChannel: channel,
+    scanChannelLabel: scanChannelLabel(channel, deviceName),
+    scannedByName: await userNameOf(row?.scannedByUserId),
+    approvedByName: await userNameOf(row?.guardUserId),
+    approvedVia: row?.approvedVia ?? null,
+    phoneAuthVia: row?.phoneAuthVia ?? null,
+    readerSentido: row?.readerSentido ?? null,
+    laneMismatch: Boolean(row?.readerSentido && row.readerSentido !== (row?.sentido ?? (awaitingOut ? "out" : "in"))),
+    minorsInCount: pass.minorsInCount ?? 0,
+    minorsCount: row?.minorsCount ?? (awaitingOut ? pass.minorsInCount ?? 0 : 0),
+    minorsMismatchNotified: Boolean(row?.minorsMismatchNotified),
+    scannedInAt: pass.scannedInAt ?? null,
+    dwellLabel: dwellLabel(pass.scannedInAt),
     patente: pass.patente,
     arrivalMode: pass.arrivalMode,
     visitKind: pass.visitKind,
@@ -720,11 +979,10 @@ export async function serializePassFicha(
         (row.ownerAuthStatus === "pending_owner" ||
           row.ownerAuthStatus === "owner_expired" ||
           (row.goodsAlert && !row.goodsAuthorizedByUserId) ||
-          (Number(row.exitMinorsCount ?? 0) >
-            companions.filter((x) => companionIsMinor(x)).length &&
+          ((row.minorsCount ?? row.exitMinorsCount ?? 0) > (pass.minorsInCount ?? 0) &&
             !row.minorTransferAuthorizedByUserId)),
     ),
-    minorsIn: companions.filter((x) => companionIsMinor(x)).length,
+    minorsIn: pass.minorsInCount ?? 0,
     adultsIn: 1 + companions.filter((x) => !companionIsMinor(x)).length,
     emergencies: [
       { label: "Policía / emergencias", phone: "911" },
@@ -1062,6 +1320,8 @@ export async function announceWalkIn(input: {
     tenantId: input.site.tenantId,
     cardRaw: token,
     sentido: "in",
+    scanChannel: "web",
+    scannedByUserId: input.guardUserId,
     at: now,
     notifyLot: false,
   });
@@ -1194,6 +1454,67 @@ export async function requestMinorTransfer(input: {
   return { ok: true };
 }
 
+export async function setApprovalMinorsCount(input: {
+  siteId: string;
+  approvalId: string;
+  count: number;
+}) {
+  const row = await db
+    .select()
+    .from(guardApprovals)
+    .where(and(eq(guardApprovals.id, input.approvalId), eq(guardApprovals.siteId, input.siteId)))
+    .get();
+  if (!row || row.status !== "pending") return { ok: false as const, error: "No hay una solicitud pendiente" };
+  const n = Math.max(0, Math.min(20, Math.round(Number(input.count) || 0)));
+  await db
+    .update(guardApprovals)
+    .set({ minorsCount: n, exitMinorsCount: n })
+    .where(eq(guardApprovals.id, row.id));
+  return { ok: true as const, minorsCount: n };
+}
+
+export async function notifyMinorsMismatch(input: {
+  site: { id: string; tenantId: string };
+  approvalId: string;
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  const row = await db
+    .select()
+    .from(guardApprovals)
+    .where(and(eq(guardApprovals.id, input.approvalId), eq(guardApprovals.siteId, input.site.id)))
+    .get();
+  if (!row || row.status !== "pending" || row.sentido !== "out") {
+    return { ok: false, error: "No hay un egreso pendiente" };
+  }
+  const pass = await db.select().from(visitPasses).where(eq(visitPasses.id, row.passId)).get();
+  if (!pass) return { ok: false, error: "El pase ya no existe" };
+  const inCount = pass.minorsInCount ?? 0;
+  const outCount = row.minorsCount ?? row.exitMinorsCount ?? 0;
+  if (inCount === outCount) return { ok: false, error: "La cantidad coincide: no hace falta avisar" };
+  const property = await db.select().from(properties).where(eq(properties.id, pass.propertyId)).get();
+  const lot = property?.lotNumber || "—";
+  const extra = outCount > inCount;
+  const message = extra
+    ? `${pass.guestName} sale con ${outCount} menor(es). En el ingreso se anotaron ${inCount}. Autorizá si corresponde (lote ${lot}).`
+    : `${pass.guestName} sale con ${outCount} menor(es) de los ${inCount} que ingresaron. Quedan ${inCount - outCount} en el barrio (lote ${lot}).`;
+  await db
+    .update(guardApprovals)
+    .set({ minorsMismatchNotified: true, exitMinorsCount: outCount })
+    .where(eq(guardApprovals.id, row.id));
+  await createOwnerNotice({
+    siteId: input.site.id,
+    tenantId: input.site.tenantId,
+    propertyId: pass.propertyId,
+    passId: pass.id,
+    approvalId: row.id,
+    kind: "minors_mismatch",
+    title: extra ? "Salen más menores de los que ingresaron" : "No salen todos los menores que ingresaron",
+    message,
+    payload: { guestName: pass.guestName, minorsIn: inCount, minorsOut: outCount, lotNumber: lot },
+    ttlMs: extra ? 30 * 60 * 1000 : 4 * 60 * 60 * 1000,
+  });
+  return { ok: true };
+}
+
 export async function confirmPhoneAuth(input: {
   site: { id: string; tenantId: string };
   approvalId: string;
@@ -1210,10 +1531,9 @@ export async function confirmPhoneAuth(input: {
   if (!row || row.status !== "pending") return { ok: false, error: "No hay una solicitud pendiente" };
   const pass = await db.select().from(visitPasses).where(eq(visitPasses.id, row.passId)).get();
   if (!pass) return { ok: false, error: "El pase ya no existe" };
-  const comps = await listCompanions(pass.id);
-  const minorsIn = comps.filter((x) => companionIsMinor(x)).length;
   const extraMinors =
-    Number(row.exitMinorsCount ?? 0) > minorsIn && !row.minorTransferAuthorizedByUserId;
+    Number(row.minorsCount ?? row.exitMinorsCount ?? 0) > (pass.minorsInCount ?? 0) &&
+    !row.minorTransferAuthorizedByUserId;
   const patch: Partial<typeof guardApprovals.$inferInsert> = {};
   if (row.ownerAuthStatus === "pending_owner" || row.ownerAuthStatus === "owner_expired") {
     patch.ownerAuthStatus = "owner_approved";
@@ -1227,7 +1547,7 @@ export async function confirmPhoneAuth(input: {
     return { ok: false, error: "No hay una autorización de titular pendiente" };
   }
   const now = new Date();
-  await db.update(guardApprovals).set(patch).where(eq(guardApprovals.id, row.id));
+  await db.update(guardApprovals).set({ ...patch, phoneAuthVia: "guard_code" }).where(eq(guardApprovals.id, row.id));
   await db
     .update(ownerNotices)
     .set({
