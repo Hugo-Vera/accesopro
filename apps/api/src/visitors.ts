@@ -1397,7 +1397,7 @@ visitorsApi.post("/visitors/checkin", async (c) => {
     /* el check-in local no depende del lector */
   }
 
-  await holdVisitQr({
+  const hold = await holdVisitQr({
     siteId,
     tenantId,
     cardRaw: token,
@@ -1405,7 +1405,19 @@ visitorsApi.post("/visitors/checkin", async (c) => {
     scanChannel: "web",
     scannedByUserId: c.get("user").id,
     at: now,
+    notifyLot: false,
   });
+
+  // Autorización verbal ya registrada en authorizedBy: sin espera al titular (no es walk-in).
+  if (hold.approvalId) {
+    await db
+      .update(guardApprovals)
+      .set({
+        ownerAuthStatus: "owner_approved",
+        comment: `Autorizó verbalmente: ${body.destination.authorizedBy.trim()}`,
+      })
+      .where(eq(guardApprovals.id, hold.approvalId));
+  }
 
   // 5. Registrar evento en auditoría
   await db.insert(events).values({
@@ -1442,7 +1454,7 @@ visitorsApi.post("/visitors/checkin", async (c) => {
     ok: true,
     visitId,
     passId,
-    approvalId: pending?.id || null,
+    approvalId: pending?.id || hold.approvalId || null,
     passToken: token,
     qrPayload: token,
     person,
@@ -1451,7 +1463,7 @@ visitorsApi.post("/visitors/checkin", async (c) => {
     licenseId,
     accessMethod,
     dahuaSynced,
-    message: "Visita identificada. El guardia tiene que aprobar la entrada.",
+    message: "Visita registrada. Completá la ficha y aprobá para abrir; no hace falta esperar al titular.",
   });
 });
 

@@ -944,6 +944,9 @@ export async function serializePassFicha(
   if (!pass) return null;
   const property = await db.select().from(properties).where(eq(properties.id, pass.propertyId)).get();
   const contact = await ownerContactForProperty(pass.propertyId);
+  const visitRecord = pass.visitRecordId
+    ? await db.select().from(visitRecords).where(eq(visitRecords.id, pass.visitRecordId)).get()
+    : null;
   const companions = await listCompanions(pass.id);
   const gaps = await visitFieldGaps(pass.id);
   const missing = gaps.missing;
@@ -1039,6 +1042,7 @@ export async function serializePassFicha(
     mapLng: property?.mapLng ?? null,
     lotPolygon: property?.lotPolygon ?? null,
     ...contact,
+    verbalAuthorizedBy: visitRecord?.authorizedBy?.trim() || null,
     ownerAuthStatus: row?.ownerAuthStatus ?? "none",
     ownerAuthExpiresAt: row?.ownerAuthExpiresAt ?? null,
     ownerAuthorizedByUserId: row?.ownerAuthorizedByUserId ?? null,

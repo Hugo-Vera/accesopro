@@ -669,8 +669,11 @@ fun GuardApp(prefs: android.content.SharedPreferences) {
                                                 text = when {
                                                     row.reason == "expired" -> "Pase vencido"
                                                     row.reason == "walk_in" -> "Walk-in · espera titular (2 min)"
-                                                    row.reason == "incomplete" || row.missing.isNotEmpty() -> "Ficha incompleta · completar y aprobar"
-                                                    else -> "En cola · completar y aprobar"
+                                                    !row.verbalAuthorizedBy.isNullOrBlank() ->
+                                                        "Verbal: ${row.verbalAuthorizedBy} · completar y abrir"
+                                                    row.reason == "incomplete" || row.missing.isNotEmpty() ->
+                                                        "Ficha incompleta · completar y abrir"
+                                                    else -> "Listo · completar si falta y abrir"
                                                 },
                                                 style = MaterialTheme.typography.bodySmall.copy(
                                                     fontWeight = if (row.reason == "expired" || row.reason == "walk_in") FontWeight.Bold else FontWeight.Normal,
@@ -1993,18 +1996,31 @@ fun ApprovalDetail(
                         )
                     }
                 }
-            } else if (item.reason != "expired" && item.reason != "incomplete") {
+            } else {
                 Surface(
                     color = MaterialTheme.colorScheme.secondaryContainer,
                     shape = RoundedCornerShape(12.dp),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
-                    Text(
-                        "Visita en cola. Completá identidad y documentos; después Aprobar y abrir.",
+                    Column(
                         modifier = Modifier.padding(14.dp),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSecondaryContainer,
-                    )
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Text(
+                            "Sin espera al titular",
+                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        )
+                        Text(
+                            buildString {
+                                val who = item.verbalAuthorizedBy
+                                if (!who.isNullOrBlank()) append("Autorizó verbalmente: $who. ")
+                                append("Completá lo que falte y tocá Aprobar y abrir: entra al toque.")
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                        )
+                    }
                 }
             }
             if (item.reason == "expired" || item.missing.isNotEmpty() || item.goodsAlert || item.expiredDocs.isNotEmpty()) {

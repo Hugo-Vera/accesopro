@@ -913,7 +913,7 @@ export const MANUAL_CHAPTERS: ManualChapter[] = [
               "Si el DNI ya está en un pase abierto: abre la ficha",
               "Si no hay pase: pantalla Identidad leída con apellido, nombre, DNI, género, nacimiento, trámite",
               "Anunciar al lote: elige lote; aviso 2 min al titular; después completar ficha y aprobar",
-              "Registrar visita: lote + quién autoriza; entra a cola sin 120 s; completar ficha y aprobar",
+              "Registrar visita: lote + quién autorizó verbalmente; sin espera; completar ficha y Aprobar y abrir al toque",
               "QR de visita / Mi QR / vencido: mismas reglas que en web",
             ],
           },

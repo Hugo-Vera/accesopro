@@ -269,7 +269,7 @@ fun LotPickerScreen(
                     modifier = Modifier.fillMaxWidth(),
                 ) {
                     Text(
-                        "Queda en cola sin aviso de 2 minutos. Completá ficha y aprobá vos.",
+                        "Queda en cola sin espera al titular. Anotá quién autorizó (verbal) y al confirmar se abre la ficha: completá lo que falte y tocá Aprobar y abrir.",
                         modifier = Modifier.padding(12.dp),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSecondaryContainer,

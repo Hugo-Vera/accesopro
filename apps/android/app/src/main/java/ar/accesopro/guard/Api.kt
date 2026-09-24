@@ -47,6 +47,7 @@ data class ApprovalItem(
     val minorTransferAuthorized: Boolean = false,
     val dwellLabel: String? = null,
     val companions: List<CompanionItem> = emptyList(),
+    val verbalAuthorizedBy: String? = null,
 )
 
 data class CompanionItem(val name: String, val dni: String?)
@@ -295,6 +296,7 @@ class GuardApi(
                     CompanionItem(c.optString("name"), c.optString("dni").ifBlank { null })
                 }
             },
+            verbalAuthorizedBy = o.optString("verbalAuthorizedBy").ifBlank { null },
         )
     }
 
