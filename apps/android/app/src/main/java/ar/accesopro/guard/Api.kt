@@ -52,6 +52,15 @@ data class ApprovalItem(
 
 data class CompanionItem(val name: String, val dni: String?)
 
+data class CensusGuest(
+    val passId: String,
+    val name: String,
+    val dni: String?,
+    val patente: String?,
+    val adults: Int,
+    val minors: Int,
+)
+
 data class CensusLot(
     val lotNumber: String,
     val label: String,
@@ -60,6 +69,7 @@ data class CensusLot(
     val ownerName: String?,
     val phone: String?,
     val emergencyPhone: String?,
+    val guests: List<CensusGuest> = emptyList(),
 )
 
 data class CensusSnapshot(
@@ -201,6 +211,7 @@ class GuardApi(
             lotsWithPeople = json.optInt("lotsWithPeople"),
             lots = (0 until lots.length()).map {
                 val o = lots.getJSONObject(it)
+                val guestsArr = o.optJSONArray("guests") ?: JSONArray()
                 CensusLot(
                     lotNumber = o.optString("lotNumber"),
                     label = o.optString("label"),
@@ -209,9 +220,26 @@ class GuardApi(
                     ownerName = o.optString("ownerName").ifBlank { null },
                     phone = o.optString("phone").ifBlank { null },
                     emergencyPhone = o.optString("emergencyPhone").ifBlank { null },
+                    guests = (0 until guestsArr.length()).map { gi ->
+                        val g = guestsArr.getJSONObject(gi)
+                        CensusGuest(
+                            passId = g.optString("passId"),
+                            name = g.optString("name"),
+                            dni = g.optString("dni").ifBlank { null },
+                            patente = g.optString("patente").ifBlank { null },
+                            adults = g.optInt("adults"),
+                            minors = g.optInt("minors"),
+                        )
+                    },
                 )
             },
         )
+    }
+
+    suspend fun requestExit(passId: String): ApprovalItem? = withContext(Dispatchers.IO) {
+        val json = post("/api/visitors/passes/$passId/request-exit", JSONObject())
+        val item = json.optJSONObject("item") ?: return@withContext null
+        parseItem(item)
     }
 
     suspend fun panicSos() = withContext(Dispatchers.IO) {

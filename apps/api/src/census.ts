@@ -50,6 +50,7 @@ export async function siteCensus(siteId: string) {
       let adults = 0;
       let minors = 0;
       const guests: {
+        passId: string;
         name: string;
         dni: string | null;
         patente: string | null;
@@ -66,6 +67,7 @@ export async function siteCensus(siteId: string) {
         adults += a;
         minors += m;
         guests.push({
+          passId: p.id,
           name: p.guestName,
           dni: p.guestDni,
           patente: p.patente,

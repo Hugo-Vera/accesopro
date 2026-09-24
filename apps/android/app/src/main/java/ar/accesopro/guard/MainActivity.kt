@@ -199,13 +199,18 @@ fun GuardApp(prefs: android.content.SharedPreferences) {
     var isLoading by remember { mutableStateOf(false) }
     var items by remember { mutableStateOf(listOf<ApprovalItem>()) }
     var selected by remember { mutableStateOf<ApprovalItem?>(null) }
-    var showCensus by remember { mutableStateOf(false) }
     var census by remember { mutableStateOf<CensusSnapshot?>(null) }
     var scanOpen by remember { mutableStateOf(false) }
     var pendingScan by remember { mutableStateOf<String?>(null) }
     var pendingParsedDni by remember { mutableStateOf<ParsedDni?>(null) }
     var dniVisitMode by remember { mutableStateOf<DniVisitMode?>(null) }
     var pendingScanRaw by remember { mutableStateOf<String?>(null) }
+    var mainTab by remember { mutableStateOf("cola") }
+    var capabilities by remember {
+        mutableStateOf(prefs.getStringSet("capabilities", emptySet())?.toList() ?: emptyList())
+    }
+    val canCensus = capabilities.contains("ops.census")
+    val canSos = capabilities.contains("ops.alarms")
     val scope = rememberCoroutineScope()
     val api = remember(baseUrl, cloudUrl, token) { GuardApi(baseUrl, cloudUrl, token) }
 
@@ -213,7 +218,7 @@ fun GuardApp(prefs: android.content.SharedPreferences) {
     val ctx = LocalContext.current
     var knownIds by remember { mutableStateOf<Set<String>?>(null) }
     val selectedNow = rememberUpdatedState(selected)
-    val censusNow = rememberUpdatedState(showCensus)
+    val tabNow = rememberUpdatedState(mainTab)
 
     LaunchedEffect(token, role) {
         knownIds = null
@@ -232,7 +237,7 @@ fun GuardApp(prefs: android.content.SharedPreferences) {
                 }
                 if (fresh.isNotEmpty()) {
                     pingGuard(ctx)
-                    if (selectedNow.value == null && !censusNow.value) selected = fresh.first()
+                    if (selectedNow.value == null && tabNow.value == "cola") selected = fresh.first()
                 }
             }
             delay(1000)
@@ -263,10 +268,12 @@ fun GuardApp(prefs: android.content.SharedPreferences) {
                             .putString("userName", session.name)
                             .putString("baseUrl", baseUrl)
                             .putString("cloudUrl", cloudUrl)
+                            .putStringSet("capabilities", session.capabilities.toSet())
                             .apply()
                         role = session.role
                         userName = session.name
                         token = session.token
+                        capabilities = session.capabilities
                         val fcm = prefs.getString("fcmToken", "") ?: ""
                         if (fcm.isNotBlank()) {
                             runCatching {
@@ -378,23 +385,10 @@ fun GuardApp(prefs: android.content.SharedPreferences) {
             api = api,
             error = error,
             onLogout = {
-                prefs.edit().remove("token").remove("role").apply()
+                prefs.edit().remove("token").remove("role").remove("capabilities").apply()
                 token = ""
             },
             onError = { error = it },
-        )
-        return
-    }
-    if (showCensus) {
-        CensusScreen(
-            snapshot = census,
-            error = error,
-            onBack = { showCensus = false },
-            onRefresh = {
-                scope.launch {
-                    runCatching { census = api.census() }.onFailure { error = it.message }
-                }
-            },
         )
         return
     }
@@ -449,7 +443,11 @@ fun GuardApp(prefs: android.content.SharedPreferences) {
                             color = MaterialTheme.colorScheme.primary,
                         )
                         Text(
-                            text = if (items.isEmpty()) "Cola de visitas" else "${items.size} pendiente${if (items.size == 1) "" else "s"}",
+                            text = when (mainTab) {
+                                "censo" -> "Censo"
+                                "historial" -> "Quienes están adentro"
+                                else -> if (items.isEmpty()) "Cola de visitas" else "${items.size} pendiente${if (items.size == 1) "" else "s"}"
+                            },
                             style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
                         )
                     }
@@ -474,46 +472,78 @@ fun GuardApp(prefs: android.content.SharedPreferences) {
             )
         },
         bottomBar = {
-            NavigationBar(
-                containerColor = MaterialTheme.colorScheme.surface,
-                tonalElevation = 3.dp,
-            ) {
-                NavigationBarItem(
-                    selected = true,
-                    onClick = { },
-                    icon = { Icon(Icons.Default.Person, contentDescription = null) },
-                    label = { Text("Cola") },
-                )
-                NavigationBarItem(
-                    selected = false,
-                    onClick = {
+            GuardNavBar(
+                tab = mainTab,
+                canCensus = canCensus,
+                canSos = canSos,
+                onCola = { mainTab = "cola" },
+                onCenso = {
+                    if (!canCensus) {
+                        error = "Sin permiso de censo (ops.census). Pedile al admin que lo habilite."
+                    } else {
+                        mainTab = "censo"
                         scope.launch {
-                            runCatching {
-                                census = api.census()
-                                showCensus = true
-                            }.onFailure { error = it.message }
+                            runCatching { census = api.census() }.onFailure { error = it.message }
                         }
-                    },
-                    icon = { Icon(Icons.Default.Home, contentDescription = null) },
-                    label = { Text("Censo") },
-                )
-                NavigationBarItem(
-                    selected = false,
-                    onClick = {
+                    }
+                },
+                onHistorial = {
+                    mainTab = "historial"
+                    scope.launch {
+                        runCatching { census = api.census() }.onFailure { error = it.message }
+                    }
+                },
+                onSos = {
+                    if (!canSos) {
+                        error = "Sin permiso SOS (ops.alarms) o módulo pánico. Revisá grants del admin."
+                    } else {
                         scope.launch {
                             runCatching {
                                 api.panicSos()
                                 error = "SOS enviado a portería"
                             }.onFailure { error = it.message }
                         }
-                    },
-                    icon = { Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.error) },
-                    label = { Text("SOS") },
-                )
-            }
+                    }
+                },
+            )
         },
     ) { paddingValues ->
-        Column(
+        when (mainTab) {
+            "censo" -> CensusBody(
+                snapshot = census,
+                error = error,
+                onRefresh = {
+                    scope.launch {
+                        runCatching { census = api.census() }.onFailure { error = it.message }
+                    }
+                },
+                modifier = Modifier.padding(paddingValues),
+            )
+            "historial" -> OnsiteHistoryBody(
+                snapshot = census,
+                error = error,
+                busy = isLoading,
+                onRefresh = {
+                    scope.launch {
+                        runCatching { census = api.census() }.onFailure { error = it.message }
+                    }
+                },
+                onRequestExit = { passId ->
+                    scope.launch {
+                        isLoading = true
+                        error = null
+                        runCatching {
+                            val item = api.requestExit(passId)
+                            items = api.listApprovals()
+                            selected = item ?: items.find { it.passId == passId }
+                            mainTab = "cola"
+                        }.onFailure { error = it.message }
+                        isLoading = false
+                    }
+                },
+                modifier = Modifier.padding(paddingValues),
+            )
+            else -> Column(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
@@ -706,6 +736,7 @@ fun GuardApp(prefs: android.content.SharedPreferences) {
                 }
             }
         }
+            }
     }
 }
 
@@ -1403,10 +1434,10 @@ fun CensusScreen(
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    MetricCard("En predio", "${snapshot.total}", Modifier.weight(1f))
-                    MetricCard("Lotes", "${snapshot.lotsWithPeople}", Modifier.weight(1f))
-                    MetricCard("Adultos", "${snapshot.adults}", Modifier.weight(1f))
-                    MetricCard("Menores", "${snapshot.minors}", Modifier.weight(1f), alert = snapshot.minors > 0)
+                    MetricCardLegacy("En predio", "${snapshot.total}", Modifier.weight(1f))
+                    MetricCardLegacy("Lotes", "${snapshot.lotsWithPeople}", Modifier.weight(1f))
+                    MetricCardLegacy("Adultos", "${snapshot.adults}", Modifier.weight(1f))
+                    MetricCardLegacy("Menores", "${snapshot.minors}", Modifier.weight(1f), alert = snapshot.minors > 0)
                 }
 
                 Text(
@@ -1503,7 +1534,7 @@ fun CensusScreen(
 }
 
 @Composable
-private fun MetricCard(
+private fun MetricCardLegacy(
     title: String,
     value: String,
     modifier: Modifier = Modifier,
@@ -1812,21 +1843,6 @@ fun ApprovalDetail(
                     }
                 },
                 actions = {
-                    TextButton(
-                        onClick = {
-                            minorsSnapshot = minorsCount
-                            if (minorsCount <= 0) minorsCount = 1
-                            minorsOpen = true
-                        }
-                    ) {
-                        Text(
-                            if (minorsCount > 0 || (out && item.minorsInCount > 0))
-                                "Menores · ${if (out) "$minorsCount / ${item.minorsInCount}" else minorsCount}"
-                            else
-                                "Menor",
-                            fontWeight = FontWeight.Bold,
-                        )
-                    }
                     Box(Modifier.padding(end = 8.dp)) {
                         LaneChip(out = out)
                     }
@@ -2160,11 +2176,26 @@ fun ApprovalDetail(
                         .padding(16.dp),
                     verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
-                    Text(
-                        text = "IDENTIDAD",
-                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp),
-                        color = MaterialTheme.colorScheme.primary
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            text = "IDENTIDAD",
+                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp),
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                        FilledTonalButton(
+                            onClick = { scanDni = true },
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                            shape = RoundedCornerShape(10.dp),
+                        ) {
+                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Escanear DNI", style = MaterialTheme.typography.labelLarge)
+                        }
+                    }
                     Text(
                         text = "Lote ${item.lotNumber ?: "—"} · ${item.ownerName.ifBlank { "Sin titular en ficha" }}",
                         style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
@@ -2219,14 +2250,34 @@ fun ApprovalDetail(
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp)
                     )
+                    if (dniMatch == "ok") {
+                        Text("El DNI coincide con el precargado.", color = MaterialTheme.colorScheme.primary)
+                    } else if (dniMatch == "filled") {
+                        Text("Se cargaron nombre y DNI desde el plástico.", color = MaterialTheme.colorScheme.tertiary)
+                    }
+
+                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+                    Text(
+                        "ACOMPAÑANTES Y MENORES",
+                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp),
+                        color = MaterialTheme.colorScheme.primary,
+                    )
                     OutlinedButton(
-                        onClick = { scanDni = true },
+                        onClick = {
+                            minorsSnapshot = minorsCount
+                            if (minorsCount <= 0) minorsCount = 1
+                            minorsOpen = true
+                        },
                         modifier = Modifier.fillMaxWidth().height(46.dp),
-                        shape = RoundedCornerShape(12.dp)
+                        shape = RoundedCornerShape(12.dp),
                     ) {
-                        Icon(Icons.Default.Add, contentDescription = null)
-                        Spacer(Modifier.width(8.dp))
-                        Text("Escanear DNI (PDF417 / QR)")
+                        Text(
+                            if (minorsCount > 0 || (out && item.minorsInCount > 0))
+                                "Menores · ${if (out) "$minorsCount / ${item.minorsInCount}" else minorsCount}"
+                            else
+                                "Anotar menores",
+                            fontWeight = FontWeight.Bold,
+                        )
                     }
                     OutlinedButton(
                         onClick = { scanCompanion = true },
@@ -2235,7 +2286,7 @@ fun ApprovalDetail(
                     ) {
                         Icon(Icons.Default.Person, contentDescription = null)
                         Spacer(Modifier.width(8.dp))
-                        Text("Escanear DNI de acompañante")
+                        Text("Acompañante (escanear DNI)")
                     }
                     if (companions.isNotEmpty()) {
                         Text(
@@ -2245,13 +2296,6 @@ fun ApprovalDetail(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                    }
-                    if (dniMatch == "ok") {
-                        Text("El DNI coincide con el precargado.", color = MaterialTheme.colorScheme.primary)
-                    } else if (dniMatch == "filled") {
-                        Text("Se cargaron nombre y DNI desde el plástico.", color = MaterialTheme.colorScheme.tertiary)
-                    } else {
-                        Text("Escaneá el DNI para validar número y nombre.")
                     }
                 }
             }

@@ -11,6 +11,7 @@ import {
   visitRecords,
   visitPasses,
   visitAuthorizations,
+  guardApprovals,
   users,
   events,
 } from "./db/schema.js";
@@ -1509,4 +1510,40 @@ visitorsApi.post("/visitors/records/:id/checkout", async (c) => {
   }
 
   return c.json({ error: "Este ingreso no tiene pase QR. Pedí la salida desde la cola cuando acerquen el QR." }, 400);
+});
+
+/** Salida desde app/historial sin lector: abre ficha OUT en la cola. */
+visitorsApi.post("/visitors/passes/:id/request-exit", async (c) => {
+  const denied = await denyUnlessCapability(c.get("user"), "access.visitors.manage");
+  if (denied) return denied;
+  const scoped = await scopedSiteWithModule(c, "visitors");
+  if ("error" in scoped) return scoped.error;
+  const pass = await db
+    .select()
+    .from(visitPasses)
+    .where(and(eq(visitPasses.id, c.req.param("id")), eq(visitPasses.siteId, scoped.site.id)))
+    .get();
+  if (!pass) return c.json({ error: "Pase no encontrado" }, 404);
+  if (pass.status !== "in_site" && pass.status !== "awaiting_exit") {
+    return c.json({ error: "Esa visita no está adentro del predio" }, 409);
+  }
+  const hold = await holdVisitQr({
+    siteId: scoped.site.id,
+    tenantId: scoped.tenantId,
+    cardRaw: pass.token,
+    sentido: "out",
+    scanChannel: "app",
+    scannedByUserId: c.get("user").id,
+  });
+  if (!hold.held || hold.denied) {
+    return c.json({ error: hold.reason === "closed" ? "El pase ya se cerró" : "No se pudo pedir la salida" }, 409);
+  }
+  const pending = (await listPendingApprovals(scoped.site.id)).find((x) => x.id === hold.approvalId || x.passId === pass.id);
+  return c.json({
+    ok: true,
+    approvalId: hold.approvalId,
+    passId: pass.id,
+    item: pending || null,
+    message: "Salida en cola. Completá ficha y aprobá para abrir.",
+  });
 });
