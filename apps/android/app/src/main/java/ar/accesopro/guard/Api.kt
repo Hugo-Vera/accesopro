@@ -48,7 +48,96 @@ data class ApprovalItem(
     val dwellLabel: String? = null,
     val companions: List<CompanionItem> = emptyList(),
     val verbalAuthorizedBy: String? = null,
+    val arrivalMode: String = "peatonal",
+    val needsLicense: Boolean = false,
+    val needsVehicle: Boolean = false,
+    val canSwitchToPedestrian: Boolean = false,
+    val trunkChecked: Boolean = false,
+    val insurance: DocInfo? = null,
+    val personInsurance: DocInfo? = null,
+    val license: DocInfo? = null,
+    val onFile: DocsOnFile = DocsOnFile(),
+    val trunkIn: TrunkCheck? = null,
+    val trunkOut: TrunkCheck? = null,
 )
+
+/** Documento vinculado o en archivo (ART, seguro del auto, licencia). validUntil = AAAA-MM-DD. */
+data class DocInfo(
+    val id: String,
+    val kind: String? = null,
+    val company: String? = null,
+    val policyNumber: String? = null,
+    val licenseNumber: String? = null,
+    val plate: String? = null,
+    val validUntil: String? = null,
+    val hasDocument: Boolean = false,
+    val expired: Boolean = false,
+)
+
+data class DocsOnFile(
+    val art: DocInfo? = null,
+    val license: DocInfo? = null,
+    val insurance: DocInfo? = null,
+)
+
+data class TrunkCheck(
+    val id: String,
+    val description: String?,
+    val photoIds: List<String>,
+    val photoUrls: List<String>,
+    val at: String?,
+    val guardName: String?,
+)
+
+data class LastVisit(
+    val visitType: String,
+    val arrivalMode: String?,
+    val patente: String?,
+    val lotNumber: String?,
+    val propertyId: String?,
+    val at: String?,
+)
+
+data class IdentityHistory(
+    val found: Boolean,
+    val blacklisted: Boolean,
+    val lastVisit: LastVisit?,
+    val art: DocInfo?,
+    val license: DocInfo?,
+)
+
+/** Datos de la ficha que se guardan con "Guardar y siguiente". Campos vacíos no se mandan. */
+data class FichaInput(
+    val guestDni: String = "",
+    val guestName: String = "",
+    val visitKind: String? = null,
+    val arrivalMode: String? = null,
+    val plate: String = "",
+    val insuranceReuseId: String? = null,
+    val company: String = "",
+    val policy: String = "",
+    val until: String = "",
+    val cardPhoto: String? = null,
+    val artReuseId: String? = null,
+    val artKind: String? = null,
+    val artUntil: String = "",
+    val artCompany: String = "",
+    val artPhoto: String? = null,
+    val licReuseId: String? = null,
+    val licUntil: String = "",
+    val licNumber: String = "",
+    val licPhoto: String? = null,
+    val minorsCount: Int? = null,
+    val companions: List<CompanionItem>? = null,
+)
+
+/** Error de la API con la lista de faltantes/vencidos y la ficha fresca si vino. */
+class ApiException(
+    message: String,
+    val code: Int,
+    val missing: List<String> = emptyList(),
+    val item: JSONObject? = null,
+) : IllegalStateException(message)
 
 data class CompanionItem(val name: String, val dni: String?)
 
@@ -253,18 +342,133 @@ class GuardApi(
         comment: String,
         trunkChecked: Boolean,
         guestDni: String,
-        company: String,
-        policy: String,
-        until: String,
-        plate: String,
     ) = withContext(Dispatchers.IO) {
         val body = JSONObject()
             .put("decision", decision)
             .put("comment", comment)
             .put("trunkChecked", trunkChecked)
-            .put("guestDni", guestDni)
+        if (guestDni.isNotBlank()) body.put("guestDni", guestDni)
         post("/api/visitors/approvals/$id/decide", body)
         Unit
+    }
+
+    fun parseApprovalJson(o: JSONObject): ApprovalItem = parseItem(o)
+
+    suspend fun goodsAlert(id: String, description: String, photoBase64: String?) = withContext(Dispatchers.IO) {
+        val body = JSONObject().put("description", description)
+        if (!photoBase64.isNullOrBlank()) body.put("photoBase64", photoBase64)
+        post("/api/visitors/approvals/$id/goods", body)
+        Unit
+    }
+
+    suspend fun switchToPedestrian(id: String): ApprovalItem? = withContext(Dispatchers.IO) {
+        val json = post("/api/visitors/approvals/$id/pedestrian", JSONObject())
+        json.optJSONObject("item")?.let { parseItem(it) }
+    }
+
+    suspend fun uploadTrunk(
+        approvalId: String,
+        description: String?,
+        photos: List<String>,
+        removeIds: List<String>,
+    ): ApprovalItem? = withContext(Dispatchers.IO) {
+        val body = JSONObject()
+        if (description != null) body.put("description", description)
+        body.put("addPhotosBase64", JSONArray().apply { photos.forEach { put(it) } })
+        body.put("removePhotoIds", JSONArray().apply { removeIds.forEach { put(it) } })
+        val json = post("/api/visitors/approvals/$approvalId/trunk", body)
+        json.optJSONObject("item")?.let { parseItem(it) }
+    }
+
+    suspend fun searchIdentity(dni: String): IdentityHistory? = withContext(Dispatchers.IO) {
+        val clean = dni.filter { it.isDigit() }
+        if (clean.length < 7) return@withContext null
+        val json = get("/api/visitors/search-identity?dni=$clean")
+        if (!json.optBoolean("found")) {
+            return@withContext IdentityHistory(false, false, null, null, null)
+        }
+        val lv = json.optJSONObject("lastVisit")
+        IdentityHistory(
+            found = true,
+            blacklisted = json.optBoolean("blacklisted"),
+            lastVisit = lv?.let {
+                LastVisit(
+                    visitType = it.optString("visitType", "social"),
+                    arrivalMode = it.optStringOrNull("arrivalMode"),
+                    patente = it.optStringOrNull("patente"),
+                    lotNumber = it.optStringOrNull("lotNumber"),
+                    propertyId = it.optStringOrNull("propertyId"),
+                    at = it.optStringOrNull("at"),
+                )
+            },
+            art = json.optJSONObject("personInsurance")?.let { parseDoc(it) },
+            license = json.optJSONObject("license")?.let { o ->
+                parseDoc(o).copy(hasDocument = o.optBoolean("hasPhoto"))
+            },
+        )
+    }
+
+    /** Foto protegida por token (baúl). */
+    suspend fun fetchImage(path: String): ByteArray = withContext(Dispatchers.IO) {
+        val urls = bases()
+        if (urls.isEmpty()) throw IllegalStateException("Falta la URL de la API")
+        var last: Exception? = null
+        for (base in urls) {
+            try {
+                val conn = (URL(base + path).openConnection() as HttpURLConnection).apply {
+                    connectTimeout = 8000
+                    readTimeout = 15000
+                    if (token.isNotBlank()) setRequestProperty("Authorization", "Bearer $token")
+                }
+                val code = conn.responseCode
+                if (code !in 200..299) {
+                    conn.disconnect()
+                    throw IllegalStateException("HTTP $code")
+                }
+                val bytes = conn.inputStream.use { it.readBytes() }
+                conn.disconnect()
+                return@withContext bytes
+            } catch (e: Exception) {
+                last = e
+            }
+        }
+        throw last ?: IllegalStateException("Sin servidor")
+    }
+
+    private fun JSONObject.optStringOrNull(key: String): String? {
+        if (!has(key) || isNull(key)) return null
+        return optString(key).ifBlank { null }
+    }
+
+    private fun dateOnly(o: JSONObject, key: String): String? {
+        val raw = o.optStringOrNull(key) ?: return null
+        return if (raw.length >= 10 && raw[4] == '-') raw.substring(0, 10) else raw
+    }
+
+    private fun parseDoc(o: JSONObject): DocInfo = DocInfo(
+        id = o.optString("id"),
+        kind = o.optStringOrNull("kind"),
+        company = o.optStringOrNull("company"),
+        policyNumber = o.optStringOrNull("policyNumber"),
+        licenseNumber = o.optStringOrNull("licenseNumber"),
+        plate = o.optStringOrNull("plate"),
+        validUntil = dateOnly(o, "validUntil"),
+        hasDocument = o.optBoolean("hasDocument") || o.optBoolean("hasPhoto"),
+        expired = o.optBoolean("expired"),
+    )
+
+    private fun parseTrunk(o: JSONObject?): TrunkCheck? {
+        if (o == null) return null
+        val ids = o.optJSONArray("photoIds") ?: JSONArray()
+        val urls = o.optJSONArray("photoUrls") ?: JSONArray()
+        return TrunkCheck(
+            id = o.optString("id"),
+            description = o.optStringOrNull("description"),
+            photoIds = (0 until ids.length()).map { ids.getString(it) },
+            photoUrls = (0 until urls.length()).map { urls.getString(it) },
+            at = o.optStringOrNull("at"),
+            guardName = o.optStringOrNull("guardName"),
+        )
     }
 
     suspend fun phoneAuth(id: String, guardCode: String) = withContext(Dispatchers.IO) {
@@ -325,6 +529,23 @@ class GuardApi(
                 }
             },
             verbalAuthorizedBy = o.optString("verbalAuthorizedBy").ifBlank { null },
+            arrivalMode = o.optString("arrivalMode").ifBlank { "peatonal" },
+            needsLicense = o.optBoolean("needsLicense"),
+            needsVehicle = o.optBoolean("needsVehicle", o.optBoolean("needsTrunk")),
+            canSwitchToPedestrian = o.optBoolean("canSwitchToPedestrian"),
+            trunkChecked = o.optBoolean("trunkChecked"),
+            insurance = o.optJSONObject("insurance")?.let { parseDoc(it) },
+            personInsurance = o.optJSONObject("personInsurance")?.let { parseDoc(it) },
+            license = o.optJSONObject("license")?.let { parseDoc(it) },
+            onFile = o.optJSONObject("onFile")?.let { f ->
+                DocsOnFile(
+                    art = f.optJSONObject("art")?.let { parseDoc(it) },
+                    license = f.optJSONObject("license")?.let { parseDoc(it) },
+                    insurance = f.optJSONObject("insurance")?.let { parseDoc(it) },
+                )
+            } ?: DocsOnFile(),
+            trunkIn = parseTrunk(o.optJSONObject("trunkIn")),
+            trunkOut = parseTrunk(o.optJSONObject("trunkOut")),
         )
     }
 
@@ -409,11 +630,22 @@ class GuardApi(
         }
     }
 
-    suspend fun announceVisit(propertyId: String, guestName: String?, guestDni: String?): CreateVisitResult =
+    suspend fun announceVisit(
+        propertyId: String,
+        guestName: String?,
+        guestDni: String?,
+        visitKind: String = "social",
+        arrivalMode: String = "peatonal",
+        patente: String = "",
+    ): CreateVisitResult =
         withContext(Dispatchers.IO) {
-            val body = JSONObject().put("propertyId", propertyId)
+            val body = JSONObject()
+                .put("propertyId", propertyId)
+                .put("visitKind", visitKind)
+                .put("arrivalMode", arrivalMode)
             if (!guestName.isNullOrBlank()) body.put("guestName", guestName)
             if (!guestDni.isNullOrBlank()) body.put("guestDni", guestDni)
+            if (arrivalMode == "vehiculo" && patente.isNotBlank()) body.put("patente", patente.trim().uppercase())
             val json = post("/api/visitors/announce", body)
             CreateVisitResult(
                 passId = json.optString("passId"),
@@ -427,6 +659,9 @@ class GuardApi(
         propertyId: String,
         authorizedBy: String,
         rawPdf417: String? = null,
+        visitKind: String = "social",
+        arrivalMode: String = "peatonal",
+        patente: String = "",
     ): CreateVisitResult = withContext(Dispatchers.IO) {
         val identity = JSONObject()
             .put("dniNumber", parsed.dni)
@@ -439,12 +674,17 @@ class GuardApi(
         val destination = JSONObject()
             .put("propertyId", propertyId)
             .put("authorizedBy", authorizedBy.trim())
+            .put("visitType", visitKind)
+        val vehicular = arrivalMode == "vehiculo"
         val body = JSONObject()
             .put("identity", identity)
             .put("destination", destination)
-            .put("isVehicular", false)
-            .put("arrivalMode", "peatonal")
+            .put("isVehicular", vehicular)
+            .put("arrivalMode", arrivalMode)
             .put("accessMethod", "qr")
+        if (vehicular && patente.isNotBlank()) {
+            body.put("vehicle", JSONObject().put("plate", patente.trim().uppercase()))
+        }
         val json = post("/api/visitors/checkin", body)
         CreateVisitResult(
             passId = json.optString("passId"),
@@ -457,56 +697,53 @@ class GuardApi(
         json.optString("imageBase64")
     }
 
-    suspend fun saveFicha(
-        id: String,
-        guestDni: String,
-        guestName: String,
-        plate: String,
-        company: String,
-        policy: String,
-        until: String,
-        cardPhoto: String?,
-        artUntil: String,
-        artCompany: String,
-        artPhoto: String?,
-        licUntil: String,
-        licNumber: String,
-        licPhoto: String?,
-        minorsCount: Int = 0,
-        companions: List<CompanionItem> = emptyList(),
-    ) = withContext(Dispatchers.IO) {
-        val body = JSONObject().put("guestDni", guestDni)
-        if (guestName.isNotBlank()) body.put("guestName", guestName)
-        if (plate.isNotBlank()) body.put("patente", plate)
-        if (company.isNotBlank() && policy.isNotBlank()) {
-            val ins = JSONObject()
-                .put("plate", plate)
-                .put("company", company)
-                .put("policyNumber", policy)
-                .put("validUntil", until)
-            if (!cardPhoto.isNullOrBlank()) ins.put("cardPhotoBase64", cardPhoto)
+    suspend fun saveFicha(id: String, f: FichaInput): ApprovalItem? = withContext(Dispatchers.IO) {
+        val body = JSONObject()
+        if (f.guestDni.isNotBlank()) body.put("guestDni", f.guestDni)
+        if (f.guestName.isNotBlank()) body.put("guestName", f.guestName)
+        f.visitKind?.let { body.put("visitKind", it) }
+        f.arrivalMode?.let { body.put("arrivalMode", it) }
+        if (f.plate.isNotBlank()) body.put("patente", f.plate.trim().uppercase())
+        if (!f.insuranceReuseId.isNullOrBlank()) {
+            val ins = JSONObject().put("reuseId", f.insuranceReuseId)
+            if (!f.cardPhoto.isNullOrBlank()) ins.put("cardPhotoBase64", f.cardPhoto)
+            body.put("insurance", ins)
+        } else if ((f.company.isNotBlank() && f.policy.isNotBlank()) || !f.cardPhoto.isNullOrBlank()) {
+            val ins = JSONObject().put("plate", f.plate)
+            if (f.company.isNotBlank()) ins.put("company", f.company)
+            if (f.policy.isNotBlank()) ins.put("policyNumber", f.policy)
+            if (f.until.isNotBlank()) ins.put("validUntil", f.until)
+            if (!f.cardPhoto.isNullOrBlank()) ins.put("cardPhotoBase64", f.cardPhoto)
             body.put("insurance", ins)
         }
-        if (artUntil.isNotBlank()) {
-            val art = JSONObject().put("kind", "art").put("company", artCompany).put("validUntil", artUntil)
-            if (!artPhoto.isNullOrBlank()) art.put("documentBase64", artPhoto).put("source", "scan")
+        if (!f.artReuseId.isNullOrBlank()) {
+            body.put("personInsurance", JSONObject().put("reuseId", f.artReuseId))
+        } else if (f.artUntil.isNotBlank() || !f.artPhoto.isNullOrBlank()) {
+            val art = JSONObject()
+            f.artKind?.let { art.put("kind", it) }
+            if (f.artCompany.isNotBlank()) art.put("company", f.artCompany)
+            if (f.artUntil.isNotBlank()) art.put("validUntil", f.artUntil)
+            if (!f.artPhoto.isNullOrBlank()) art.put("documentBase64", f.artPhoto).put("source", "scan")
             body.put("personInsurance", art)
         }
-        if (licUntil.isNotBlank()) {
-            val lic = JSONObject().put("validUntil", licUntil).put("licenseNumber", licNumber)
-            if (!licPhoto.isNullOrBlank()) lic.put("photoBase64", licPhoto)
+        if (!f.licReuseId.isNullOrBlank()) {
+            val lic = JSONObject().put("reuseId", f.licReuseId)
+            body.put("driverLicense", lic)
+        } else if (f.licUntil.isNotBlank() || !f.licPhoto.isNullOrBlank()) {
+            val lic = JSONObject()
+            if (f.licUntil.isNotBlank()) lic.put("validUntil", f.licUntil)
+            if (f.licNumber.isNotBlank()) lic.put("licenseNumber", f.licNumber)
+            if (!f.licPhoto.isNullOrBlank()) lic.put("photoBase64", f.licPhoto)
             body.put("driverLicense", lic)
         }
-        body.put("minorsCount", minorsCount)
-        if (companions.isNotEmpty()) {
+        f.minorsCount?.let { body.put("minorsCount", it) }
+        f.companions?.let { list ->
             val arr = JSONArray()
-            companions.forEach { c ->
-                arr.put(JSONObject().put("name", c.name).put("dni", c.dni ?: ""))
-            }
+            list.forEach { c -> arr.put(JSONObject().put("name", c.name).put("dni", c.dni ?: "")) }
             body.put("companions", arr)
         }
-        post("/api/visitors/approvals/$id/ficha", body)
-        Unit
+        val json = post("/api/visitors/approvals/$id/ficha", body)
+        json.optJSONObject("item")?.let { parseItem(it) }
     }
 
     suspend fun setMinorsCount(id: String, count: Int) = withContext(Dispatchers.IO) {
@@ -516,11 +753,6 @@ class GuardApi(
 
     suspend fun notifyMinorsMismatch(id: String) = withContext(Dispatchers.IO) {
         post("/api/visitors/approvals/$id/minors-mismatch", JSONObject())
-        Unit
-    }
-
-    suspend fun expiredException(id: String) = withContext(Dispatchers.IO) {
-        post("/api/visitors/approvals/$id/expired-exception", JSONObject())
         Unit
     }
 
@@ -543,6 +775,10 @@ class GuardApi(
                     if (method == "GET" && index == 0 && urls.size > 1) 2000
                     else 20000
                 return requestOnce(base, method, path, body, auth, timeout)
+            } catch (e: ApiException) {
+                // El server respondió con un error de negocio: probar la otra URL no cambia nada.
+                if (e.code in 400..499) throw e
+                last = e
             } catch (e: Exception) {
                 last = e
             }
@@ -575,8 +811,19 @@ class GuardApi(
         val stream = if (code in 200..299) conn.inputStream else conn.errorStream
         val text = stream?.bufferedReader()?.readText() ?: ""
         conn.disconnect()
-        val json = if (text.startsWith("{")) JSONObject(text) else JSONObject().put("error", text)
-        if (code !in 200..299) throw IllegalStateException(json.optString("error", "HTTP $code"))
+        val isJson = text.startsWith("{")
+        val json = if (isJson) JSONObject(text) else JSONObject().put("error", text)
+        if (code !in 200..299) {
+            val msg = json.optString("error", "HTTP $code")
+            if (!isJson) throw IllegalStateException(msg)
+            val arr = json.optJSONArray("missing") ?: JSONArray()
+            throw ApiException(
+                message = msg,
+                code = code,
+                missing = (0 until arr.length()).map { arr.getString(it) },
+                item = json.optJSONObject("item"),
+            )
+        }
         return json
     }
 }

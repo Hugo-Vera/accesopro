@@ -7,7 +7,9 @@ import { DniScanPanel } from "@/components/DniScanPanel";
 import { parseDniScan } from "@/lib/parseDni";
 import { DocumentScanPanel, type AcceptedDoc, visitorDocUrl } from "@/components/ops/DocumentScanPanel";
 import { Modal } from "@/components/ui/Modal";
+import { artLabelFor, docRequirements, isPastDay, isoDay, personInsuranceKindFor } from "@/lib/visitDocs";
 import {
+  Footprints,
   IdCard,
   Home,
   Car,
@@ -42,32 +44,30 @@ const VISIT_PRACTICE: Record<
     items: [
       { text: "DNI del visitante", ask: true },
       { text: "Quién autoriza en el lote", ask: true },
-      { text: "Si entra en auto: seguro automotor y licencia (pasos siguientes)", ask: false },
+      { text: "Si entra en auto: patente, seguro con foto, licencia con foto y baúl", ask: false },
     ],
   },
   service: {
     title: "Servicio / técnico",
     items: [
       { text: "DNI y quién autoriza", ask: true },
-      { text: "Seguro de vida o ART vigente", ask: true },
-      { text: "Constancia (webcam o archivo de WhatsApp)", ask: true },
-      { text: "Si entra en auto: seguro del vehículo y licencia", ask: false },
+      { text: "ART o seguro de vida vigente con constancia", ask: true },
+      { text: "Si entra en auto: patente, seguro con foto, licencia con foto y baúl", ask: false },
     ],
   },
   contractor: {
     title: "Obra / contratista",
     items: [
       { text: "DNI y quién autoriza", ask: true },
-      { text: "ART o seguro de vida vigente", ask: true },
-      { text: "Constancia adjunta (escaneo o archivo)", ask: true },
-      { text: "Anotar herramientas / vehículo en observaciones", ask: false },
+      { text: "ART vigente con constancia", ask: true },
+      { text: "Si entra en auto: patente, seguro con foto, licencia con foto y baúl", ask: false },
     ],
   },
   delivery: {
     title: "Delivery / paquete",
     items: [
       { text: "DNI y destinatario que autoriza", ask: true },
-      { text: "Si el auto entra al predio: seguro automotor (paso siguiente)", ask: false },
+      { text: "Si el auto entra al predio: patente, seguro con foto, licencia con foto y baúl", ask: false },
     ],
   },
 };
@@ -110,10 +110,10 @@ type Props = {
 };
 
 export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Props) {
-  const [docOverlay, setDocOverlay] = useState(false);
+  const [docOverlay, setDocOverlay] = useState<"life" | "ins" | "lic" | null>(null);
   useEscapeKey(() => {
     if (docOverlay) {
-      setDocOverlay(false);
+      setDocOverlay(null);
       return;
     }
     onClose();
@@ -174,6 +174,31 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
   const [licenseClass, setLicenseClass] = useState("B.1");
   const [licenseJurisdiction, setLicenseJurisdiction] = useState("");
   const [licenseValidUntil, setLicenseValidUntil] = useState("");
+  const [insDoc, setInsDoc] = useState<AcceptedDoc | null>(null);
+  const [licDoc, setLicDoc] = useState<AcceptedDoc | null>(null);
+  const [insOnFileRaw, setInsOnFile] = useState<{ id: string; hasPhoto: boolean; expired: boolean; validUntil: string; number: string } | null>(null);
+  const [licOnFileRaw, setLicOnFile] = useState<{ id: string; hasPhoto: boolean; expired: boolean; validUntil: string; number: string } | null>(null);
+  // Si el guardia corrige fecha o número, ya no es el documento en archivo: se carga uno nuevo.
+  const insOnFile =
+    insOnFileRaw && insOnFileRaw.validUntil === insuranceValidUntil && insOnFileRaw.number === policyNumber.trim() ? insOnFileRaw : null;
+  const licOnFile =
+    licOnFileRaw && licOnFileRaw.validUntil === licenseValidUntil && licOnFileRaw.number === (licenseNumber.trim() || dniNumber.trim())
+      ? licOnFileRaw
+      : null;
+  const req = docRequirements(visitType, arrivalMode);
+  const needsArt = req.art;
+  const artLabel = artLabelFor(visitType);
+  const lifeExpired = Boolean(lifeValidUntil && isPastDay(lifeValidUntil));
+  const insExpired = Boolean(insuranceValidUntil && isPastDay(insuranceValidUntil));
+  const licExpired = Boolean(licenseValidUntil && isPastDay(licenseValidUntil));
+  const insPhotoOk = Boolean(insDoc?.base64 || insOnFile?.hasPhoto);
+  const licPhotoOk = Boolean(licDoc?.base64 || licOnFile?.hasPhoto);
+
+  function switchToPedestrian() {
+    setArrivalMode("peatonal");
+    setError(null);
+    setStep(6);
+  }
 
   useEffect(() => {
     if (!isOpen || !tenantId) return;
@@ -197,7 +222,11 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
     setLifeCompany("");
     setLifeDoc(null);
     setAskLife(false);
-    setDocOverlay(false);
+    setDocOverlay(null);
+    setInsDoc(null);
+    setLicDoc(null);
+    setInsOnFile(null);
+    setLicOnFile(null);
   }, [isOpen]);
 
   // Búsqueda automática de DNI al tipear 7 u 8 dígitos
@@ -236,8 +265,17 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
           setLicenseClass(res.license.classes || "B.1");
           setLicenseJurisdiction(res.license.jurisdiction || "");
           if (res.license.validUntil) {
-            setLicenseValidUntil(new Date(res.license.validUntil).toISOString().split("T")[0]);
+            setLicenseValidUntil(isoDay(res.license.validUntil));
           }
+          setLicOnFile({
+            id: res.license.id,
+            hasPhoto: Boolean(res.license.hasPhoto),
+            expired: Boolean(res.license.expired),
+            validUntil: isoDay(res.license.validUntil),
+            number: String(res.license.licenseNumber || cleanDni).trim(),
+          });
+        } else {
+          setLicOnFile(null);
         }
 
         if (res.personInsurance) {
@@ -312,8 +350,17 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
           setPolicyNumber(res.insurance.policyNumber || "");
           setCoverageType(res.insurance.coverageType || "responsabilidad_civil");
           if (res.insurance.validUntil) {
-            setInsuranceValidUntil(new Date(res.insurance.validUntil).toISOString().split("T")[0]);
+            setInsuranceValidUntil(isoDay(res.insurance.validUntil));
           }
+          setInsOnFile({
+            id: res.insurance.id,
+            hasPhoto: Boolean(res.insurance.hasPhoto),
+            expired: Boolean(res.insurance.expired),
+            validUntil: isoDay(res.insurance.validUntil),
+            number: String(res.insurance.policyNumber || "").trim(),
+          });
+        } else {
+          setInsOnFile(null);
         }
       } else {
         setVehicleFound(false);
@@ -331,9 +378,8 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
       return dniNumber.trim().length >= 7 && lastName.trim() && firstName.trim();
     }
     if (step === 2) {
-      const needsLife = visitType === "service" || visitType === "contractor";
-      if (needsLife) {
-        return Boolean(propertyId && authorizedBy.trim() && lifeValidUntil && lifeDoc);
+      if (needsArt) {
+        return Boolean(propertyId && authorizedBy.trim() && lifeValidUntil && lifeDoc && !lifeExpired);
       }
       return Boolean(propertyId && authorizedBy.trim());
     }
@@ -343,19 +389,28 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
     if (step === 4) {
       if (!isVehicular) return true;
       const comp = insuranceCompany === "Otra Compañía" ? customInsuranceCompany.trim() : insuranceCompany;
-      return plate.trim().length >= 6 && comp && policyNumber.trim() && insuranceValidUntil;
+      return plate.trim().length >= 6 && comp && policyNumber.trim() && insuranceValidUntil && insPhotoOk && !insExpired;
     }
     if (step === 5) {
       if (!isVehicular) return true;
-      return licenseValidUntil;
+      return Boolean(licenseValidUntil && licPhotoOk && !licExpired);
     }
     return true;
+  };
+
+  const stepBlocker = () => {
+    if (step === 2 && needsArt && lifeExpired) return `${artLabel} vencida: no puede ingresar.`;
+    if (step === 4 && isVehicular && insExpired) return "Seguro del auto vencido: no puede entrar con el vehículo.";
+    if (step === 4 && isVehicular && !insPhotoOk) return "Falta la foto de la tarjeta del seguro.";
+    if (step === 5 && isVehicular && licExpired) return "Licencia vencida: no puede entrar manejando.";
+    if (step === 5 && isVehicular && !licPhotoOk) return "Falta la foto de la licencia.";
+    return null;
   };
 
   const handleNext = () => {
     setError(null);
     if (!canGoNext()) {
-      setError("Completá todos los campos requeridos para continuar.");
+      setError(stepBlocker() || "Completá todos los campos requeridos para continuar.");
       return;
     }
     if (step === 3 && !isVehicular) {
@@ -417,6 +472,8 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
             policyNumber: policyNumber.trim(),
             validUntil: insuranceValidUntil,
             coverageType,
+            cardPhotoBase64: insDoc?.base64 || undefined,
+            reuseId: !insDoc?.base64 && insOnFile?.hasPhoto ? insOnFile.id : undefined,
           }
         : undefined,
       driverLicense: isVehicular
@@ -425,6 +482,8 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
             classes: licenseClass,
             jurisdiction: licenseJurisdiction.trim() || undefined,
             validUntil: licenseValidUntil,
+            photoBase64: licDoc?.base64 || undefined,
+            reuseId: !licDoc?.base64 && licOnFile?.hasPhoto ? licOnFile.id : undefined,
           }
         : undefined,
       accessMethod: "qr" as const,
@@ -432,7 +491,7 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
         lifeValidUntil && lifeDoc && (lifeDoc.base64 || lifeDoc.reuseId)
           ? {
               reuseId: lifeDoc.base64 ? undefined : lifeDoc.reuseId,
-              kind: "life" as const,
+              kind: personInsuranceKindFor(visitType),
               company: lifeCompany.trim() || undefined,
               validUntil: lifeValidUntil,
               documentBase64: lifeDoc.base64 || undefined,
@@ -759,12 +818,11 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
                 </ul>
               </div>
 
-              {(visitType === "service" || visitType === "contractor" || askLife || lifeDoc) && (
+              {(needsArt || askLife || lifeDoc) && (
                 <div className="rounded-xl border border-amber-200 bg-amber-50/50 p-3 dark:border-amber-900/50 dark:bg-amber-950/20">
                   <div className="mb-2 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-amber-900 dark:text-amber-300">
                     <Shield className="h-3.5 w-3.5" />
-                    Seguro de vida / ART
-                    {visitType === "service" || visitType === "contractor" ? " *" : ""}
+                    {needsArt ? `${artLabel} *` : "Seguro de vida (opcional)"}
                   </div>
                   <div className="mb-3 grid grid-cols-1 gap-3 sm:grid-cols-2">
                     <div>
@@ -793,18 +851,20 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
                   <DocumentScanPanel
                     tenantId={tenantId}
                     value={lifeDoc}
-                    overlayOpen={docOverlay}
-                    onOverlayChange={setDocOverlay}
+                    overlayOpen={docOverlay === "life"}
+                    onOverlayChange={(open) => setDocOverlay(open ? "life" : docOverlay === "life" ? null : docOverlay)}
                     onAccept={setLifeDoc}
                     onClear={() => setLifeDoc(null)}
                   />
-                  {lifeValidUntil && new Date(lifeValidUntil).getTime() < Date.now() ? (
-                    <p className="mt-2 text-[11px] font-semibold text-rose-600">La vigencia está vencida. Pedí una constancia actual.</p>
+                  {lifeExpired ? (
+                    <p className="mt-2 text-[11px] font-semibold text-rose-600 dark:text-rose-400">
+                      {needsArt ? `${artLabel} vencida: no puede ingresar. Pedí una constancia actual.` : "La vigencia está vencida."}
+                    </p>
                   ) : null}
                 </div>
               )}
 
-              {visitType !== "service" && visitType !== "contractor" && !askLife && !lifeDoc ? (
+              {!needsArt && !askLife && !lifeDoc ? (
                 <button
                   type="button"
                   onClick={() => setAskLife(true)}
@@ -942,7 +1002,7 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
                   </div>
                   <p className="font-bold text-sm">Vehículo propio</p>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
-                    Auto, camioneta o moto. Seguro obligatorio y revisión de baúl.
+                    Auto, camioneta o moto. Seguro y licencia vigentes con foto; el baúl se revisa en portería.
                   </p>
                 </button>
               </div>
@@ -1102,7 +1162,7 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
                     />
                     {isInsuranceExpired() && (
                       <span className="inline-flex items-center gap-1 text-[10.5px] font-bold text-rose-600 dark:text-rose-400 mt-1">
-                        <FileWarning className="h-3.5 w-3.5" /> Póliza vencida: no se recomienda el ingreso vehicular
+                        <FileWarning className="h-3.5 w-3.5" /> Póliza vencida: no puede entrar con el vehículo
                       </span>
                     )}
                   </div>
@@ -1122,7 +1182,32 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
                     </select>
                   </div>
                 </div>
+
+                <div className="space-y-1.5">
+                  <p className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">Foto de la tarjeta del seguro *</p>
+                  {insOnFile?.hasPhoto && !insDoc ? (
+                    <p className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400">
+                      En archivo: la tarjeta de esta póliza ya tiene foto. Se usa esa salvo que saques una nueva.
+                    </p>
+                  ) : null}
+                  <DocumentScanPanel
+                    tenantId={tenantId}
+                    value={insDoc}
+                    overlayOpen={docOverlay === "ins"}
+                    onOverlayChange={(open) => setDocOverlay(open ? "ins" : docOverlay === "ins" ? null : docOverlay)}
+                    onAccept={setInsDoc}
+                    onClear={() => setInsDoc(null)}
+                  />
+                </div>
               </div>
+
+              {insExpired ? (
+                <ExpiredToPedestrian
+                  text="Seguro del auto vencido. No pasa con el vehículo: puede dejarlo afuera e ingresar a pie."
+                  canSwitch={!(needsArt && lifeExpired)}
+                  onSwitch={switchToPedestrian}
+                />
+              ) : null}
             </div>
           )}
 
@@ -1191,6 +1276,31 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
                   />
                 </div>
               </div>
+
+              <div className="space-y-1.5">
+                <p className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">Foto de la licencia *</p>
+                {licOnFile?.hasPhoto && !licDoc ? (
+                  <p className="text-[11px] font-semibold text-emerald-700 dark:text-emerald-400">
+                    En archivo: esta licencia ya tiene foto. Se usa esa salvo que saques una nueva.
+                  </p>
+                ) : null}
+                <DocumentScanPanel
+                  tenantId={tenantId}
+                  value={licDoc}
+                  overlayOpen={docOverlay === "lic"}
+                  onOverlayChange={(open) => setDocOverlay(open ? "lic" : docOverlay === "lic" ? null : docOverlay)}
+                  onAccept={setLicDoc}
+                  onClear={() => setLicDoc(null)}
+                />
+              </div>
+
+              {licExpired ? (
+                <ExpiredToPedestrian
+                  text="Licencia vencida. No puede entrar manejando: puede dejar el vehículo afuera e ingresar a pie."
+                  canSwitch={!(needsArt && lifeExpired)}
+                  onSwitch={switchToPedestrian}
+                />
+              ) : null}
             </div>
           )}
 
@@ -1330,5 +1440,23 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
           )}
         </div>
     </Modal>
+  );
+}
+
+function ExpiredToPedestrian({ text, canSwitch, onSwitch }: { text: string; canSwitch: boolean; onSwitch: () => void }) {
+  return (
+    <div className="rounded-xl border border-rose-300 bg-rose-50 p-3 text-[11px] text-rose-800 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-200">
+      <p className="font-semibold">{text}</p>
+      {canSwitch ? (
+        <button
+          type="button"
+          onClick={onSwitch}
+          className="mt-2 inline-flex items-center gap-1 rounded-lg bg-slate-900 px-3 py-1.5 text-[11px] font-bold text-white dark:bg-white dark:text-slate-900"
+        >
+          <Footprints className="h-3.5 w-3.5" />
+          Pasar a peatonal
+        </button>
+      ) : null}
+    </div>
   );
 }

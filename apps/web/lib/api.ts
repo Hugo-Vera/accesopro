@@ -26,9 +26,13 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
     const err = new Error(data.error ?? `Error ${res.status}`) as Error & {
       hint?: string;
       command?: string;
+      status?: number;
+      data?: unknown;
     };
     err.hint = data.hint;
     err.command = data.command;
+    err.status = res.status;
+    err.data = data;
     throw err;
   }
   return data;

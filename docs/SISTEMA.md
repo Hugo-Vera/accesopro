@@ -105,6 +105,31 @@ QR preautorizado (portal WAN): el titular crea un `visit_passes` (nombre obligat
 
 Egreso: baúl si hay vehículo. Bien no registrado: foto + aviso al lote; la barrera no abre hasta que el titular autoriza. Menor de más: hay que pedir traslado al lote de procedencia.
 
+### Documentos por tipo de visita (regla única)
+
+Fuente: `docRequirements(visitKind, arrivalMode)` en `apps/api/src/visitHold.ts`. Espejo en `apps/web/lib/visitDocs.ts` y `apps/android/.../FichaParts.kt`. No duplicar la regla en otro lado.
+
+| Tipo | A pie / plataforma | Vehículo |
+|---|---|---|
+| Social / delivery | DNI | + patente + seguro con foto de la tarjeta + licencia (vence + foto) + baúl |
+| Servicio / técnico | DNI + ART o seguro de vida (vence + constancia) | lo anterior + ART |
+| Contratista | DNI + ART (vence + constancia) | lo anterior + ART |
+
+- El guardia elige **tipo** y **cómo llega** en la ficha (paso «Tipo de ingreso») o al leer el DNI en la app. Cambiar a un medio sin vehículo borra patente, seguro, licencia y la revisión del baúl de ingreso.
+- **Vencido no pasa**, sin excepción del titular ni autorización verbal. Seguro o licencia vencidos: **Pasar a peatonal** (`POST /api/visitors/approvals/:id/pedestrian`) y se sigue como ingreso caminando. ART vencida: solo denegar. `POST …/expired-exception` responde 410.
+- La autorización verbal cubre la espera del titular, no los documentos.
+- **En archivo**: si la persona (por DNI) o la patente ya tienen ART, licencia o seguro cargados, la ficha los ofrece con «Usar» (`reuseId`). No se duplican filas con los mismos datos.
+- En la salida no se vuelven a pedir documentos: solo baúl, bienes y menores.
+- Faltantes que devuelve la API: `dni`, `patente`, `seguro_vehiculo`, `seguro_foto`, `licencia`, `licencia_foto`, `art`, `art_constancia`, `baul` y los vencidos `seguro_vehiculo_vencido`, `licencia_vencida`, `art_vencido`. Web y app los traducen a texto y saltan al paso.
+
+### Revisión del baúl
+
+Tabla `visit_trunk_checks` (una fila por pase y sentido `in` / `out`): descripción + hasta 6 fotos (`data/evidence/<site>/trunk-<id>.jpg`).
+
+- Ingreso con vehículo: el paso Vehículo pide descripción o al menos una foto (faltante `baul`).
+- Salida: la ficha muestra **Baúl al ingreso** (texto + galería) al lado de **Baúl a la salida** para comparar. Guardar la revisión de salida marca `trunk_checked`.
+- API: `POST /api/visitors/approvals/:id/trunk` (`description`, `addPhotosBase64[]`, `removePhotoIds[]`), `GET /api/visitors/trunk/:checkId/photos/:photoId`. La ficha trae `trunkIn` / `trunkOut` con `photoUrls`.
+
 Censo (`/dashboard/censo`, pack `visitors.census`): visitas `in_site` / `awaiting_exit` + acompañantes, teléfonos del titular. No cuenta dueños con cara (no hay reloj de permanencia).
 
 `GET /api/visit-passes/verify` y `POST /api/visit-passes/scan` requieren sesión de guardia (`access.visitors.manage`). El ASI sigue por `holdVisitQr` interno.

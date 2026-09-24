@@ -43,7 +43,14 @@ import {
   notifyMinorsMismatch,
   setApprovalMinorsCount,
   confirmPhoneAuth,
-  requestExpiredDocsAuth,
+  applyPassKindAndMode,
+  switchToPedestrian,
+  attachTrunkCheck,
+  findTrunkCheck,
+  trunkCheckHasPhoto,
+  trunkPhotoKey,
+  isVisitKind,
+  personInsuranceKindFor,
 } from "./visitHold.js";
 import { parseDniScan } from "./parseDni.js";
 import { readEventPhoto } from "./eventPhotos.js";
@@ -225,42 +232,45 @@ visitorsApi.post("/visitors/approvals/scan-qr", async (c) => {
   return c.json({ ok: true, ...hold, item });
 });
 
-visitorsApi.post("/visitors/approvals/:id/ficha", async (c) => {
-  const denied = await denyUnlessCapability(c.get("user"), "access.visitors.manage");
-  if (denied) return denied;
-  const scoped = await scopedSiteWithModule(c, "visitors");
-  if ("error" in scoped) return scoped.error;
-  const pending = (await listPendingApprovals(scoped.site.id)).find((x) => x.id === c.req.param("id"));
-  if (!pending) return c.json({ error: "No hay una solicitud pendiente" }, 404);
-  const body = await c.req.json<{
-    guestDni?: string;
-    guestName?: string;
-    firstName?: string;
-    lastName?: string;
-    tramite?: string;
-    gender?: string;
-    birthDate?: string;
-    patente?: string;
-    arrivalMode?: string;
-    companions?: { name?: string; dni?: string }[];
-    insurance?: { plate?: string; company?: string; policyNumber?: string; validUntil?: string; cardPhotoBase64?: string };
-    personInsurance?: {
-      kind?: "life" | "art";
-      company?: string;
-      validUntil?: string;
-      documentBase64?: string;
-      documentMime?: string;
-      source?: "scan" | "upload";
-    };
-    driverLicense?: { licenseNumber?: string; validUntil?: string; photoBase64?: string };
-    minorsCount?: number;
-  }>();
-  if (
-    body.guestDni?.trim() ||
-    body.guestName?.trim() ||
-    body.firstName?.trim() ||
-    body.lastName?.trim()
-  ) {
+type FichaBody = {
+  guestDni?: string;
+  guestName?: string;
+  firstName?: string;
+  lastName?: string;
+  tramite?: string;
+  gender?: string;
+  birthDate?: string;
+  patente?: string;
+  arrivalMode?: string;
+  visitKind?: string;
+  companions?: { name?: string; dni?: string }[];
+  insurance?: {
+    plate?: string;
+    company?: string;
+    policyNumber?: string;
+    validUntil?: string;
+    cardPhotoBase64?: string;
+    reuseId?: string;
+  };
+  personInsurance?: {
+    kind?: "life" | "art";
+    company?: string;
+    validUntil?: string;
+    documentBase64?: string;
+    documentMime?: string;
+    source?: "scan" | "upload";
+    reuseId?: string;
+  };
+  driverLicense?: { licenseNumber?: string; validUntil?: string; photoBase64?: string; reuseId?: string };
+  minorsCount?: number;
+};
+
+async function applyFichaBody(
+  scoped: { tenantId: string; site: { id: string } },
+  pending: { id: string; passId: string },
+  body: FichaBody,
+): Promise<string | null> {
+  if (body.guestDni?.trim() || body.guestName?.trim() || body.firstName?.trim() || body.lastName?.trim()) {
     await applyPassIdentity(pending.passId, {
       guestDni: body.guestDni,
       guestName: body.guestName,
@@ -271,45 +281,89 @@ visitorsApi.post("/visitors/approvals/:id/ficha", async (c) => {
       birthDate: body.birthDate,
     });
   }
-  if (body.patente?.trim()) {
-    await db
-      .update(visitPasses)
-      .set({ patente: body.patente.trim().toUpperCase() })
-      .where(eq(visitPasses.id, pending.passId));
-  }
-  if (isArrivalMode(body.arrivalMode)) {
-    await db.update(visitPasses).set({ arrivalMode: body.arrivalMode }).where(eq(visitPasses.id, pending.passId));
-  }
+  await applyPassKindAndMode(pending.passId, {
+    visitKind: body.visitKind,
+    arrivalMode: body.arrivalMode,
+    patente: body.patente,
+  });
   if (body.companions) await replaceCompanions(pending.passId, body.companions);
   if (body.insurance) {
-    await attachVehicleInsurance(scoped.tenantId, pending.passId, body.insurance);
+    const r = await attachVehicleInsurance(scoped.tenantId, pending.passId, body.insurance);
+    if (!r.ok) return r.error;
   }
   if (body.personInsurance) {
     const r = await attachPersonInsuranceToPass(scoped.tenantId, pending.passId, body.personInsurance);
-    if (!r.ok) return c.json({ error: r.error }, 400);
+    if (!r.ok) return r.error;
   }
   if (body.driverLicense) {
     const r = await attachLicenseToPass(scoped.tenantId, pending.passId, body.driverLicense);
-    if (!r.ok) return c.json({ error: r.error }, 400);
+    if (!r.ok) return r.error;
   }
   if (typeof body.minorsCount === "number") {
     await setApprovalMinorsCount({ siteId: scoped.site.id, approvalId: pending.id, count: body.minorsCount });
   }
-  const fresh = (await listPendingApprovals(scoped.site.id)).find((x) => x.id === pending.id);
-  return c.json({ ok: true, item: fresh || pending });
-});
+  return null;
+}
 
-visitorsApi.post("/visitors/approvals/:id/expired-exception", async (c) => {
+visitorsApi.post("/visitors/approvals/:id/ficha", async (c) => {
   const denied = await denyUnlessCapability(c.get("user"), "access.visitors.manage");
   if (denied) return denied;
   const scoped = await scopedSiteWithModule(c, "visitors");
   if ("error" in scoped) return scoped.error;
-  const result = await requestExpiredDocsAuth({
+  const pending = (await listPendingApprovals(scoped.site.id)).find((x) => x.id === c.req.param("id"));
+  if (!pending) return c.json({ error: "No hay una solicitud pendiente" }, 404);
+  const body = await c.req.json<FichaBody>();
+  const error = await applyFichaBody(scoped, pending, body);
+  const fresh = (await listPendingApprovals(scoped.site.id)).find((x) => x.id === pending.id);
+  if (error) return c.json({ error, item: fresh || pending }, 400);
+  return c.json({ ok: true, item: fresh || pending });
+});
+
+visitorsApi.post("/visitors/approvals/:id/pedestrian", async (c) => {
+  const denied = await denyUnlessCapability(c.get("user"), "access.visitors.manage");
+  if (denied) return denied;
+  const scoped = await scopedSiteWithModule(c, "visitors");
+  if ("error" in scoped) return scoped.error;
+  const result = await switchToPedestrian({ site: scoped.site, approvalId: c.req.param("id") });
+  if (!result.ok) return c.json({ error: result.error }, 400);
+  const item = (await listPendingApprovals(scoped.site.id)).find((x) => x.id === c.req.param("id"));
+  return c.json({ ok: true, item: item || null });
+});
+
+visitorsApi.post("/visitors/approvals/:id/trunk", async (c) => {
+  const denied = await denyUnlessCapability(c.get("user"), "access.visitors.manage");
+  if (denied) return denied;
+  const scoped = await scopedSiteWithModule(c, "visitors");
+  if ("error" in scoped) return scoped.error;
+  const body = await c.req.json<{ description?: string; addPhotosBase64?: string[]; removePhotoIds?: string[] }>();
+  const result = await attachTrunkCheck({
     site: scoped.site,
     approvalId: c.req.param("id"),
+    guardUserId: c.get("user").id,
+    description: body.description,
+    addPhotosBase64: Array.isArray(body.addPhotosBase64) ? body.addPhotosBase64 : [],
+    removePhotoIds: Array.isArray(body.removePhotoIds) ? body.removePhotoIds : [],
   });
   if (!result.ok) return c.json({ error: result.error }, 400);
-  return c.json({ ok: true });
+  const item = (await listPendingApprovals(scoped.site.id)).find((x) => x.id === c.req.param("id"));
+  return c.json({ ok: true, trunk: result.trunk, item: item || null });
+});
+
+visitorsApi.get("/visitors/trunk/:checkId/photos/:photoId", async (c) => {
+  const denied = await denyUnlessCapability(c.get("user"), "access.visitors.manage");
+  if (denied) return denied;
+  const scoped = await scopedSiteWithModule(c, "visitors");
+  if ("error" in scoped) return scoped.error;
+  const check = await findTrunkCheck(scoped.site.id, c.req.param("checkId"));
+  const photoId = c.req.param("photoId");
+  if (!check || !trunkCheckHasPhoto(check, photoId)) return c.json({ error: "No hay foto" }, 404);
+  const buf = readEventPhoto(scoped.site.id, trunkPhotoKey(photoId));
+  if (!buf) return c.json({ error: "Archivo no encontrado" }, 404);
+  return c.body(new Uint8Array(buf), 200, { "Content-Type": "image/jpeg", "Cache-Control": "private, max-age=300" });
+});
+
+visitorsApi.post("/visitors/approvals/:id/expired-exception", async (c) => {
+  return c.json({ error: "Documento vencido: no puede ingresar. Si es el seguro o la licencia, puede pasar a pie." }, 410);
 });
 
 visitorsApi.get("/visitors/documents/:id", async (c) => {
@@ -335,11 +389,13 @@ visitorsApi.get("/visitors/documents/:id", async (c) => {
 
 /** Búsqueda de identidad por DNI argentino */
 visitorsApi.get("/visitors/search-identity", async (c) => {
+  const denied = await denyUnlessCapability(c.get("user"), "access.visitors.manage");
+  if (denied) return denied;
   const scoped = await scopedSiteWithModule(c, "visitors");
   if ("error" in scoped) return scoped.error;
 
   const dni = normalizeDni(c.req.query("dni") ?? "");
-  if (!dni) return c.json({ found: false, identity: null, license: null, personInsurance: null });
+  if (!dni) return c.json({ found: false, identity: null, license: null, personInsurance: null, lastVisit: null });
 
   const identity = await db
     .select()
@@ -352,7 +408,7 @@ visitorsApi.get("/visitors/search-identity", async (c) => {
     )
     .get();
 
-  if (!identity) return c.json({ found: false, identity: null, license: null, personInsurance: null });
+  if (!identity) return c.json({ found: false, identity: null, license: null, personInsurance: null, lastVisit: null });
 
   // Buscar licencia asociada más reciente
   const license = await db
@@ -378,10 +434,50 @@ visitorsApi.get("/visitors/search-identity", async (c) => {
     .limit(1)
     .get();
 
+  const lastRecord = await db
+    .select()
+    .from(visitRecords)
+    .where(and(eq(visitRecords.tenantId, scoped.site.tenantId), eq(visitRecords.personId, identity.id)))
+    .orderBy(desc(visitRecords.createdAt))
+    .get();
+  const lastPass = await db
+    .select()
+    .from(visitPasses)
+    .where(and(eq(visitPasses.siteId, scoped.site.id), eq(visitPasses.guestDni, dni)))
+    .orderBy(desc(visitPasses.createdAt))
+    .get();
+  const lastPropertyId = lastPass?.propertyId ?? lastRecord?.propertyId ?? null;
+  const lastProperty = lastPropertyId
+    ? await db.select().from(properties).where(eq(properties.id, lastPropertyId)).get()
+    : null;
+  const lastAt = lastPass?.createdAt ?? lastRecord?.createdAt ?? null;
+  const nowMs = Date.now();
+  const isExpired = (v: Date | number | null | undefined) => {
+    const t = tsMs(v);
+    return t != null && t > 0 && t < nowMs;
+  };
+
   return c.json({
     found: true,
     identity,
-    license: license ?? null,
+    blacklisted: Boolean(identity.blacklisted),
+    lastVisit: lastAt
+      ? {
+          visitType: lastPass?.visitKind ?? lastRecord?.visitType ?? "social",
+          arrivalMode: lastPass?.arrivalMode ?? null,
+          patente: lastPass?.patente ?? null,
+          propertyId: lastPropertyId,
+          lotNumber: lastProperty?.lotNumber ?? null,
+          at: lastAt,
+        }
+      : null,
+    license: license
+      ? {
+          ...license,
+          hasPhoto: Boolean(license.photoUrl),
+          expired: isExpired(license.validUntil),
+        }
+      : null,
     personInsurance: personInsurance
       ? {
           id: personInsurance.id,
@@ -390,6 +486,7 @@ visitorsApi.get("/visitors/search-identity", async (c) => {
           validUntil: personInsurance.validUntil,
           documentMime: personInsurance.documentMime,
           hasDocument: Boolean(personInsurance.documentPath),
+          expired: isExpired(personInsurance.validUntil),
         }
       : null,
   });
@@ -397,6 +494,8 @@ visitorsApi.get("/visitors/search-identity", async (c) => {
 
 /** Búsqueda de vehículo por Patente */
 visitorsApi.get("/visitors/search-vehicle", async (c) => {
+  const deniedCap = await denyUnlessCapability(c.get("user"), "access.visitors.manage");
+  if (deniedCap) return deniedCap;
   const scoped = await scopedSiteWithModule(c, "visitors");
   if ("error" in scoped) return scoped.error;
 
@@ -430,10 +529,11 @@ visitorsApi.get("/visitors/search-vehicle", async (c) => {
     .limit(1)
     .get();
 
+  const insExpired = insurance ? (tsMs(insurance.validUntil) ?? 0) < Date.now() : false;
   return c.json({
     found: true,
     vehicle,
-    insurance: insurance ?? null,
+    insurance: insurance ? { ...insurance, hasPhoto: Boolean(insurance.cardPhotoUrl), expired: insExpired } : null,
   });
 });
 
@@ -568,7 +668,7 @@ visitorsApi.get("/visitors/owner-passes", async (c) => {
     const inSite = r.status === "in_site" || Boolean(r.scannedInAt && !r.scannedOutAt && !closed);
     const contact = r.propertyId ? await ownerContactForProperty(r.propertyId) : null;
     const companions = await listCompanions(r.id);
-    const missing = closed ? [] : await missingVisitFields(r.id);
+    const missing = closed || inSite ? [] : await missingVisitFields(r.id);
     notices.push({
       id: `pass:${r.id}`,
       passId: r.id,
@@ -688,75 +788,15 @@ visitorsApi.post("/visitors/approvals/:id/decide", async (c) => {
   if (denied) return denied;
   const scoped = await scopedSiteWithModule(c, "visitors");
   if ("error" in scoped) return scoped.error;
-  const body = await c.req.json<{
-    decision?: "approved" | "denied";
-    comment?: string;
-    trunkChecked?: boolean;
-    insurance?: { plate?: string; company?: string; policyNumber?: string; validUntil?: string; cardPhotoBase64?: string };
-    companions?: { name?: string; dni?: string }[];
-    guestDni?: string;
-    guestName?: string;
-    firstName?: string;
-    lastName?: string;
-    tramite?: string;
-    gender?: string;
-    birthDate?: string;
-    patente?: string;
-    arrivalMode?: string;
-    personInsurance?: {
-      kind?: "life" | "art";
-      company?: string;
-      validUntil?: string;
-      documentBase64?: string;
-      documentMime?: string;
-      source?: "scan" | "upload";
-    };
-    driverLicense?: { licenseNumber?: string; validUntil?: string; photoBase64?: string };
-    minorsCount?: number;
-  }>();
+  const body = await c.req.json<FichaBody & { decision?: "approved" | "denied"; comment?: string; trunkChecked?: boolean }>();
   const decision = body.decision === "denied" ? "denied" : body.decision === "approved" ? "approved" : null;
   if (!decision) return c.json({ error: "Indicá aprobar o denegar" }, 400);
 
   const approvalId = c.req.param("id");
   const pending = (await listPendingApprovals(scoped.site.id)).find((x) => x.id === approvalId);
   if (pending && decision === "approved") {
-    if (
-      body.guestDni?.trim() ||
-      body.guestName?.trim() ||
-      body.firstName?.trim() ||
-      body.lastName?.trim()
-    ) {
-      await applyPassIdentity(pending.passId, {
-        guestDni: body.guestDni,
-        guestName: body.guestName,
-        firstName: body.firstName,
-        lastName: body.lastName,
-        tramite: body.tramite,
-        gender: body.gender,
-        birthDate: body.birthDate,
-      });
-    }
-    if (body.patente?.trim()) {
-      await db.update(visitPasses).set({ patente: body.patente.trim().toUpperCase() }).where(eq(visitPasses.id, pending.passId));
-    }
-    if (isArrivalMode(body.arrivalMode)) {
-      await db.update(visitPasses).set({ arrivalMode: body.arrivalMode }).where(eq(visitPasses.id, pending.passId));
-    }
-    if (body.companions) await replaceCompanions(pending.passId, body.companions);
-    if (body.insurance) {
-      await attachVehicleInsurance(scoped.tenantId, pending.passId, body.insurance);
-    }
-    if (body.personInsurance) {
-      const r = await attachPersonInsuranceToPass(scoped.tenantId, pending.passId, body.personInsurance);
-      if (!r.ok) return c.json({ error: r.error }, 400);
-    }
-    if (body.driverLicense) {
-      const r = await attachLicenseToPass(scoped.tenantId, pending.passId, body.driverLicense);
-      if (!r.ok) return c.json({ error: r.error }, 400);
-    }
-    if (typeof body.minorsCount === "number") {
-      await setApprovalMinorsCount({ siteId: scoped.site.id, approvalId, count: body.minorsCount });
-    }
+    const error = await applyFichaBody(scoped, pending, body);
+    if (error) return c.json({ error }, 400);
   }
 
   const result = await decideGuardApproval({
@@ -767,7 +807,10 @@ visitorsApi.post("/visitors/approvals/:id/decide", async (c) => {
     comment: body.comment,
     trunkChecked: Boolean(body.trunkChecked),
   });
-  if (!result.ok) return c.json({ error: result.error, missing: result.missing }, 400);
+  if (!result.ok) {
+    const fresh = (await listPendingApprovals(scoped.site.id)).find((x) => x.id === approvalId);
+    return c.json({ error: result.error, missing: result.missing, item: fresh || null }, 400);
+  }
   return c.json({ ok: true, actuatorsFired: result.actuatorsFired || [] });
 });
 
@@ -776,7 +819,14 @@ visitorsApi.post("/visitors/announce", async (c) => {
   if (denied) return denied;
   const scoped = await scopedSiteWithModule(c, "visitors");
   if ("error" in scoped) return scoped.error;
-  const body = await c.req.json<{ propertyId?: string; guestName?: string; guestDni?: string }>();
+  const body = await c.req.json<{
+    propertyId?: string;
+    guestName?: string;
+    guestDni?: string;
+    visitKind?: string;
+    arrivalMode?: string;
+    patente?: string;
+  }>();
   if (!body.propertyId) return c.json({ error: "Falta el lote" }, 400);
   const result = await announceWalkIn({
     site: scoped.site,
@@ -784,6 +834,9 @@ visitorsApi.post("/visitors/announce", async (c) => {
     guardUserId: c.get("user").id,
     guestName: body.guestName,
     guestDni: body.guestDni,
+    visitKind: body.visitKind,
+    arrivalMode: body.arrivalMode,
+    patente: body.patente,
   });
   if (!result.ok) return c.json({ error: result.error }, 400);
   return c.json(result);
@@ -1055,29 +1108,33 @@ export type VisitorCheckinPayload = {
     vehicleType?: "car" | "pickup" | "suv" | "motorcycle" | "van" | "truck";
   };
   insurance?: {
-    company: string;
-    policyNumber: string;
+    company?: string;
+    policyNumber?: string;
     validFrom?: number | string;
-    validUntil: number | string;
+    validUntil?: number | string;
     coverageType?: "responsabilidad_civil" | "terceros" | "todo_riesgo";
+    cardPhotoBase64?: string;
+    reuseId?: string;
   };
   // Paso 5: Licencia de Conducir
   driverLicense?: {
     licenseNumber?: string;
     classes?: string;
     jurisdiction?: string;
-    validUntil: number | string;
+    validUntil?: number | string;
+    photoBase64?: string;
+    reuseId?: string;
   };
   arrivalMode?: "peatonal" | "plataforma" | "vehiculo";
   companions?: { name?: string; dni?: string; birthDate?: string; isMinor?: boolean; situation?: string }[];
   /** Visita = QR + guardia. Cara de invitado no se enrola en el ASI. */
   accessMethod?: "qr";
   /** Seguro de vida / ART de la persona (no el del auto). */
-  personInsurance?: {
+    personInsurance?: {
     reuseId?: string;
     kind?: "life" | "art";
     company?: string;
-    validUntil: number | string;
+    validUntil?: number | string;
     documentBase64?: string;
     documentMime?: string;
     source?: "scan" | "upload";
@@ -1162,16 +1219,21 @@ visitorsApi.post("/visitors/checkin", async (c) => {
     );
   }
 
-  // 2. Si es vehicular, resolver Vehículo, Seguro y Licencia
+  // 2. Vehículo (marca/modelo). Seguro, licencia y ART se vinculan al pase con los mismos helpers que la cola.
   let vehicleId: string | null = null;
-  let insuranceId: string | null = null;
-  let licenseId: string | null = null;
-  let personInsuranceId: string | null = null;
+  const arrivalMode = isArrivalMode(body.arrivalMode)
+    ? body.arrivalMode
+    : body.isVehicular
+      ? "vehiculo"
+      : "peatonal";
+  const isVehicular = arrivalMode === "vehiculo";
+  const visitKindRaw = body.destination.visitType === "event" ? "social" : body.destination.visitType;
+  const visitKind = isVisitKind(visitKindRaw) ? visitKindRaw : "social";
 
-  if (body.isVehicular && body.vehicle?.plate) {
+  if (isVehicular && body.vehicle?.plate) {
     const plateClean = normalizePlate(body.vehicle.plate);
 
-    let vehicle = await db
+    const vehicle = await db
       .select()
       .from(vehicles)
       .where(and(eq(vehicles.tenantId, tenantId), eq(vehicles.plate, plateClean)))
@@ -1201,116 +1263,12 @@ visitorsApi.post("/visitors/checkin", async (c) => {
         createdAt: now,
       });
     }
-
-    // Seguro de Vehículo Argentina
-    if (body.insurance?.company && body.insurance?.policyNumber && body.insurance?.validUntil) {
-      insuranceId = nid();
-      const validUntilDate = new Date(body.insurance.validUntil);
-      const isExpired = validUntilDate.getTime() < Date.now();
-
-      await db.insert(vehicleInsurances).values({
-        id: insuranceId,
-        tenantId,
-        vehicleId: vehicleId!,
-        company: body.insurance.company.trim(),
-        policyNumber: body.insurance.policyNumber.trim(),
-        validFrom: body.insurance.validFrom ? new Date(body.insurance.validFrom) : null,
-        validUntil: validUntilDate,
-        coverageType: body.insurance.coverageType || "responsabilidad_civil",
-        status: isExpired ? "expired" : "active",
-        verifiedBy: c.get("user")?.name || "Guardia",
-        createdAt: now,
-      });
-    }
-
-    // Licencia de Conducir
-    if (body.driverLicense?.validUntil) {
-      licenseId = nid();
-      await db.insert(driverLicenses).values({
-        id: licenseId,
-        tenantId,
-        personId: person!.id,
-        licenseNumber: (body.driverLicense.licenseNumber || dniClean).trim(),
-        classes: body.driverLicense.classes || "B.1",
-        jurisdiction: body.driverLicense.jurisdiction || null,
-        validUntil: new Date(body.driverLicense.validUntil),
-        createdAt: now,
-      });
-    }
-  }
-
-  if (body.personInsurance?.validUntil && person) {
-    const validUntilDate = new Date(body.personInsurance.validUntil);
-    const reuseId = body.personInsurance.reuseId?.trim();
-    if (reuseId && !body.personInsurance.documentBase64) {
-      const existing = await db
-        .select()
-        .from(personInsurances)
-        .where(
-          and(
-            eq(personInsurances.id, reuseId),
-            eq(personInsurances.tenantId, tenantId),
-            eq(personInsurances.personId, person.id)
-          )
-        )
-        .get();
-      if (existing) {
-        await db
-          .update(personInsurances)
-          .set({
-            validUntil: validUntilDate,
-            company: body.personInsurance.company?.trim() || existing.company,
-          })
-          .where(eq(personInsurances.id, existing.id));
-        personInsuranceId = existing.id;
-      }
-    } else if (body.personInsurance.documentBase64) {
-      const mime = body.personInsurance.documentMime === "application/pdf" ? "application/pdf" : "image/jpeg";
-      const raw = body.personInsurance.documentBase64.replace(/^data:[\w/+.-]+;base64,/, "").trim();
-      let buf: Buffer;
-      try {
-        buf = Buffer.from(raw, "base64");
-      } catch {
-        return c.json({ error: "La constancia del seguro no se pudo leer" }, 400);
-      }
-      if (buf.length < 80 || buf.length > 4 * 1024 * 1024) {
-        return c.json({ error: "La constancia del seguro está vacía o pesa de más (máx. 4 MB)" }, 400);
-      }
-      if (mime !== "application/pdf") {
-        try {
-          const processed = await processDocumentImage(buf);
-          buf = processed.jpeg;
-        } catch {
-          /* se guarda igual recortada a mano */
-        }
-      }
-      personInsuranceId = nid();
-      const path = saveVisitorDoc(siteId, personInsuranceId, mime, buf);
-      await db.insert(personInsurances).values({
-        id: personInsuranceId,
-        tenantId,
-        personId: person.id,
-        kind: body.personInsurance.kind === "art" ? "art" : "life",
-        company: body.personInsurance.company?.trim() || null,
-        policyNumber: null,
-        validUntil: validUntilDate,
-        documentPath: path,
-        documentMime: mime === "application/pdf" ? "application/pdf" : "image/jpeg",
-        source: body.personInsurance.source === "scan" ? "scan" : "upload",
-        createdAt: now,
-      });
-    }
   }
 
   // 3. Crear el registro consolidado + el mismo pase QR que usa el portal.
   const visitId = nid();
   const passId = nid();
   const token = makeVisitToken(body.destination.propertyId, passId);
-  const arrivalMode = isArrivalMode(body.arrivalMode)
-    ? body.arrivalMode
-    : body.isVehicular
-      ? "vehiculo"
-      : "peatonal";
   const guestName = `${person!.firstName} ${person!.lastName}`.trim();
 
   await db.insert(visitRecords).values({
@@ -1320,9 +1278,9 @@ visitorsApi.post("/visitors/checkin", async (c) => {
     propertyId: body.destination.propertyId,
     personId: person!.id,
     vehicleId,
-    insuranceId,
-    personInsuranceId,
-    licenseId,
+    insuranceId: null,
+    personInsuranceId: null,
+    licenseId: null,
     visitType: body.destination.visitType || "social",
     status: "awaiting_entry",
     authorizedBy: body.destination.authorizedBy.trim(),
@@ -1341,17 +1299,17 @@ visitorsApi.post("/visitors/checkin", async (c) => {
     token,
     guestName,
     guestDni: dniClean,
-    patente: body.vehicle?.plate ? normalizePlate(body.vehicle.plate) : null,
+    patente: isVehicular && body.vehicle?.plate ? normalizePlate(body.vehicle.plate) : null,
     validFrom: now,
     validUntil: defaultUntil,
     horaDesde: null,
     horaHasta: null,
     status: "preauthorized",
     arrivalMode,
-    visitKind: body.destination.visitType === "event" ? "social" : body.destination.visitType || "social",
-    completeness: body.isVehicular ? "full" : "basic",
+    visitKind,
+    completeness: isVehicular ? "full" : "basic",
     vehicleId,
-    insuranceId,
+    insuranceId: null,
     visitRecordId: visitId,
     notes: body.destination.notes || null,
     dahuaSynced: false,
@@ -1362,6 +1320,56 @@ visitorsApi.post("/visitors/checkin", async (c) => {
     createdAt: now,
   });
   await replaceCompanions(passId, body.companions);
+
+  const warnings: string[] = [];
+  const dateStr = (v: number | string | undefined) => {
+    if (v == null || v === "") return undefined;
+    const d = new Date(typeof v === "number" ? v : String(v));
+    return Number.isFinite(d.getTime()) ? d.toISOString() : undefined;
+  };
+  if (isVehicular && body.insurance && (body.insurance.reuseId || body.insurance.company)) {
+    const r = await attachVehicleInsurance(tenantId, passId, {
+      plate: body.vehicle?.plate,
+      company: body.insurance.company,
+      policyNumber: body.insurance.policyNumber,
+      validUntil: dateStr(body.insurance.validUntil),
+      cardPhotoBase64: body.insurance.cardPhotoBase64,
+      reuseId: body.insurance.reuseId,
+    });
+    if (!r.ok) warnings.push(r.error);
+  }
+  if (isVehicular && body.driverLicense && (body.driverLicense.reuseId || body.driverLicense.validUntil)) {
+    const r = await attachLicenseToPass(tenantId, passId, {
+      licenseNumber: body.driverLicense.licenseNumber,
+      validUntil: dateStr(body.driverLicense.validUntil),
+      photoBase64: body.driverLicense.photoBase64,
+      reuseId: body.driverLicense.reuseId,
+    });
+    if (!r.ok) warnings.push(r.error);
+  }
+  if (body.personInsurance && (body.personInsurance.reuseId || body.personInsurance.validUntil)) {
+    const r = await attachPersonInsuranceToPass(tenantId, passId, {
+      kind: personInsuranceKindFor(visitKind, body.personInsurance.kind),
+      company: body.personInsurance.company,
+      validUntil: dateStr(body.personInsurance.validUntil),
+      documentBase64: body.personInsurance.documentBase64,
+      documentMime: body.personInsurance.documentMime,
+      source: body.personInsurance.source,
+      reuseId: body.personInsurance.reuseId,
+    });
+    if (!r.ok) warnings.push(r.error);
+  }
+  const linkedPass = await db.select().from(visitPasses).where(eq(visitPasses.id, passId)).get();
+  const insuranceId = linkedPass?.insuranceId ?? null;
+  const licenseId = linkedPass?.licenseId ?? null;
+  const personInsuranceId = linkedPass?.personInsuranceId ?? null;
+  if (linkedPass) {
+    vehicleId = linkedPass.vehicleId ?? vehicleId;
+    await db
+      .update(visitRecords)
+      .set({ vehicleId, insuranceId, licenseId, personInsuranceId })
+      .where(eq(visitRecords.id, visitId));
+  }
 
   const dahuaUserId = `v_${passId.slice(-8)}`;
   await upsertCredential({

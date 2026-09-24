@@ -629,7 +629,7 @@ export const MANUAL_CHAPTERS: ManualChapter[] = [
     title: "Check-in de visita (QR, DNI y constancias)",
     updated: "24/09/2026",
     summary:
-      "El QR preautorizado solo identifica. El lote ya viene del pase. Portería completa DNI y papeles (bordes + vencimiento) desde el dashboard o la app, sin mandar a la visita al tótem si llueve. Un documento vencido pide excepción al titular (no son los 120 s del walk-in).",
+      "El QR preautorizado solo identifica. El lote ya viene del pase. Portería completa DNI y papeles (bordes + vencimiento) desde el dashboard o la app, sin mandar a la visita al tótem si llueve. Un documento vencido no pasa: si es el seguro o la licencia, puede entrar a pie.",
     sections: [
       {
         id: "regla-ficha",
@@ -641,16 +641,16 @@ export const MANUAL_CHAPTERS: ManualChapter[] = [
           },
           {
             type: "table",
-            headers: ["Tipo", "Obligatorio", "Opcional"],
+            headers: ["Tipo", "A pie / plataforma", "Vehículo"],
             rows: [
-              ["Social / servicio peatonal", "DNI. Lote precargado", "—"],
-              ["Vehículo", "DNI + patente + seguro auto vigente + baúl", "Licencia: si se carga, no puede estar vencida"],
-              ["Contratista / obra", "DNI + ART o seguro de vida (foto recortada + vence)", "—"],
+              ["Social / delivery", "DNI. Lote precargado", "+ patente + seguro con foto + licencia (vence + foto) + baúl"],
+              ["Servicio / técnico", "DNI + ART o seguro de vida (vence + constancia)", "Lo anterior + ART"],
+              ["Contratista", "DNI + ART (vence + constancia)", "Lo anterior + ART"],
             ],
           },
           {
             type: "note",
-            text: "Seguro o licencia vencidos: no se aprueba a solas. El guardia pide autorización especial al titular (aviso expired_docs, ~4 h). Recién con Autorizar se puede abrir. No es el TTL de 120 s del walk-in.",
+            text: "Documento vencido: no pasa de ninguna forma. Seguro o licencia vencidos: «Pasar a peatonal» y se toman los datos como ingreso caminando. ART vencida: solo denegar. Ver capítulo «Contratistas, documentos y baúl».",
           },
         ],
       },
@@ -920,6 +920,92 @@ export const MANUAL_CHAPTERS: ManualChapter[] = [
           {
             type: "note",
             text: "Si aparece «Este módulo no está en el plan o no está habilitado», el predio no tiene el módulo Visitas. No es un fallo del lector de DNI.",
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: "contratistas-documentos",
+    title: "Contratistas, documentos y baúl",
+    updated: "24/09/2026",
+    summary:
+      "Una sola regla de documentos para web y app según el tipo de visita y cómo llega. Vencido no pasa. El baúl se revisa con descripción y fotos al ingreso, y a la salida se comparan las dos revisiones.",
+    sections: [
+      {
+        id: "tipo-de-ingreso",
+        title: "Paso intermedio: tipo de ingreso",
+        blocks: [
+          {
+            type: "p",
+            text: "Antes de cargar papeles, el guardia marca el tipo de visita (Social, Servicio / técnico, Contratista, Delivery) y cómo llega (A pie, Plataforma, Vehículo). En la app aparece después de elegir el lote al leer un DNI sin pase; en la ficha es el paso «Tipo de ingreso». Si la persona ya vino, se precarga lo de la última visita.",
+          },
+          {
+            type: "table",
+            headers: ["Tipo", "A pie / plataforma", "Vehículo"],
+            rows: [
+              ["Social / delivery", "DNI", "+ patente + seguro con foto de la tarjeta + licencia (vence + foto) + baúl"],
+              ["Servicio / técnico", "DNI + ART o seguro de vida (vence + constancia)", "Lo anterior + ART"],
+              ["Contratista", "DNI + ART (vence + constancia)", "Lo anterior + ART"],
+            ],
+          },
+          {
+            type: "note",
+            text: "Si el guardia cambia a A pie o Plataforma, se borran patente, seguro, licencia y la revisión del baúl de ingreso de ese pase.",
+          },
+        ],
+      },
+      {
+        id: "en-archivo",
+        title: "Documentos en archivo",
+        blocks: [
+          {
+            type: "ul",
+            items: [
+              "Si el DNI ya tiene ART o licencia cargadas, o la patente ya tiene seguro, la ficha muestra una tarjeta «En archivo» con el vencimiento y si tiene foto",
+              "«Usar» vincula ese documento al pase sin volver a cargarlo",
+              "Si está vencido, «Usar» queda deshabilitado: hay que cargar uno vigente",
+              "Si se cargan los mismos datos de nuevo, no se duplica la fila: solo se actualiza la foto",
+            ],
+          },
+        ],
+      },
+      {
+        id: "vencidos",
+        title: "Documento vencido",
+        blocks: [
+          {
+            type: "table",
+            headers: ["Qué venció", "Qué puede hacer el guardia"],
+            rows: [
+              ["Seguro del auto", "Pasar a peatonal: deja el vehículo afuera y entra a pie con los datos del ingreso caminando"],
+              ["Licencia", "Pasar a peatonal (igual que el seguro)"],
+              ["ART / seguro de vida", "Solo denegar"],
+            ],
+          },
+          {
+            type: "note",
+            text: "No hay excepción del titular ni autorización verbal para un documento vencido. La autorización verbal cubre la espera del titular, no los papeles.",
+          },
+        ],
+      },
+      {
+        id: "baul",
+        title: "Revisión del baúl",
+        blocks: [
+          {
+            type: "ul",
+            items: [
+              "Ingreso con vehículo: en el paso Vehículo, campo «Qué lleva en el baúl» y botones Sacar foto / Subir foto (hasta 6 fotos)",
+              "Sin descripción ni foto la ficha marca «Falta revisar el baúl» y no deja aprobar",
+              "Salida: a la izquierda «Baúl al ingreso» (texto, hora, guardia y fotos); a la derecha «Baúl a la salida» para cargar la revisión de egreso",
+              "Tocar una foto la abre grande; Escape la cierra",
+              "A la salida no se vuelven a pedir documentos: solo baúl, bienes no registrados y menores",
+            ],
+          },
+          {
+            type: "p",
+            text: "En la app Android la foto es de resolución completa (no la miniatura de la cámara) y la galería se desliza con el dedo.",
           },
         ],
       },

@@ -548,6 +548,26 @@ export const guardApprovals = sqliteTable("guard_approvals", {
   minorTransferAuthorizedByUserId: text("minor_transfer_authorized_by_user_id").references(() => users.id),
 });
 
+/** Revisión de baúl por pase y sentido: descripción + fotos en data/evidence/<site>/trunk-<id>-<n>.jpg */
+export const visitTrunkChecks = sqliteTable("visit_trunk_checks", {
+  id: text("id").primaryKey(),
+  siteId: text("site_id")
+    .notNull()
+    .references(() => sites.id),
+  passId: text("pass_id")
+    .notNull()
+    .references(() => visitPasses.id),
+  approvalId: text("approval_id").references(() => guardApprovals.id),
+  /** in | out */
+  sentido: text("sentido").notNull(),
+  description: text("description"),
+  /** JSON string[] con los ids de foto */
+  photoIds: text("photo_ids").notNull().default("[]"),
+  guardUserId: text("guard_user_id").references(() => users.id),
+  createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
+  updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+});
+
 export const departments = sqliteTable("departments", {
   id: text("id").primaryKey(),
   tenantId: text("tenant_id")

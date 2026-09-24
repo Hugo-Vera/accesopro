@@ -16,6 +16,8 @@ import {
   driverLicenses,
   visitorIdentities,
   dahuaDevices,
+  visitTrunkChecks,
+  sites,
 } from "./db/schema.js";
 import { fireActuator } from "./actuatorExec.js";
 import { actuatorsForDahuaDevice, actuatorsForSentido, laneCodeOf } from "./accessPoints.js";
@@ -245,50 +247,110 @@ function isPast(v: Date | number | null | undefined, now = Date.now()) {
   return t > 0 && t < now;
 }
 
+export function isVisitKind(v: unknown): v is VisitKind {
+  return v === "social" || v === "service" || v === "contractor" || v === "delivery";
+}
+
+/** Única fuente de qué documentación pide cada tipo de ingreso y medio (API, web y app espejan esto). */
+export function docRequirements(visitKind: string | null | undefined, arrivalMode: string | null | undefined) {
+  const vehicle = needsVehicleDocs(arrivalMode);
+  return {
+    art: visitKind === "contractor" || visitKind === "service",
+    vehicle,
+    license: vehicle,
+    trunk: vehicle,
+  };
+}
+
 export type VisitFieldGaps = { missing: string[]; expired: string[] };
 
-export async function visitFieldGaps(passId: string): Promise<VisitFieldGaps> {
+type TrunkCheckRow = typeof visitTrunkChecks.$inferSelect;
+
+function trunkPhotoIdsOf(row: TrunkCheckRow | null | undefined): string[] {
+  if (!row?.photoIds) return [];
+  try {
+    const v = JSON.parse(row.photoIds) as unknown;
+    return Array.isArray(v) ? v.map(String).filter(Boolean) : [];
+  } catch {
+    return [];
+  }
+}
+
+export async function trunkCheckOf(passId: string, sentido: "in" | "out") {
+  return (
+    (await db
+      .select()
+      .from(visitTrunkChecks)
+      .where(and(eq(visitTrunkChecks.passId, passId), eq(visitTrunkChecks.sentido, sentido)))
+      .orderBy(desc(visitTrunkChecks.updatedAt))
+      .get()) ?? null
+  );
+}
+
+async function linkedVehicleInsurance(pass: typeof visitPasses.$inferSelect) {
+  if (pass.insuranceId) {
+    return (await db.select().from(vehicleInsurances).where(eq(vehicleInsurances.id, pass.insuranceId)).get()) ?? null;
+  }
+  return null;
+}
+
+/** En la salida no se re-exigen documentos: solo baúl (tilde), bienes y menores en decide. */
+export async function visitFieldGaps(passId: string, sentido: "in" | "out" = "in"): Promise<VisitFieldGaps> {
   const pass = await db.select().from(visitPasses).where(eq(visitPasses.id, passId)).get();
   if (!pass) return { missing: ["pase"], expired: [] };
   const missing: string[] = [];
   const expired: string[] = [];
+  if (sentido === "out") return { missing, expired };
+  const req = docRequirements(pass.visitKind, pass.arrivalMode);
   if (!String(pass.guestDni || "").replace(/\D/g, "")) missing.push("dni");
-  if (needsVehicleDocs(pass.arrivalMode)) {
+  if (req.vehicle) {
     if (!String(pass.patente || "").trim()) missing.push("patente");
-    let ins = pass.insuranceId
-      ? await db.select().from(vehicleInsurances).where(eq(vehicleInsurances.id, pass.insuranceId)).get()
-      : null;
-    if (!ins && pass.vehicleId) {
-      ins = await db
-        .select()
-        .from(vehicleInsurances)
-        .where(eq(vehicleInsurances.vehicleId, pass.vehicleId))
-        .orderBy(desc(vehicleInsurances.createdAt))
-        .get();
-    }
+    const ins = await linkedVehicleInsurance(pass);
     if (!ins?.company || !ins.policyNumber || !ins.validUntil) missing.push("seguro_vehiculo");
-    else if (isPast(ins.validUntil)) expired.push("seguro_vehiculo");
+    else {
+      if (!ins.cardPhotoUrl) missing.push("seguro_foto");
+      if (isPast(ins.validUntil)) expired.push("seguro_vehiculo");
+    }
   }
-  if (pass.visitKind === "contractor") {
+  if (req.license) {
+    const lic = pass.licenseId
+      ? await db.select().from(driverLicenses).where(eq(driverLicenses.id, pass.licenseId)).get()
+      : null;
+    if (!lic?.validUntil) missing.push("licencia");
+    else {
+      if (!lic.photoUrl) missing.push("licencia_foto");
+      if (isPast(lic.validUntil)) expired.push("licencia");
+    }
+  }
+  if (req.art) {
     const pi = pass.personInsuranceId
       ? await db.select().from(personInsurances).where(eq(personInsurances.id, pass.personInsuranceId)).get()
       : null;
     if (!pi?.validUntil) missing.push("art");
-    else if (isPast(pi.validUntil)) expired.push("art");
+    else {
+      if (!pi.documentPath) missing.push("art_constancia");
+      if (isPast(pi.validUntil)) expired.push("art");
+    }
   }
-  if (pass.licenseId) {
-    const lic = await db.select().from(driverLicenses).where(eq(driverLicenses.id, pass.licenseId)).get();
-    if (!lic?.validUntil || isPast(lic.validUntil)) expired.push("licencia");
+  if (req.trunk) {
+    const trunk = await trunkCheckOf(pass.id, "in");
+    if (!trunk || (!String(trunk.description || "").trim() && !trunkPhotoIdsOf(trunk).length)) missing.push("baul");
   }
   return { missing, expired };
 }
 
-export async function missingVisitFields(passId: string): Promise<string[]> {
-  const gaps = await visitFieldGaps(passId);
-  return [
-    ...gaps.missing,
-    ...gaps.expired.map((k) => (k === "licencia" ? "licencia_vencida" : `${k}_vencido`)),
-  ];
+function expiredKeyLabel(k: string) {
+  return k === "licencia" ? "licencia_vencida" : `${k}_vencido`;
+}
+
+export async function missingVisitFields(passId: string, sentido: "in" | "out" = "in"): Promise<string[]> {
+  const gaps = await visitFieldGaps(passId, sentido);
+  return [...gaps.missing, ...gaps.expired.map(expiredKeyLabel)];
+}
+
+/** Seguro o licencia vencidos se resuelven dejando el auto afuera; la ART vencida no tiene salida. */
+export function canSwitchToPedestrian(expired: string[]) {
+  return expired.length > 0 && !expired.includes("art") && expired.every((k) => k === "seguro_vehiculo" || k === "licencia");
 }
 
 export async function ownerContactForProperty(propertyId: string) {
@@ -432,7 +494,7 @@ export async function holdVisitQr(input: {
     };
   }
 
-  const missing = await missingVisitFields(pass.id);
+  const missing = await missingVisitFields(pass.id, sentido);
   const reason = missing.length ? "incomplete" : "ok";
   const nextStatus = sentido === "out" ? "awaiting_exit" : "awaiting_entry";
   const readerSentido =
@@ -790,17 +852,22 @@ export async function decideGuardApproval(input: {
     }
   }
 
-  const gaps = await visitFieldGaps(pass.id);
-  if (gaps.missing.length) return { ok: false, error: "Faltan datos obligatorios", missing: gaps.missing };
-  if (gaps.expired.length && row.ownerAuthStatus !== "owner_approved") {
+  const sentidoRow = row.sentido === "out" ? "out" : "in";
+  const gaps = await visitFieldGaps(pass.id, sentidoRow);
+  // Vencido no pasa, sin excepción del titular ni autorización verbal.
+  if (gaps.expired.length) {
     return {
       ok: false,
-      error: "Hay un documento vencido. Pedí autorización al titular o denegá.",
-      missing: gaps.expired.map((k) => (k === "licencia" ? "licencia_vencida" : `${k}_vencido`)),
+      error: canSwitchToPedestrian(gaps.expired)
+        ? "Documento vencido: no puede ingresar con el vehículo. Puede dejarlo afuera y pasar a pie."
+        : "Documento vencido: no puede ingresar.",
+      missing: gaps.expired.map(expiredKeyLabel),
     };
   }
-  if (needsVehicleDocs(pass.arrivalMode) && !input.trunkChecked) {
-    return { ok: false, error: "Hay que revisar el baúl antes de aprobar" };
+  if (gaps.missing.length) return { ok: false, error: "Faltan datos obligatorios", missing: gaps.missing };
+  const trunkTicked = Boolean(input.trunkChecked || row.trunkChecked);
+  if (sentidoRow === "out" && needsVehicleDocs(pass.arrivalMode) && !trunkTicked) {
+    return { ok: false, error: "Hay que revisar el baúl antes de abrir la salida", missing: ["baul"] };
   }
 
   if (row.sentido === "out") {
@@ -851,7 +918,7 @@ export async function decideGuardApproval(input: {
     .set({
       status: "approved",
       comment: input.comment?.trim() || null,
-      trunkChecked: Boolean(input.trunkChecked),
+      trunkChecked: trunkTicked,
       guardUserId: input.guardUserId,
       approvedVia: "login",
       decidedAt: now,
@@ -948,22 +1015,41 @@ export async function serializePassFicha(
     ? await db.select().from(visitRecords).where(eq(visitRecords.id, pass.visitRecordId)).get()
     : null;
   const companions = await listCompanions(pass.id);
-  const gaps = await visitFieldGaps(pass.id);
+  const awaitingOut = pass.status === "in_site" || pass.status === "awaiting_exit";
+  const sentidoNow: "in" | "out" = row?.sentido === "out" || (!row && awaitingOut) ? "out" : "in";
+  const gaps = await visitFieldGaps(pass.id, sentidoNow);
   const missing = gaps.missing;
-  let insurance: { company: string; policyNumber: string; validUntil: Date | number; cardPhotoUrl?: string | null } | null = null;
-  if (pass.insuranceId) {
-    const ins = await db.select().from(vehicleInsurances).where(eq(vehicleInsurances.id, pass.insuranceId)).get();
-    if (ins) insurance = { company: ins.company, policyNumber: ins.policyNumber, validUntil: ins.validUntil, cardPhotoUrl: ins.cardPhotoUrl };
-  } else if (pass.vehicleId) {
-    const ins = await db
-      .select()
-      .from(vehicleInsurances)
-      .where(eq(vehicleInsurances.vehicleId, pass.vehicleId))
-      .orderBy(desc(vehicleInsurances.createdAt))
-      .get();
-    if (ins) insurance = { company: ins.company, policyNumber: ins.policyNumber, validUntil: ins.validUntil, cardPhotoUrl: ins.cardPhotoUrl };
+  const req = docRequirements(pass.visitKind, pass.arrivalMode);
+  const now = Date.now();
+  let insurance: {
+    id: string;
+    company: string;
+    policyNumber: string;
+    validUntil: Date | number;
+    cardPhotoUrl?: string | null;
+    hasPhoto: boolean;
+    expired: boolean;
+  } | null = null;
+  const insRow = await linkedVehicleInsurance(pass);
+  if (insRow) {
+    insurance = {
+      id: insRow.id,
+      company: insRow.company,
+      policyNumber: insRow.policyNumber,
+      validUntil: insRow.validUntil,
+      cardPhotoUrl: insRow.cardPhotoUrl,
+      hasPhoto: Boolean(insRow.cardPhotoUrl),
+      expired: isPast(insRow.validUntil, now),
+    };
   }
-  let personInsurance: { id: string; kind: string; company: string | null; validUntil: Date | number; hasDocument: boolean } | null = null;
+  let personInsurance: {
+    id: string;
+    kind: string;
+    company: string | null;
+    validUntil: Date | number;
+    hasDocument: boolean;
+    expired: boolean;
+  } | null = null;
   if (pass.personInsuranceId) {
     const pi = await db.select().from(personInsurances).where(eq(personInsurances.id, pass.personInsuranceId)).get();
     if (pi) {
@@ -973,15 +1059,26 @@ export async function serializePassFicha(
         company: pi.company,
         validUntil: pi.validUntil,
         hasDocument: Boolean(pi.documentPath),
+        expired: isPast(pi.validUntil, now),
       };
     }
   }
-  let license: { id: string; licenseNumber: string; validUntil: Date | number } | null = null;
+  let license: { id: string; licenseNumber: string; validUntil: Date | number; hasPhoto: boolean; expired: boolean } | null = null;
   if (pass.licenseId) {
     const lic = await db.select().from(driverLicenses).where(eq(driverLicenses.id, pass.licenseId)).get();
-    if (lic) license = { id: lic.id, licenseNumber: lic.licenseNumber, validUntil: lic.validUntil };
+    if (lic) {
+      license = {
+        id: lic.id,
+        licenseNumber: lic.licenseNumber,
+        validUntil: lic.validUntil,
+        hasPhoto: Boolean(lic.photoUrl),
+        expired: isPast(lic.validUntil, now),
+      };
+    }
   }
-  const awaitingOut = pass.status === "in_site" || pass.status === "awaiting_exit";
+  const onFile = await docsOnFileForPass(pass);
+  const trunkIn = await serializeTrunkCheck(await trunkCheckOf(pass.id, "in"));
+  const trunkOut = await serializeTrunkCheck(await trunkCheckOf(pass.id, "out"));
   const pending = Boolean(row && row.status === "pending");
   const deviceName = await deviceNameOf(row?.deviceId);
   const channel = row?.scanChannel || null;
@@ -1021,10 +1118,16 @@ export async function serializePassFicha(
     horaDesde: pass.horaDesde,
     horaHasta: pass.horaHasta,
     windowState: passWindowState(pass),
-    needsTrunk: needsVehicleDocs(pass.arrivalMode),
-    needsArt: pass.visitKind === "contractor",
+    needsTrunk: req.trunk,
+    needsArt: req.art,
+    needsLicense: req.license,
+    needsVehicle: req.vehicle,
     missing,
     expiredDocs: gaps.expired,
+    canSwitchToPedestrian: sentidoNow === "in" && canSwitchToPedestrian(gaps.expired),
+    onFile,
+    trunkIn,
+    trunkOut,
     companions: companions.map((x) => ({
       id: x.id,
       name: x.name,
@@ -1105,6 +1208,135 @@ export function isOpenVisitStatus(status: string) {
   return OPEN_STATUSES.has(status);
 }
 
+async function tenantIdOfSite(siteId: string) {
+  return (await db.select({ tenantId: sites.tenantId }).from(sites).where(eq(sites.id, siteId)).get())?.tenantId ?? null;
+}
+
+function sameDay(a: Date | number | null | undefined, b: string | null | undefined) {
+  if (a == null || !b) return false;
+  const d1 = new Date(untilMs(a));
+  const d2 = new Date(b);
+  if (!Number.isFinite(d1.getTime()) || !Number.isFinite(d2.getTime())) return false;
+  return d1.toISOString().slice(0, 10) === d2.toISOString().slice(0, 10);
+}
+
+/** Foto de documento (tarjeta de seguro, licencia): recorte en el server; si falla se guarda igual. */
+async function saveDocPhoto(siteId: string, key: string, base64?: string | null): Promise<string | null> {
+  if (!base64) return null;
+  const raw = base64.replace(/^data:[\w/+.-]+;base64,/, "").trim();
+  try {
+    let buf = Buffer.from(raw, "base64");
+    if (buf.length <= 80 || buf.length >= 4 * 1024 * 1024) return null;
+    try {
+      buf = Buffer.from((await processDocumentImage(buf)).jpeg);
+    } catch {
+      /* se guarda igual */
+    }
+    return saveVisitorDoc(siteId, key, "image/jpeg", buf);
+  } catch {
+    return null;
+  }
+}
+
+async function personByDni(tenantId: string, dniRaw: string | null | undefined) {
+  const dni = String(dniRaw || "").replace(/\D/g, "");
+  if (dni.length < 7) return null;
+  return (
+    (await db
+      .select()
+      .from(visitorIdentities)
+      .where(and(eq(visitorIdentities.tenantId, tenantId), eq(visitorIdentities.dniNumber, dni)))
+      .get()) ?? null
+  );
+}
+
+export type DocOnFile = {
+  id: string;
+  kind?: string;
+  company: string | null;
+  policyNumber?: string | null;
+  licenseNumber?: string | null;
+  plate?: string | null;
+  validUntil: Date | number;
+  hasDocument: boolean;
+  expired: boolean;
+};
+
+/** Último ART/licencia por DNI y último seguro por patente que todavía no están vinculados al pase. */
+export async function docsOnFileForPass(pass: typeof visitPasses.$inferSelect) {
+  const out: { art: DocOnFile | null; license: DocOnFile | null; insurance: DocOnFile | null } = {
+    art: null,
+    license: null,
+    insurance: null,
+  };
+  const tenantId = await tenantIdOfSite(pass.siteId);
+  if (!tenantId) return out;
+  const now = Date.now();
+  const person = await personByDni(tenantId, pass.guestDni);
+  if (person) {
+    const pi = await db
+      .select()
+      .from(personInsurances)
+      .where(and(eq(personInsurances.tenantId, tenantId), eq(personInsurances.personId, person.id)))
+      .orderBy(desc(personInsurances.validUntil))
+      .get();
+    if (pi && pi.id !== pass.personInsuranceId) {
+      out.art = {
+        id: pi.id,
+        kind: pi.kind,
+        company: pi.company,
+        validUntil: pi.validUntil,
+        hasDocument: Boolean(pi.documentPath),
+        expired: isPast(pi.validUntil, now),
+      };
+    }
+    const lic = await db
+      .select()
+      .from(driverLicenses)
+      .where(and(eq(driverLicenses.tenantId, tenantId), eq(driverLicenses.personId, person.id)))
+      .orderBy(desc(driverLicenses.validUntil))
+      .get();
+    if (lic && lic.id !== pass.licenseId) {
+      out.license = {
+        id: lic.id,
+        company: null,
+        licenseNumber: lic.licenseNumber,
+        validUntil: lic.validUntil,
+        hasDocument: Boolean(lic.photoUrl),
+        expired: isPast(lic.validUntil, now),
+      };
+    }
+  }
+  const plate = normalizePlate(pass.patente || "");
+  if (plate) {
+    const veh = await db
+      .select()
+      .from(vehicles)
+      .where(and(eq(vehicles.tenantId, tenantId), eq(vehicles.plate, plate)))
+      .get();
+    if (veh) {
+      const ins = await db
+        .select()
+        .from(vehicleInsurances)
+        .where(eq(vehicleInsurances.vehicleId, veh.id))
+        .orderBy(desc(vehicleInsurances.validUntil))
+        .get();
+      if (ins && ins.id !== pass.insuranceId) {
+        out.insurance = {
+          id: ins.id,
+          company: ins.company,
+          policyNumber: ins.policyNumber,
+          plate: veh.plate,
+          validUntil: ins.validUntil,
+          hasDocument: Boolean(ins.cardPhotoUrl),
+          expired: isPast(ins.validUntil, now),
+        };
+      }
+    }
+  }
+  return out;
+}
+
 export async function attachVehicleInsurance(
   tenantId: string,
   passId: string,
@@ -1114,81 +1346,98 @@ export async function attachVehicleInsurance(
     policyNumber?: string;
     validUntil?: string;
     cardPhotoBase64?: string | null;
+    reuseId?: string | null;
   },
-) {
+): Promise<{ ok: true } | { ok: false; error: string }> {
   const pass = await db.select().from(visitPasses).where(eq(visitPasses.id, passId)).get();
-  if (!pass) return;
-  const plate = normalizePlate(input.plate || pass.patente || "");
-  if (!plate || !input.company?.trim() || !input.policyNumber?.trim() || !input.validUntil) return;
-  let vehicleId = pass.vehicleId;
-  if (!vehicleId) {
-    const existing = await db
+  if (!pass) return { ok: false, error: "El pase ya no existe" };
+
+  const reuseId = String(input.reuseId || "").trim();
+  if (reuseId) {
+    const ins = await db
       .select()
-      .from(vehicles)
-      .where(and(eq(vehicles.tenantId, tenantId), eq(vehicles.plate, plate)))
+      .from(vehicleInsurances)
+      .where(and(eq(vehicleInsurances.id, reuseId), eq(vehicleInsurances.tenantId, tenantId)))
       .get();
-    if (existing) vehicleId = existing.id;
-    else {
-      vehicleId = nid();
-      await db.insert(vehicles).values({
-        id: vehicleId,
-        tenantId,
-        plate,
-        brand: null,
-        model: null,
-        color: null,
-        vehicleType: "car",
-        notes: null,
-        createdAt: new Date(),
-      });
-    }
+    if (!ins) return { ok: false, error: "Ese seguro ya no está en archivo" };
+    const veh = await db.select().from(vehicles).where(eq(vehicles.id, ins.vehicleId)).get();
+    const photo = await saveDocPhoto(pass.siteId, `veh-ins-${ins.id}`, input.cardPhotoBase64);
+    if (photo) await db.update(vehicleInsurances).set({ cardPhotoUrl: photo }).where(eq(vehicleInsurances.id, ins.id));
+    await db
+      .update(visitPasses)
+      .set({ vehicleId: ins.vehicleId, insuranceId: ins.id, patente: veh?.plate ?? pass.patente, completeness: "full" })
+      .where(eq(visitPasses.id, passId));
+    return { ok: true };
+  }
+
+  const linked = await linkedVehicleInsurance(pass);
+  const company = input.company?.trim() || "";
+  const policy = input.policyNumber?.trim() || "";
+  if (linked && input.cardPhotoBase64 && !company && !policy) {
+    const photo = await saveDocPhoto(pass.siteId, `veh-ins-${linked.id}`, input.cardPhotoBase64);
+    if (photo) await db.update(vehicleInsurances).set({ cardPhotoUrl: photo }).where(eq(vehicleInsurances.id, linked.id));
+    return { ok: true };
+  }
+  const plate = normalizePlate(input.plate || pass.patente || "");
+  if (!plate || !company || !policy || !input.validUntil) return { ok: true };
+  const validUntilDate = new Date(input.validUntil);
+  if (!Number.isFinite(validUntilDate.getTime())) return { ok: false, error: "Fecha de vencimiento del seguro inválida" };
+
+  if (linked && linked.company === company && linked.policyNumber === policy && sameDay(linked.validUntil, input.validUntil)) {
+    const photo = await saveDocPhoto(pass.siteId, `veh-ins-${linked.id}`, input.cardPhotoBase64);
+    if (photo) await db.update(vehicleInsurances).set({ cardPhotoUrl: photo }).where(eq(vehicleInsurances.id, linked.id));
+    if (pass.patente !== plate) await db.update(visitPasses).set({ patente: plate }).where(eq(visitPasses.id, passId));
+    return { ok: true };
+  }
+
+  let vehicleId = pass.vehicleId;
+  const plateVehicle = await db
+    .select()
+    .from(vehicles)
+    .where(and(eq(vehicles.tenantId, tenantId), eq(vehicles.plate, plate)))
+    .get();
+  if (plateVehicle) vehicleId = plateVehicle.id;
+  else {
+    vehicleId = nid();
+    await db.insert(vehicles).values({
+      id: vehicleId,
+      tenantId,
+      plate,
+      brand: null,
+      model: null,
+      color: null,
+      vehicleType: "car",
+      notes: null,
+      createdAt: new Date(),
+    });
   }
   const insId = nid();
-  let cardPhotoUrl: string | null = null;
-  if (input.cardPhotoBase64) {
-    const raw = input.cardPhotoBase64.replace(/^data:[\w/+.-]+;base64,/, "").trim();
-    try {
-      let buf = Buffer.from(raw, "base64");
-      if (buf.length > 80 && buf.length < 4 * 1024 * 1024) {
-        try {
-          buf = Buffer.from((await processDocumentImage(buf)).jpeg);
-        } catch {
-          /* se guarda igual */
-        }
-        cardPhotoUrl = saveVisitorDoc(pass.siteId, `veh-ins-${insId}`, "image/jpeg", buf);
-      }
-    } catch {
-      /* sin foto */
-    }
-  }
+  const cardPhotoUrl = await saveDocPhoto(pass.siteId, `veh-ins-${insId}`, input.cardPhotoBase64);
   await db.insert(vehicleInsurances).values({
     id: insId,
     tenantId,
     vehicleId,
-    company: input.company.trim(),
-    policyNumber: input.policyNumber.trim(),
+    company,
+    policyNumber: policy,
     validFrom: null,
-    validUntil: new Date(input.validUntil),
+    validUntil: validUntilDate,
     coverageType: "responsabilidad_civil",
     cardPhotoUrl,
     verifiedBy: null,
-    status: "active",
+    status: isPast(validUntilDate) ? "expired" : "active",
     createdAt: new Date(),
   });
   await db
     .update(visitPasses)
     .set({ vehicleId, insuranceId: insId, patente: plate, completeness: "full" })
     .where(eq(visitPasses.id, passId));
+  return { ok: true };
 }
 
 async function ensurePersonForPass(tenantId: string, pass: typeof visitPasses.$inferSelect) {
   const dni = String(pass.guestDni || "").replace(/\D/g, "");
   if (!dni) return null;
-  const existing = await db
-    .select()
-    .from(visitorIdentities)
-    .where(and(eq(visitorIdentities.tenantId, tenantId), eq(visitorIdentities.dniNumber, dni)))
-    .get();
+  const existing = await personByDni(tenantId, dni);
   if (existing) return existing;
   const parts = String(pass.guestName || "").trim().split(/\s+/);
   const firstName = parts[0] || "Visita";
@@ -1216,6 +1465,12 @@ async function ensurePersonForPass(tenantId: string, pass: typeof visitPasses.$i
   return db.select().from(visitorIdentities).where(eq(visitorIdentities.id, id)).get();
 }
 
+/** ART para contratista, seguro de vida para servicio/técnico (se acepta cualquiera de los dos). */
+export function personInsuranceKindFor(visitKind: string | null | undefined, requested?: string | null): "art" | "life" {
+  if (requested === "art" || requested === "life") return requested;
+  return visitKind === "service" ? "life" : "art";
+}
+
 export async function attachPersonInsuranceToPass(
   tenantId: string,
   passId: string,
@@ -1226,15 +1481,28 @@ export async function attachPersonInsuranceToPass(
     documentBase64?: string | null;
     documentMime?: string;
     source?: "scan" | "upload";
+    reuseId?: string | null;
   },
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const pass = await db.select().from(visitPasses).where(eq(visitPasses.id, passId)).get();
   if (!pass) return { ok: false, error: "El pase ya no existe" };
-  if (!input.validUntil) return { ok: false, error: "Falta la fecha de vencimiento de la ART" };
   const person = await ensurePersonForPass(tenantId, pass);
   if (!person) return { ok: false, error: "Primero cargá el DNI" };
-  const validUntilDate = new Date(input.validUntil);
-  if (!Number.isFinite(validUntilDate.getTime())) return { ok: false, error: "Fecha de ART inválida" };
+
+  const reuseId = String(input.reuseId || "").trim();
+  if (reuseId) {
+    const pi = await db
+      .select()
+      .from(personInsurances)
+      .where(
+        and(eq(personInsurances.id, reuseId), eq(personInsurances.tenantId, tenantId), eq(personInsurances.personId, person.id)),
+      )
+      .get();
+    if (!pi) return { ok: false, error: "Esa constancia ya no está en archivo" };
+    await db.update(visitPasses).set({ personInsuranceId: pi.id }).where(eq(visitPasses.id, passId));
+    return { ok: true };
+  }
+
   let documentPath: string | null = null;
   let documentMime: string | null = null;
   if (input.documentBase64) {
@@ -1252,20 +1520,34 @@ export async function attachPersonInsuranceToPass(
           /* se guarda igual */
         }
       }
-      const id = nid();
-      documentPath = saveVisitorDoc(pass.siteId, id, mime, buf);
+      documentPath = saveVisitorDoc(pass.siteId, nid(), mime, buf);
       documentMime = mime;
     } catch {
       return { ok: false, error: "La constancia no se pudo leer" };
     }
   }
+
+  const linked = pass.personInsuranceId
+    ? await db.select().from(personInsurances).where(eq(personInsurances.id, pass.personInsuranceId)).get()
+    : null;
+  const company = input.company?.trim() || null;
+  if (linked && (!input.validUntil || (sameDay(linked.validUntil, input.validUntil) && (company ?? linked.company) === linked.company))) {
+    if (documentPath) {
+      await db.update(personInsurances).set({ documentPath, documentMime }).where(eq(personInsurances.id, linked.id));
+    }
+    return { ok: true };
+  }
+
+  if (!input.validUntil) return { ok: false, error: "Falta la fecha de vencimiento de la ART o seguro" };
+  const validUntilDate = new Date(input.validUntil);
+  if (!Number.isFinite(validUntilDate.getTime())) return { ok: false, error: "Fecha de ART inválida" };
   const id = nid();
   await db.insert(personInsurances).values({
     id,
     tenantId,
     personId: person.id,
-    kind: input.kind === "art" ? "art" : "life",
-    company: input.company?.trim() || null,
+    kind: personInsuranceKindFor(pass.visitKind, input.kind),
+    company,
     policyNumber: null,
     validUntil: validUntilDate,
     documentPath,
@@ -1280,38 +1562,45 @@ export async function attachPersonInsuranceToPass(
 export async function attachLicenseToPass(
   tenantId: string,
   passId: string,
-  input: { licenseNumber?: string; validUntil?: string; photoBase64?: string | null },
+  input: { licenseNumber?: string; validUntil?: string; photoBase64?: string | null; reuseId?: string | null },
 ): Promise<{ ok: true } | { ok: false; error: string }> {
   const pass = await db.select().from(visitPasses).where(eq(visitPasses.id, passId)).get();
   if (!pass) return { ok: false, error: "El pase ya no existe" };
-  if (!input.validUntil) return { ok: false, error: "Falta el vencimiento de la licencia" };
   const person = await ensurePersonForPass(tenantId, pass);
   if (!person) return { ok: false, error: "Primero cargá el DNI" };
+
+  const reuseId = String(input.reuseId || "").trim();
+  if (reuseId) {
+    const lic = await db
+      .select()
+      .from(driverLicenses)
+      .where(and(eq(driverLicenses.id, reuseId), eq(driverLicenses.tenantId, tenantId), eq(driverLicenses.personId, person.id)))
+      .get();
+    if (!lic) return { ok: false, error: "Esa licencia ya no está en archivo" };
+    await db.update(visitPasses).set({ licenseId: lic.id }).where(eq(visitPasses.id, passId));
+    return { ok: true };
+  }
+
+  const linked = pass.licenseId
+    ? await db.select().from(driverLicenses).where(eq(driverLicenses.id, pass.licenseId)).get()
+    : null;
+  const number = (input.licenseNumber || "").trim();
+  if (linked && (!input.validUntil || (sameDay(linked.validUntil, input.validUntil) && (!number || number === linked.licenseNumber)))) {
+    const photo = await saveDocPhoto(pass.siteId, `lic-${linked.id}`, input.photoBase64);
+    if (photo) await db.update(driverLicenses).set({ photoUrl: photo }).where(eq(driverLicenses.id, linked.id));
+    return { ok: true };
+  }
+
+  if (!input.validUntil) return { ok: false, error: "Falta el vencimiento de la licencia" };
   const validUntilDate = new Date(input.validUntil);
   if (!Number.isFinite(validUntilDate.getTime())) return { ok: false, error: "Fecha de licencia inválida" };
-  let photoUrl: string | null = null;
-  if (input.photoBase64) {
-    const raw = input.photoBase64.replace(/^data:[\w/+.-]+;base64,/, "").trim();
-    try {
-      let buf = Buffer.from(raw, "base64");
-      if (buf.length > 80 && buf.length < 4 * 1024 * 1024) {
-        try {
-          buf = Buffer.from((await processDocumentImage(buf)).jpeg);
-        } catch {
-          /* igual */
-        }
-        photoUrl = saveVisitorDoc(pass.siteId, `lic-${nid()}`, "image/jpeg", buf);
-      }
-    } catch {
-      /* sin foto */
-    }
-  }
   const id = nid();
+  const photoUrl = await saveDocPhoto(pass.siteId, `lic-${id}`, input.photoBase64);
   await db.insert(driverLicenses).values({
     id,
     tenantId,
     personId: person.id,
-    licenseNumber: (input.licenseNumber || person.dniNumber).trim(),
+    licenseNumber: number || person.dniNumber,
     classes: "B.1",
     jurisdiction: null,
     validUntil: validUntilDate,
@@ -1322,7 +1611,54 @@ export async function attachLicenseToPass(
   return { ok: true };
 }
 
-export async function requestExpiredDocsAuth(input: {
+/** Tipo de ingreso y medio: cambia lo que se exige; al pasar a pie se sueltan patente/seguro/licencia/baúl. */
+export async function applyPassKindAndMode(
+  passId: string,
+  input: { visitKind?: unknown; arrivalMode?: unknown; patente?: string | null },
+) {
+  const pass = await db.select().from(visitPasses).where(eq(visitPasses.id, passId)).get();
+  if (!pass) return;
+  const patch: Partial<typeof visitPasses.$inferInsert> = {};
+  if (isVisitKind(input.visitKind) && input.visitKind !== pass.visitKind) patch.visitKind = input.visitKind;
+  if (isArrivalMode(input.arrivalMode) && input.arrivalMode !== pass.arrivalMode) {
+    patch.arrivalMode = input.arrivalMode;
+    if (input.arrivalMode !== "vehiculo") {
+      patch.vehicleId = null;
+      patch.insuranceId = null;
+      patch.licenseId = null;
+      patch.patente = null;
+      patch.completeness = "basic";
+    }
+  }
+  const plate = normalizePlate(input.patente || "");
+  if (plate && (patch.arrivalMode ?? pass.arrivalMode) === "vehiculo" && plate !== pass.patente) patch.patente = plate;
+  if (!Object.keys(patch).length) return;
+  await db.update(visitPasses).set(patch).where(eq(visitPasses.id, passId));
+  if (patch.arrivalMode && patch.arrivalMode !== "vehiculo") {
+    await db
+      .delete(visitTrunkChecks)
+      .where(and(eq(visitTrunkChecks.passId, passId), eq(visitTrunkChecks.sentido, "in")));
+    await db
+      .update(guardApprovals)
+      .set({ trunkChecked: false })
+      .where(and(eq(guardApprovals.passId, passId), eq(guardApprovals.status, "pending")));
+  }
+  if (pass.visitRecordId) {
+    const recPatch: Partial<typeof visitRecords.$inferInsert> = {};
+    if (patch.visitKind) recPatch.visitType = patch.visitKind;
+    if (patch.arrivalMode && patch.arrivalMode !== "vehiculo") {
+      recPatch.vehicleId = null;
+      recPatch.insuranceId = null;
+      recPatch.licenseId = null;
+    }
+    if (Object.keys(recPatch).length) {
+      await db.update(visitRecords).set(recPatch).where(eq(visitRecords.id, pass.visitRecordId));
+    }
+  }
+}
+
+/** Seguro o licencia vencidos: el auto queda afuera y se re-evalúa como ingreso a pie. */
+export async function switchToPedestrian(input: {
   site: { id: string; tenantId: string };
   approvalId: string;
 }): Promise<{ ok: true } | { ok: false; error: string }> {
@@ -1332,30 +1668,139 @@ export async function requestExpiredDocsAuth(input: {
     .where(and(eq(guardApprovals.id, input.approvalId), eq(guardApprovals.siteId, input.site.id)))
     .get();
   if (!row || row.status !== "pending") return { ok: false, error: "No hay una solicitud pendiente" };
-  const pass = await db.select().from(visitPasses).where(eq(visitPasses.id, row.passId)).get();
-  if (!pass) return { ok: false, error: "El pase ya no existe" };
-  const gaps = await visitFieldGaps(pass.id);
-  if (!gaps.expired.length) return { ok: false, error: "No hay un documento vencido en esta ficha" };
-  const labels = gaps.expired
-    .map((k) => (k === "art" ? "ART / seguro de vida" : k === "licencia" ? "licencia" : "seguro del auto"))
-    .join(", ");
-  await db
-    .update(guardApprovals)
-    .set({ ownerAuthStatus: "pending_owner" })
-    .where(eq(guardApprovals.id, row.id));
-  await createOwnerNotice({
+  if (row.sentido !== "in") return { ok: false, error: "Pasar a peatonal es solo en el ingreso" };
+  const gaps = await visitFieldGaps(row.passId, "in");
+  if (gaps.expired.includes("art")) {
+    return { ok: false, error: "La ART está vencida: no puede ingresar ni a pie" };
+  }
+  await applyPassKindAndMode(row.passId, { arrivalMode: "peatonal" });
+  const missing = await missingVisitFields(row.passId, "in");
+  if (row.reason !== "walk_in") {
+    await db
+      .update(guardApprovals)
+      .set({ reason: missing.length ? "incomplete" : "ok" })
+      .where(eq(guardApprovals.id, row.id));
+  }
+  broadcastRealtimeEvent({
+    id: nid(),
     siteId: input.site.id,
     tenantId: input.site.tenantId,
-    propertyId: pass.propertyId,
-    passId: pass.id,
-    approvalId: row.id,
-    kind: "expired_docs",
-    title: "Autorizar excepción (documento vencido)",
-    message: `${pass.guestName} tiene ${labels} vencido. Si autorizás, portería puede dejar pasar.`,
-    payload: { expired: gaps.expired, guestName: pass.guestName },
-    ttlMs: 4 * 60 * 60 * 1000,
+    type: "visit_hold",
+    payload: { passId: row.passId, approvalId: row.id, pedestrian: true, sentido: "in" },
+    createdAt: Date.now(),
   });
   return { ok: true };
+}
+
+export async function serializeTrunkCheck(row: TrunkCheckRow | null) {
+  if (!row) return null;
+  const photoIds = trunkPhotoIdsOf(row);
+  return {
+    id: row.id,
+    sentido: row.sentido,
+    description: row.description ?? null,
+    photoIds,
+    photoUrls: photoIds.map((pid) => `/api/visitors/trunk/${row.id}/photos/${pid}`),
+    at: row.updatedAt,
+    guardName: await userNameOf(row.guardUserId),
+  };
+}
+
+const TRUNK_MAX_PHOTOS = 6;
+
+export function trunkPhotoKey(photoId: string) {
+  return `trunk-${photoId}`;
+}
+
+export async function findTrunkCheck(siteId: string, checkId: string) {
+  return (
+    (await db
+      .select()
+      .from(visitTrunkChecks)
+      .where(and(eq(visitTrunkChecks.id, checkId), eq(visitTrunkChecks.siteId, siteId)))
+      .get()) ?? null
+  );
+}
+
+export function trunkCheckHasPhoto(row: TrunkCheckRow, photoId: string) {
+  return trunkPhotoIdsOf(row).includes(photoId);
+}
+
+/** Revisión de baúl del sentido de la solicitud (upsert). Ingreso exige descripción o foto; salida solo el tilde. */
+export async function attachTrunkCheck(input: {
+  site: { id: string; tenantId: string };
+  approvalId: string;
+  guardUserId: string;
+  description?: string | null;
+  addPhotosBase64?: string[];
+  removePhotoIds?: string[];
+}) {
+  const row = await db
+    .select()
+    .from(guardApprovals)
+    .where(and(eq(guardApprovals.id, input.approvalId), eq(guardApprovals.siteId, input.site.id)))
+    .get();
+  if (!row || row.status !== "pending") return { ok: false as const, error: "No hay una solicitud pendiente" };
+  const sentido = row.sentido === "out" ? "out" : "in";
+  const existing = await trunkCheckOf(row.passId, sentido);
+  const remove = new Set((input.removePhotoIds || []).map(String));
+  const photoIds = trunkPhotoIdsOf(existing).filter((pid) => !remove.has(pid));
+  for (const b64 of input.addPhotosBase64 || []) {
+    if (photoIds.length >= TRUNK_MAX_PHOTOS) break;
+    const raw = String(b64 || "").replace(/^data:[\w/+.-]+;base64,/, "").trim();
+    if (raw.length < 80) continue;
+    try {
+      const buf = Buffer.from(raw, "base64");
+      if (buf.length <= 80 || buf.length >= 4 * 1024 * 1024) continue;
+      const pid = nid();
+      saveEventPhoto(input.site.id, trunkPhotoKey(pid), buf);
+      photoIds.push(pid);
+    } catch {
+      /* foto ilegible: se ignora */
+    }
+  }
+  const description =
+    input.description === undefined || input.description === null
+      ? existing?.description ?? null
+      : String(input.description).trim().slice(0, 500) || null;
+  const now = new Date();
+  let checkId = existing?.id;
+  if (existing) {
+    await db
+      .update(visitTrunkChecks)
+      .set({
+        description,
+        photoIds: JSON.stringify(photoIds),
+        approvalId: row.id,
+        guardUserId: input.guardUserId,
+        updatedAt: now,
+      })
+      .where(eq(visitTrunkChecks.id, existing.id));
+  } else {
+    checkId = nid();
+    await db.insert(visitTrunkChecks).values({
+      id: checkId,
+      siteId: input.site.id,
+      passId: row.passId,
+      approvalId: row.id,
+      sentido,
+      description,
+      photoIds: JSON.stringify(photoIds),
+      guardUserId: input.guardUserId,
+      createdAt: now,
+      updatedAt: now,
+    });
+  }
+  await db.update(guardApprovals).set({ trunkChecked: true }).where(eq(guardApprovals.id, row.id));
+  if (sentido === "in" && row.reason !== "walk_in") {
+    const missing = await missingVisitFields(row.passId, "in");
+    await db
+      .update(guardApprovals)
+      .set({ reason: missing.length ? "incomplete" : "ok" })
+      .where(eq(guardApprovals.id, row.id));
+  }
+  const saved = await trunkCheckOf(row.passId, sentido);
+  return { ok: true as const, trunk: await serializeTrunkCheck(saved) };
 }
 
 export async function announceWalkIn(input: {
@@ -1364,6 +1809,9 @@ export async function announceWalkIn(input: {
   guardUserId: string;
   guestName?: string;
   guestDni?: string;
+  visitKind?: string;
+  arrivalMode?: string;
+  patente?: string;
 }): Promise<{ ok: true; passId: string; approvalId: string } | { ok: false; error: string }> {
   const property = await db
     .select()
@@ -1376,6 +1824,9 @@ export async function announceWalkIn(input: {
   const token = (await import("./visitPass.js")).makeVisitToken(property.id, passId);
   const guestName = (input.guestName || "Visita espontánea").trim();
   const defaultHours = await getVisitAuthDefaultHours(input.site.tenantId);
+  const arrivalMode: ArrivalMode = isArrivalMode(input.arrivalMode) ? input.arrivalMode : "peatonal";
+  const visitKind: VisitKind = isVisitKind(input.visitKind) ? input.visitKind : "social";
+  const plate = arrivalMode === "vehiculo" ? normalizePlate(input.patente || "") || null : null;
   await db.insert(visitPasses).values({
     id: passId,
     propertyId: property.id,
@@ -1384,14 +1835,14 @@ export async function announceWalkIn(input: {
     token,
     guestName,
     guestDni: input.guestDni?.replace(/\D/g, "") || null,
-    patente: null,
+    patente: plate,
     validFrom: now,
     validUntil: new Date(now.getTime() + defaultHours * 60 * 60 * 1000),
     horaDesde: null,
     horaHasta: null,
     status: "awaiting_entry",
-    arrivalMode: "peatonal",
-    visitKind: "social",
+    arrivalMode,
+    visitKind,
     completeness: "basic",
     vehicleId: null,
     insuranceId: null,
