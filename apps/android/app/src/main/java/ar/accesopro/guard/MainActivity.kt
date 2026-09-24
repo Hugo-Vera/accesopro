@@ -62,8 +62,40 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.graphics.asImageBitmap
+import android.graphics.Bitmap
+import android.graphics.Color as AndroidColor
+import com.google.zxing.BarcodeFormat
+import com.google.zxing.EncodeHintType
+import com.google.zxing.qrcode.QRCodeWriter
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+
+private fun qrBitmap(payload: String, size: Int = 512): Bitmap? {
+    return runCatching {
+        val hints = mapOf(EncodeHintType.MARGIN to 1)
+        val matrix = QRCodeWriter().encode(payload, BarcodeFormat.QR_CODE, size, size, hints)
+        Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888).also { bmp ->
+            for (x in 0 until size) {
+                for (y in 0 until size) {
+                    bmp.setPixel(x, y, if (matrix[x, y]) AndroidColor.BLACK else AndroidColor.WHITE)
+                }
+            }
+        }
+    }.getOrNull()
+}
+
+@Composable
+private fun AccessQrImage(payload: String, modifier: Modifier = Modifier) {
+    val bmp = remember(payload) { qrBitmap(payload, 512) }
+    if (bmp != null) {
+        androidx.compose.foundation.Image(
+            bitmap = bmp.asImageBitmap(),
+            contentDescription = "Mi QR de acceso",
+            modifier = modifier,
+        )
+    }
+}
 
 @Composable
 private fun LaneChip(out: Boolean, compact: Boolean = false) {
@@ -267,14 +299,22 @@ fun GuardApp(prefs: android.content.SharedPreferences) {
             error = null
             runCatching {
                 val parsed = runCatching { api.parseDni(pendingRaw) }.getOrNull()
-                val item = runCatching { api.scanQr(pendingRaw) }.getOrNull()
-                if (item != null) {
-                    items = api.listApprovals()
-                    selected = items.find { it.id == item.id } ?: item
-                } else if (parsed != null) {
-                    error = "DNI ${parsed.dni} leído. Escaneá el QR de la visita para abrir la ficha."
-                } else {
-                    error = "QR no autorizado"
+                when (val result = api.scanQr(pendingRaw)) {
+                    is ScanQrResult.Visit -> {
+                        items = api.listApprovals()
+                        selected = items.find { it.id == result.item.id } ?: result.item
+                    }
+                    is ScanQrResult.AccessOpened -> {
+                        error =
+                            "Acceso propio: ${result.personName}. ${if (result.actuatorsFired.isNotEmpty()) "Barrera abierta." else "Relé disparado."}"
+                    }
+                    is ScanQrResult.Denied -> {
+                        error = if (parsed != null) {
+                            "DNI ${parsed.dni} leído. Escaneá el QR de la visita para abrir la ficha."
+                        } else {
+                            result.message
+                        }
+                    }
                 }
             }.onFailure { error = it.message }
             pendingScan = null
@@ -885,13 +925,106 @@ fun ResidentHome(
     onError: (String?) -> Unit,
 ) {
     var notices by remember { mutableStateOf(listOf<OwnerNotice>()) }
+    var accessQr by remember { mutableStateOf<AccessQrInfo?>(null) }
+    var showMyQr by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     LaunchedEffect(Unit) {
+        runCatching { accessQr = api.getAccessQr() }
         while (true) {
             runCatching { notices = api.listNotices() }
             delay(2000)
         }
+    }
+    if (showMyQr) {
+        Scaffold(
+            topBar = {
+                TopAppBar(
+                    title = { Text("Mi QR de acceso") },
+                    navigationIcon = {
+                        IconButton(onClick = { showMyQr = false }) {
+                            Icon(Icons.Default.ArrowBack, contentDescription = "Volver")
+                        }
+                    },
+                )
+            },
+        ) { padding ->
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(padding)
+                    .padding(20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(16.dp),
+            ) {
+                Text(
+                    "Si la cara falla, mostrá este QR en el lector o a portería. Abre solo; no es el de visitas.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                )
+                val payload = accessQr?.payload
+                if (accessQr?.active == true && !payload.isNullOrBlank()) {
+                    AccessQrImage(
+                        payload = payload,
+                        modifier = Modifier
+                            .size(260.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(androidx.compose.ui.graphics.Color.White)
+                            .padding(12.dp),
+                    )
+                    Text(
+                        accessQr?.validUntil?.let { "Vence $it" } ?: "Sin vencimiento",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        OutlinedButton(
+                            enabled = !busy,
+                            onClick = {
+                                scope.launch {
+                                    busy = true
+                                    runCatching {
+                                        accessQr = api.issueAccessQr()
+                                        onError("QR renovado")
+                                    }.onFailure { onError(it.message) }
+                                    busy = false
+                                }
+                            },
+                        ) { Text("Renovar") }
+                        Button(
+                            enabled = !busy,
+                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                            onClick = {
+                                scope.launch {
+                                    busy = true
+                                    runCatching {
+                                        api.revokeAccessQr()
+                                        accessQr = api.getAccessQr()
+                                        onError("QR revocado")
+                                    }.onFailure { onError(it.message) }
+                                    busy = false
+                                }
+                            },
+                        ) { Text("Revocar") }
+                    }
+                } else {
+                    Text("Todavía no tenés QR de acceso.", style = MaterialTheme.typography.titleMedium)
+                    Button(
+                        enabled = !busy,
+                        onClick = {
+                            scope.launch {
+                                busy = true
+                                runCatching { accessQr = api.issueAccessQr() }
+                                    .onFailure { onError(it.message) }
+                                busy = false
+                            }
+                        },
+                    ) { Text("Generar QR permanente") }
+                }
+            }
+        }
+        return
     }
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
@@ -931,6 +1064,12 @@ fun ResidentHome(
                 )
                 NavigationBarItem(
                     selected = false,
+                    onClick = { showMyQr = true },
+                    icon = { Icon(Icons.Default.AccountBox, contentDescription = null) },
+                    label = { Text("Mi QR") },
+                )
+                NavigationBarItem(
+                    selected = false,
                     onClick = {
                         scope.launch {
                             runCatching {
@@ -966,6 +1105,32 @@ fun ResidentHome(
                         Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.onErrorContainer)
                         Text(error, color = MaterialTheme.colorScheme.onErrorContainer, style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium))
                     }
+                }
+            }
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { showMyQr = true },
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.6f)),
+            ) {
+                Row(
+                    modifier = Modifier.padding(16.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                ) {
+                    Icon(Icons.Default.AccountBox, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text("Mi QR de acceso", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
+                        Text(
+                            if (accessQr?.active == true) "Backup si la cara falla · Tocá para mostrar"
+                            else "Generá tu QR permanente desde acá",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Icon(Icons.Default.KeyboardArrowRight, contentDescription = null)
                 }
             }
             val pending = notices.filter { it.status == "pending" }

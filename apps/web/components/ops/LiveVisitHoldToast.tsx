@@ -21,6 +21,10 @@ export type VisitHoldAlert = {
   reason?: string;
   photoStored?: boolean;
   dwellLabel?: string | null;
+  denied?: boolean;
+  expired?: boolean;
+  validFrom?: string | number | null;
+  validUntil?: string | number | null;
 };
 
 type Props = {
@@ -54,6 +58,7 @@ export function LiveVisitHoldToast({ alert, onDismiss, onOpenFicha }: Props) {
   if (!mounted || !alert) return null;
 
   const isOut = alert.sentido === "out";
+  const isExpired = Boolean(alert.denied || alert.expired || alert.reason === "expired" || alert.reason === "too_early");
   const isDark =
     typeof document !== "undefined" && document.documentElement.classList.contains("dark");
   const timeStr = new Date().toLocaleTimeString("es-AR", {
@@ -62,10 +67,16 @@ export function LiveVisitHoldToast({ alert, onDismiss, onOpenFicha }: Props) {
     second: "2-digit",
     hour12: false,
   });
+  const fmt = (v: string | number | null | undefined) => {
+    if (v == null || v === "") return "—";
+    const d = new Date(typeof v === "number" ? v : v);
+    if (Number.isNaN(d.getTime())) return "—";
+    return d.toLocaleString("es-AR", { day: "2-digit", month: "2-digit", hour: "2-digit", minute: "2-digit" });
+  };
 
   const node = (
     <aside
-      aria-label="Visita identificada en el lector"
+      aria-label={isExpired ? "QR de visita vencido" : "Visita identificada en el lector"}
       data-testid="visit-hold-toast"
       style={{
         position: "fixed",
@@ -88,15 +99,21 @@ export function LiveVisitHoldToast({ alert, onDismiss, onOpenFicha }: Props) {
       `}</style>
       <button
         type="button"
-        onClick={() => onOpenFicha(alert)}
+        onClick={() => (isExpired ? dismiss() : onOpenFicha(alert))}
         style={{
           display: "block",
           width: "100%",
           textAlign: "left",
           animation: "apToastIn 0.22s ease-out",
           borderRadius: 16,
-          border: "3px solid #d97706",
-          background: isDark ? "#422006" : "#fffbeb",
+          border: isExpired ? "3px solid #e11d48" : "3px solid #d97706",
+          background: isExpired
+            ? isDark
+              ? "#4c0519"
+              : "#fff1f2"
+            : isDark
+              ? "#422006"
+              : "#fffbeb",
           boxShadow: "0 20px 50px rgba(0,0,0,0.35)",
           overflow: "hidden",
           color: isDark ? "#e2e8f0" : "#0f172a",
@@ -109,7 +126,7 @@ export function LiveVisitHoldToast({ alert, onDismiss, onOpenFicha }: Props) {
             key={animKey}
             style={{
               height: "100%",
-              background: "#d97706",
+              background: isExpired ? "#e11d48" : "#d97706",
               animation: "apToastBar 12s linear forwards",
             }}
           />
@@ -121,8 +138,14 @@ export function LiveVisitHoldToast({ alert, onDismiss, onOpenFicha }: Props) {
               flexShrink: 0,
               display: "grid",
               placeItems: "center",
-              background: isDark ? "#78350f" : "#fde68a",
-              borderRight: "2px solid #fbbf24",
+              background: isExpired
+                ? isDark
+                  ? "#9f1239"
+                  : "#fecdd3"
+                : isDark
+                  ? "#78350f"
+                  : "#fde68a",
+              borderRight: isExpired ? "2px solid #fb7185" : "2px solid #fbbf24",
               overflow: "hidden",
               position: "relative",
             }}
@@ -154,11 +177,11 @@ export function LiveVisitHoldToast({ alert, onDismiss, onOpenFicha }: Props) {
                     fontWeight: 800,
                     letterSpacing: "0.04em",
                     textTransform: "uppercase",
-                    background: "#fde68a",
-                    color: "#92400e",
+                    background: isExpired ? "#fecdd3" : "#fde68a",
+                    color: isExpired ? "#9f1239" : "#92400e",
                   }}
                 >
-                  Identificado
+                  {isExpired ? (alert.reason === "too_early" ? "Aún no vale" : "Vencido") : "Identificado"}
                 </span>
                 <span
                   style={{
@@ -214,14 +237,20 @@ export function LiveVisitHoldToast({ alert, onDismiss, onOpenFicha }: Props) {
                 {alert.scannedByName ? ` · ${alert.scannedByName}` : ""}
               </div>
             ) : null}
-            {alert.dwellLabel ? (
+            {alert.dwellLabel && !isExpired ? (
               <div style={{ marginTop: 2, fontSize: 11, fontWeight: 700, color: isDark ? "#fcd34d" : "#b45309" }}>
                 {alert.dwellLabel}
               </div>
             ) : null}
-            <div style={{ marginTop: 6, fontSize: 12, fontWeight: 700, color: isDark ? "#fcd34d" : "#b45309" }}>
-              Aprobá para abrir. El QR no abre solo.
-            </div>
+            {isExpired ? (
+              <div style={{ marginTop: 6, fontSize: 12, fontWeight: 700, color: isDark ? "#fda4af" : "#be123c" }}>
+                Vigencia {fmt(alert.validFrom)} → {fmt(alert.validUntil)}. Liberado del lector. Quedó en historial.
+              </div>
+            ) : (
+              <div style={{ marginTop: 6, fontSize: 12, fontWeight: 700, color: isDark ? "#fcd34d" : "#b45309" }}>
+                Aprobá para abrir. El QR no abre solo.
+              </div>
+            )}
           </div>
         </div>
       </button>

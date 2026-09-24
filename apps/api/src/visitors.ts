@@ -47,6 +47,7 @@ import {
 import { parseDniScan } from "./parseDni.js";
 import { readEventPhoto } from "./eventPhotos.js";
 import { getVisitAuthDefaultHours } from "./retention.js";
+import { openAccessQrFromScan } from "./accessQr.js";
 
 function tsMs(v: Date | number | null | undefined) {
   if (v == null) return null;
@@ -186,8 +187,38 @@ visitorsApi.post("/visitors/approvals/scan-qr", async (c) => {
     return c.json({ ok: true, passId: pass.id, item, parsed, dniMatch: true, sentido: hold.sentido });
   }
   const hold = await holdVisitQr({ ...holdOpts, cardRaw });
-  if (!hold.held) return c.json({ error: "QR no autorizado" }, 404);
+  if (!hold.held) {
+    // Backup: QR de acceso own_/fam_ (abre solo, sin cola de visita).
+    const opened = await openAccessQrFromScan({
+      site: scoped.site,
+      cardRaw,
+      scanChannel,
+      guardUserId: user.id,
+    });
+    if (opened.ok) return c.json(opened);
+    return c.json({ error: opened.error || "QR no autorizado" }, 404);
+  }
   if (hold.reason === "closed") return c.json({ error: "Ese pase ya se cerró. No se puede entrar ni salir." }, 409);
+  if (hold.denied || hold.reason === "expired" || hold.reason === "too_early") {
+    return c.json(
+      {
+        ok: false,
+        denied: true,
+        reason: hold.reason,
+        guestName: hold.guestName,
+        passId: hold.passId,
+        validFrom: hold.validFrom,
+        validUntil: hold.validUntil,
+        horaDesde: hold.horaDesde,
+        horaHasta: hold.horaHasta,
+        error:
+          hold.reason === "too_early"
+            ? "El pase todavía no vale."
+            : "QR vencido. Quedó en historial y se liberó del lector.",
+      },
+      409,
+    );
+  }
   const pending = (await listPendingApprovals(scoped.site.id)).find((x) => x.passId === hold.passId);
   const item = pending || (hold.passId ? await serializePassFicha(hold.passId) : null);
   return c.json({ ok: true, ...hold, item });

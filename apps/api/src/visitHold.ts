@@ -30,6 +30,7 @@ import { getVisitAuthDefaultHours } from "./retention.js";
 import { processDocumentImage } from "./documentScan.js";
 import { notifyStaff } from "./pushNotify.js";
 import { saveVisitorDoc } from "./visitorDocs.js";
+import { expireVisitPassOnSite } from "./accessQr.js";
 
 export type ArrivalMode = "peatonal" | "plataforma" | "vehiculo";
 export type VisitKind = "social" | "service" | "contractor" | "delivery";
@@ -329,6 +330,11 @@ export async function holdVisitQr(input: {
   scannedByName?: string | null;
   eventId?: string;
   deduped?: boolean;
+  denied?: boolean;
+  validFrom?: Date | number | null;
+  validUntil?: Date | number | null;
+  horaDesde?: string | null;
+  horaHasta?: string | null;
 }> {
   const pass = await findVisitPassByCard(input.siteId, input.cardRaw);
   if (!pass) return { held: false };
@@ -343,23 +349,94 @@ export async function holdVisitQr(input: {
       guestName: pass.guestName,
       guestDni: pass.guestDni,
       lotNumber: await lotOf(pass.propertyId),
-      reason: "closed",
+      reason: pass.status === "expired" ? "expired" : "closed",
+      denied: true,
+      validFrom: pass.validFrom,
+      validUntil: pass.validUntil,
+      horaDesde: pass.horaDesde,
+      horaHasta: pass.horaHasta,
     };
   }
 
   const now = input.at ?? new Date();
   const window = passWindowState(pass, now);
-  const missing = await missingVisitFields(pass.id);
-  const reason = window === "expired" || window === "too_early" ? "expired" : missing.length ? "incomplete" : "ok";
   const sentido = visitSentidoFromPass(pass);
-  const nextStatus = sentido === "out" ? "awaiting_exit" : "awaiting_entry";
   const scanChannel = normalizeScanChannel(input.scanChannel, input.deviceId);
-  const readerSentido =
-    scanChannel === "totem" && (input.sentido === "in" || input.sentido === "out") ? input.sentido : null;
   const deviceName = await deviceNameOf(input.deviceId);
   const scannedByName = await userNameOf(input.scannedByUserId);
   const channelLabel = scanChannelLabel(scanChannel, deviceName);
   const qrHint = qrHintOf(pass.token, pass.dahuaCardNo);
+  const lotNumber = await lotOf(pass.propertyId);
+
+  // Vencido / todavía no vale: deny duro, historial, sin cola ni aprobar.
+  // Solo al vencer se baja el v_ del ASI y status=expired (too_early conserva el pase).
+  if (window === "expired" || window === "too_early") {
+    if (window === "expired") await expireVisitPassOnSite(input.siteId, pass);
+    const eventId = nid();
+    const reason = window === "too_early" ? "too_early" : "expired";
+    const denyPayload = {
+      passId: pass.id,
+      sentido,
+      reason,
+      guestName: pass.guestName,
+      guestDni: pass.guestDni,
+      qrHint,
+      lotNumber,
+      validFrom: pass.validFrom,
+      validUntil: pass.validUntil,
+      horaDesde: pass.horaDesde,
+      horaHasta: pass.horaHasta,
+      expired: reason === "expired",
+      denied: true,
+      scanChannel,
+      scanChannelLabel: channelLabel,
+      scannedByName,
+      accessKind: "visita" as const,
+      photoStored: false,
+    };
+    await db.insert(events).values({
+      id: eventId,
+      siteId: input.siteId,
+      type: "visit_hold",
+      sentido,
+      laneCode: laneCodeOf(sentido),
+      payload: JSON.stringify(denyPayload),
+      createdAt: now,
+    });
+    broadcastRealtimeEvent({
+      id: eventId,
+      siteId: input.siteId,
+      tenantId: input.tenantId ?? undefined,
+      type: "visit_hold",
+      payload: denyPayload,
+      createdAt: now.getTime(),
+    });
+    return {
+      held: true,
+      passId: pass.id,
+      reason,
+      guestName: pass.guestName,
+      guestDni: pass.guestDni,
+      lotNumber,
+      sentido,
+      qrHint,
+      scanChannel,
+      scanChannelLabel: channelLabel,
+      scannedByName,
+      eventId,
+      denied: true,
+      validFrom: pass.validFrom,
+      validUntil: pass.validUntil,
+      horaDesde: pass.horaDesde,
+      horaHasta: pass.horaHasta,
+    };
+  }
+
+  const missing = await missingVisitFields(pass.id);
+  const reason = missing.length ? "incomplete" : "ok";
+  const nextStatus = sentido === "out" ? "awaiting_exit" : "awaiting_entry";
+  const readerSentido =
+    scanChannel === "totem" && (input.sentido === "in" || input.sentido === "out") ? input.sentido : null;
 
   const existing = await db
     .select()
@@ -439,7 +516,7 @@ export async function holdVisitQr(input: {
     lotNumber: property?.lotNumber,
     arrivalMode: pass.arrivalMode,
     missing,
-    expired: reason === "expired",
+    expired: false,
     scanChannel,
     scanChannelLabel: channelLabel,
     scannedByName,
@@ -691,6 +768,14 @@ export async function decideGuardApproval(input: {
       createdAt: now.getTime(),
     });
     return { ok: true };
+  }
+
+  if (row.reason === "expired" || row.reason === "too_early") {
+    return { ok: false, error: "El pase está vencido o fuera de vigencia. Solo se puede denegar." };
+  }
+  const windowNow = passWindowState(pass);
+  if (windowNow === "expired" || windowNow === "too_early") {
+    return { ok: false, error: "El pase está vencido o fuera de vigencia. Solo se puede denegar." };
   }
 
   if (row.reason === "walk_in") {

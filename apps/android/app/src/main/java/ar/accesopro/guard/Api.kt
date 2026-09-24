@@ -78,6 +78,20 @@ data class OwnerNotice(
     val decidedByName: String?,
 )
 
+data class AccessQrInfo(
+    val active: Boolean,
+    val payload: String?,
+    val qrHint: String?,
+    val validUntil: String?,
+    val label: String?,
+)
+
+sealed class ScanQrResult {
+    data class Visit(val item: ApprovalItem) : ScanQrResult()
+    data class AccessOpened(val personName: String, val actuatorsFired: List<String>) : ScanQrResult()
+    data class Denied(val message: String) : ScanQrResult()
+}
+
 data class ParsedDni(
     val dni: String,
     val firstName: String,
@@ -273,10 +287,55 @@ class GuardApi(
         )
     }
 
-    suspend fun scanQr(cardRaw: String): ApprovalItem? = withContext(Dispatchers.IO) {
-        val json = post("/api/visitors/approvals/scan-qr", JSONObject().put("cardRaw", cardRaw).put("scanChannel", "app"))
-        val item = json.optJSONObject("item") ?: return@withContext null
-        parseItem(item)
+    suspend fun scanQr(cardRaw: String): ScanQrResult = withContext(Dispatchers.IO) {
+        val json = try {
+            post("/api/visitors/approvals/scan-qr", JSONObject().put("cardRaw", cardRaw).put("scanChannel", "app"))
+        } catch (e: IllegalStateException) {
+            return@withContext ScanQrResult.Denied(e.message ?: "QR no autorizado")
+        }
+        if (json.optString("accessKind") == "access_qr") {
+            val fired = json.optJSONArray("actuatorsFired") ?: JSONArray()
+            return@withContext ScanQrResult.AccessOpened(
+                personName = json.optString("personName").ifBlank { "vecino" },
+                actuatorsFired = (0 until fired.length()).map { fired.getString(it) },
+            )
+        }
+        if (json.optBoolean("denied")) {
+            return@withContext ScanQrResult.Denied(json.optString("error", "QR vencido o no vigente"))
+        }
+        val item = json.optJSONObject("item") ?: return@withContext ScanQrResult.Denied("QR no autorizado")
+        ScanQrResult.Visit(parseItem(item))
+    }
+
+    suspend fun getAccessQr(): AccessQrInfo = withContext(Dispatchers.IO) {
+        val json = get("/api/residents/me/access-qr")
+        val o = json.optJSONObject("accessQr") ?: return@withContext AccessQrInfo(false, null, null, null, null)
+        AccessQrInfo(
+            active = o.optBoolean("active"),
+            payload = o.optString("payload").ifBlank { null },
+            qrHint = o.optString("qrHint").ifBlank { null },
+            validUntil = o.opt("validUntil")?.toString()?.takeIf { it != "null" && it.isNotBlank() },
+            label = o.optString("label").ifBlank { null },
+        )
+    }
+
+    suspend fun issueAccessQr(useDefaultHours: Boolean = false): AccessQrInfo = withContext(Dispatchers.IO) {
+        val body = JSONObject()
+        if (useDefaultHours) body.put("useDefaultHours", true)
+        val json = post("/api/residents/me/access-qr", body)
+        val o = json.optJSONObject("accessQr") ?: return@withContext getAccessQr()
+        AccessQrInfo(
+            active = o.optBoolean("active", true),
+            payload = o.optString("payload").ifBlank { null },
+            qrHint = o.optString("qrHint").ifBlank { null },
+            validUntil = o.opt("validUntil")?.toString()?.takeIf { it != "null" && it.isNotBlank() },
+            label = o.optString("label").ifBlank { null },
+        )
+    }
+
+    suspend fun revokeAccessQr() = withContext(Dispatchers.IO) {
+        post("/api/residents/me/access-qr/revoke", JSONObject())
+        Unit
     }
 
     suspend fun parseDni(raw: String): ParsedDni? = withContext(Dispatchers.IO) {

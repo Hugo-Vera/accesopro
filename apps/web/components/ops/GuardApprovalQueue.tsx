@@ -181,6 +181,10 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
           photoStored: p.photoStored === true,
           dwellLabel: p.dwellLabel != null ? String(p.dwellLabel) : null,
           reason: p.reason != null ? String(p.reason) : undefined,
+          denied: p.denied === true,
+          expired: p.expired === true || p.reason === "expired" || p.reason === "too_early",
+          validFrom: (p.validFrom as string | number | null | undefined) ?? null,
+          validUntil: (p.validUntil as string | number | null | undefined) ?? null,
         });
       } catch {
         /* ping / connected */
@@ -225,6 +229,10 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
 
   const current = items.find((x) => x.id === openId) || preview;
   const canDecide = Boolean(current && current.pending !== false && !String(current.id).startsWith("preview:"));
+  const passExpired = Boolean(
+    current && (current.reason === "expired" || current.reason === "too_early" || current.windowState === "expired" || current.windowState === "too_early"),
+  );
+  const canApprove = canDecide && !passExpired;
   const fichaSteps = current ? fichaStepsOf(current) : [];
   const stepKey = fichaSteps[Math.min(fichaStep, Math.max(0, fichaSteps.length - 1))] ?? "identity";
   useEscapeKey(() => {
@@ -292,6 +300,10 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
 
   async function decide(decision: "approved" | "denied") {
     if (!current || !canDecide) return;
+    if (decision === "approved" && passExpired) {
+      setError("El pase está vencido. Solo se puede denegar.");
+      return;
+    }
     setBusy(true);
     setError(null);
     try {
@@ -374,12 +386,31 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
       return true;
     }
     try {
-      const res = await api<{ approvalId?: string; passId?: string; item?: GuardApprovalItem }>(
-        withTenant("/api/visitors/approvals/scan-qr", tenantId),
-        { method: "POST", body: JSON.stringify({ cardRaw: raw, scanChannel: "web" }) },
-      );
+      const res = await api<{
+        approvalId?: string;
+        passId?: string;
+        item?: GuardApprovalItem;
+        accessKind?: string;
+        personName?: string;
+        actuatorsFired?: string[];
+        ok?: boolean;
+        denied?: boolean;
+        error?: string;
+      }>(withTenant("/api/visitors/approvals/scan-qr", tenantId), {
+        method: "POST",
+        body: JSON.stringify({ cardRaw: raw, scanChannel: "web" }),
+      });
       setScanOpen(false);
       load();
+      if (res.accessKind === "access_qr") {
+        setError(null);
+        window.alert(
+          `Acceso propio: ${res.personName || "vecino"}. ${
+            res.actuatorsFired?.length ? "Barrera abierta." : "Relé disparado."
+          }`,
+        );
+        return true;
+      }
       if (res.item?.id) {
         setPreview(null);
         setOpenId(res.item.id);
@@ -388,7 +419,8 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
       }
       return true;
     } catch (err) {
-      setError(err instanceof Error ? err.message : "QR no autorizado");
+      const msg = err instanceof Error ? err.message : "QR no autorizado";
+      setError(msg);
       return false;
     }
   }
@@ -1165,7 +1197,7 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
                 <button type="button" disabled={busy} onClick={() => void saveFicha()} className="inline-flex items-center justify-center rounded-xl border border-slate-300 px-3 py-2 text-xs font-bold dark:border-slate-600 disabled:opacity-50">
                   Guardar ficha
                 </button>
-                <button type="button" disabled={busy} onClick={() => void decide("approved")} className="inline-flex flex-1 items-center justify-center gap-1 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">
+                <button type="button" disabled={busy || !canApprove} onClick={() => void decide("approved")} className="inline-flex flex-1 items-center justify-center gap-1 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white disabled:opacity-50">
                   <Check className="h-4 w-4" />
                   Aprobar y abrir
                 </button>
@@ -1175,6 +1207,11 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
                 </button>
               </div>
             )}
+            {passExpired ? (
+              <p className="mt-2 text-[11px] font-semibold text-rose-700 dark:text-rose-300">
+                Pase vencido o fuera de vigencia: no se puede abrir. Solo denegar. Quedó en historial.
+              </p>
+            ) : null}
       </Modal>
       ) : null}
 

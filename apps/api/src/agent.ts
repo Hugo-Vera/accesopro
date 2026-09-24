@@ -271,6 +271,15 @@ agentRoutes.post("/events", async (c) => {
       if (hold.guestName) payload.personName = hold.guestName;
       payload.approved = false;
       failed = true;
+      if (hold.denied || hold.reason === "expired" || hold.reason === "too_early") {
+        payload.denied = true;
+        payload.expired = hold.reason !== "too_early";
+        payload.holdReason = hold.reason;
+        payload.validFrom = hold.validFrom;
+        payload.validUntil = hold.validUntil;
+        payload.horaDesde = hold.horaDesde;
+        payload.horaHasta = hold.horaHasta;
+      }
       eventSentido = hold.sentido || eventSentido;
       eventLaneCode = hold.sentido === "out" ? 2 : 1;
     } else if (
@@ -284,9 +293,33 @@ agentRoutes.post("/events", async (c) => {
         matchedCred.validUntil instanceof Date ? matchedCred.validUntil.getTime() : Number(matchedCred.validUntil) || 0;
       const from =
         matchedCred.validFrom instanceof Date ? matchedCred.validFrom.getTime() : Number(matchedCred.validFrom) || 0;
-      const inWindow = (!from || now >= from) && (!until || now <= until);
+      const tooEarly = Boolean(from && now < from);
+      const expired = Boolean(until && now > until);
+      const inWindow = !tooEarly && !expired;
       const usesOk = !matchedCred.maxUses || matchedCred.usedCount < matchedCred.maxUses;
-      if (inWindow && usesOk && site) {
+      const isAccessQr =
+        matchedCred.kind === "qr" &&
+        (matchedCred.dahuaUserId.startsWith("own_") || matchedCred.dahuaUserId.startsWith("fam_"));
+      if (!inWindow && isAccessQr && site) {
+        payload.denied = true;
+        payload.expired = expired;
+        payload.holdReason = tooEarly ? "too_early" : "expired";
+        payload.validFrom = matchedCred.validFrom;
+        payload.validUntil = matchedCred.validUntil;
+        payload.accessKind = "access_qr";
+        if (expired) {
+          try {
+            const { revokeAccessQr } = await import("./accessQr.js");
+            await revokeAccessQr({
+              siteId,
+              dahuaUserId: matchedCred.dahuaUserId,
+              deletePersonIfOrphan: true,
+            });
+          } catch {
+            /* ignore */
+          }
+        }
+      } else if (inWindow && usesOk && site) {
         failed = false;
         payload.approved = true;
         payload.status = "1";

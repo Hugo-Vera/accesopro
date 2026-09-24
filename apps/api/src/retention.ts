@@ -15,6 +15,7 @@ import type { AuthUser } from "./auth.js";
 import { denyUnlessCapability } from "./grants.js";
 import { nid } from "./scope.js";
 import { expireOwnerNotices } from "./ownerNotices.js";
+import { expireTimedCredentialsAndPasses } from "./accessQr.js";
 
 type Env = { Variables: { user: AuthUser } };
 
@@ -200,6 +201,7 @@ export function startRetentionPoller() {
   const tick = async () => {
     try {
       await expireOwnerNotices();
+      await expireTimedCredentialsAndPasses();
       const sitesRows = await db.select().from(sites);
       for (const site of sitesRows) {
         await purgeTenantRetention(site.tenantId);

@@ -34,12 +34,14 @@ No hay un “turno” ni un lock global. Cada evento del lector es **una persona
 
 | Prefijo ASI | Quién | Enrolamiento | En el lector | AccesoPro |
 |-------------|-------|--------------|--------------|-----------|
-| `own_…` | Propietario | Portal: cara / QR permanente / tarjeta | Cara: el ASI abre offline | Auxiliares cableados; QR Error 96 → `openDoor` si hay credencial |
-| `fam_…` | Familia del lote | Portal familia + foto | Igual que dueño | Abre solo; sin cola ni permanencia |
+| `own_…` | Propietario | Portal: cara y/o **Mi QR de acceso** (`person_credentials` QR) | Cara: el ASI abre offline | Auxiliares cableados; QR Error 96 → `openDoor` si hay credencial vigente |
+| `fam_…` | Familia del lote | Portal familia + foto y/o QR (permanente o temporal) | Igual que dueño | Abre solo; sin cola ni permanencia. Sin foto: el titular puede emitir QR temporal |
 | `svc_…` | Servicio permanente (jardinero) | Portal servicios + horarios | Igual que dueño | Abre solo; **no** es visita |
-| `v_…` | Visita / proveedor / walk-up | QR token HMAC; **sin cara** | QR → Error 96; el relé local **no** pulsa | Hold → cola guardia → recién ahí `openDoor` |
+| `v_…` | Visita / proveedor / walk-up | QR token HMAC; **sin cara** | QR → Error 96; el relé local **no** pulsa | Hold → cola guardia → recién ahí `openDoor`. **Vencido = deny** (sin aprobar) + baja ASI + historial |
 
 El token QR de visita **no es** el userId `v_…`. El ASI guarda el token como CardNo; AccesoPro busca `visit_passes.token` o `person_credentials`.
+
+**Mi QR de acceso** (titular / familiar adulto con cuenta): vive en portal Ficha y en la app (card Mi QR). Abre solo; no es el QR de visitas. Portería puede escanearlo y dispara actuadores sin cola.
 
 `visitKind` (social / servicio / obra / delivery) es etiqueta: **no cambia** hold vs auto. Un jardinero en `property_services` (`svc_`) abre solo; el mismo rubro en un **pase de visita** espera al guardia.
 

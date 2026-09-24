@@ -38,6 +38,7 @@ import {
   unusableInviteHash,
 } from "./ownerInvite.js";
 import { getVisitAuthDefaultHours, resolveVisitPassWindow } from "./retention.js";
+import { activeAccessQr, issueAccessQr, revokeAccessQr } from "./accessQr.js";
 
 type Env = { Variables: { user: AuthUser } };
 
@@ -435,7 +436,11 @@ residents.get("/me", async (c) => {
   const tenant = await db.select().from(tenants).where(eq(tenants.id, scoped.tenantId)).get();
   const familyOut = [];
   for (const f of familyMembers) {
-    familyOut.push({ ...f, deviceSync: await syncLanes(f.dahuaUserId) });
+    familyOut.push({
+      ...f,
+      deviceSync: await syncLanes(f.dahuaUserId),
+      accessQr: f.dahuaUserId ? await activeAccessQr(ctx.property.siteId, f.dahuaUserId) : null,
+    });
   }
   const servicesOut = [];
   for (const s of services) {
@@ -447,6 +452,9 @@ residents.get("/me", async (c) => {
     property: ctx.property,
     services: servicesOut,
     familyMembers: familyOut,
+    accessQr: ctx.profile.dahuaUserId
+      ? await activeAccessQr(ctx.property.siteId, ctx.profile.dahuaUserId)
+      : { active: false, credentialId: null, payload: null, qrHint: null, validFrom: null, validUntil: null, label: null },
     panicEnabled: Boolean(panicRow?.enabled),
     features,
     isTitular: ctx.isTitular !== false,
@@ -545,6 +553,155 @@ residents.post("/me/sync-face", async (c) => {
     .where(eq(ownerProfiles.id, ctx.profile.id));
 
   return c.json({ ok: true, synced: enrollOk(results), dahuaUserId, deviceSync: results });
+});
+
+residents.get("/me/access-qr", async (c) => {
+  const scoped = await scopedSiteWithModule(c, "visitors");
+  if ("error" in scoped) return scoped.error;
+  const ctx = await ownerContext(c.get("user"));
+  if (!ctx) return c.json({ error: "Perfil no encontrado" }, 404);
+  const dahuaUserId = ctx.profile.dahuaUserId || (ctx.isTitular === false ? `fam_${ctx.profile.id.slice(-8)}` : `own_${ctx.profile.id.slice(-8)}`);
+  const accessQr = await activeAccessQr(ctx.property.siteId, dahuaUserId);
+  return c.json({ accessQr, dahuaUserId });
+});
+
+residents.post("/me/access-qr", async (c) => {
+  const scoped = await scopedSiteWithModule(c, "visitors");
+  if ("error" in scoped) return scoped.error;
+  const qrBlocked = await assertFeature(scoped.tenantId, "dahua.qr");
+  if (qrBlocked) return c.json({ error: qrBlocked }, 403);
+  const ctx = await ownerContext(c.get("user"));
+  if (!ctx) return c.json({ error: "Perfil no encontrado" }, 404);
+  const body = (await c.req
+    .json<{ validUntil?: string; validFrom?: string; useDefaultHours?: boolean }>()
+    .catch(() => ({}))) as {
+    validUntil?: string;
+    validFrom?: string;
+    useDefaultHours?: boolean;
+  };
+  const dahuaUserId =
+    ctx.profile.dahuaUserId ||
+    (ctx.isTitular === false ? `fam_${ctx.profile.id.slice(-8)}` : `own_${ctx.profile.id.slice(-8)}`);
+  if (!ctx.profile.dahuaUserId) {
+    if (ctx.isTitular === false) {
+      await db
+        .update(propertyFamilyMembers)
+        .set({ dahuaUserId })
+        .where(eq(propertyFamilyMembers.id, ctx.profile.id));
+    } else {
+      await db.update(ownerProfiles).set({ dahuaUserId }).where(eq(ownerProfiles.id, ctx.profile.id));
+    }
+  }
+  let validFrom: Date | null = null;
+  let validUntil: Date | null = null;
+  if (body.validFrom) validFrom = parseDateInput(body.validFrom);
+  if (body.validUntil) validUntil = parseDateInput(body.validUntil);
+  const result = await issueAccessQr({
+    siteId: ctx.property.siteId,
+    tenantId: scoped.tenantId,
+    dahuaUserId,
+    name: ctx.profile.fullName || c.get("user").name,
+    photoBase64: ctx.profile.photoBase64,
+    validFrom,
+    validUntil,
+    useDefaultHours: Boolean(body.useDefaultHours) && !validUntil,
+  });
+  if (!result.ok) return c.json({ error: result.error }, 400);
+  return c.json(result);
+});
+
+residents.post("/me/access-qr/revoke", async (c) => {
+  const scoped = await scopedSiteWithModule(c, "visitors");
+  if ("error" in scoped) return scoped.error;
+  const ctx = await ownerContext(c.get("user"));
+  if (!ctx) return c.json({ error: "Perfil no encontrado" }, 404);
+  const dahuaUserId = ctx.profile.dahuaUserId;
+  if (!dahuaUserId) return c.json({ error: "No hay QR de acceso" }, 404);
+  await revokeAccessQr({ siteId: ctx.property.siteId, dahuaUserId, deletePersonIfOrphan: true });
+  return c.json({ ok: true });
+});
+
+residents.post("/me/family/:id/qr", async (c) => {
+  const scoped = await scopedSiteWithModule(c, "visitors");
+  if ("error" in scoped) return scoped.error;
+  if (!(await userHasCapability(c.get("user"), "access.family.manage"))) {
+    return c.json({ error: "Sin permiso para gestionar familia" }, 403);
+  }
+  const qrBlocked = await assertFeature(scoped.tenantId, "dahua.qr");
+  if (qrBlocked) return c.json({ error: qrBlocked }, 403);
+  const ctx = await ownerContext(c.get("user"));
+  if (!ctx || ctx.isTitular === false) return c.json({ error: "Solo el titular emite QR de familiares" }, 403);
+  const memberId = c.req.param("id");
+  const member = await db
+    .select()
+    .from(propertyFamilyMembers)
+    .where(
+      and(
+        eq(propertyFamilyMembers.id, memberId),
+        eq(propertyFamilyMembers.propertyId, ctx.property.id),
+        eq(propertyFamilyMembers.active, true),
+      ),
+    )
+    .get();
+  if (!member) return c.json({ error: "Familiar no encontrado" }, 404);
+  const body = (await c.req
+    .json<{ validUntil?: string; validFrom?: string; useDefaultHours?: boolean; permanent?: boolean }>()
+    .catch(() => ({}))) as {
+    validUntil?: string;
+    validFrom?: string;
+    useDefaultHours?: boolean;
+    permanent?: boolean;
+  };
+  const dahuaUserId = member.dahuaUserId || `fam_${member.id.slice(-8)}`;
+  if (!member.dahuaUserId) {
+    await db.update(propertyFamilyMembers).set({ dahuaUserId }).where(eq(propertyFamilyMembers.id, member.id));
+  }
+  let validFrom: Date | null = null;
+  let validUntil: Date | null = null;
+  let useDefaultHours = false;
+  if (body.permanent) {
+    validFrom = null;
+    validUntil = null;
+  } else if (body.validUntil) {
+    if (body.validFrom) validFrom = parseDateInput(body.validFrom);
+    validUntil = parseDateInput(body.validUntil);
+  } else if (body.useDefaultHours !== false && !member.photoBase64) {
+    useDefaultHours = true;
+  } else if (body.useDefaultHours) {
+    useDefaultHours = true;
+  }
+  const result = await issueAccessQr({
+    siteId: ctx.property.siteId,
+    tenantId: scoped.tenantId,
+    dahuaUserId,
+    name: member.name,
+    photoBase64: member.photoBase64,
+    validFrom,
+    validUntil,
+    useDefaultHours,
+  });
+  if (!result.ok) return c.json({ error: result.error }, 400);
+  return c.json({ memberId: member.id, ...result });
+});
+
+residents.post("/me/family/:id/qr/revoke", async (c) => {
+  const scoped = await scopedSiteWithModule(c, "visitors");
+  if ("error" in scoped) return scoped.error;
+  if (!(await userHasCapability(c.get("user"), "access.family.manage"))) {
+    return c.json({ error: "Sin permiso para gestionar familia" }, 403);
+  }
+  const ctx = await ownerContext(c.get("user"));
+  if (!ctx || ctx.isTitular === false) return c.json({ error: "Solo el titular" }, 403);
+  const member = await db
+    .select()
+    .from(propertyFamilyMembers)
+    .where(
+      and(eq(propertyFamilyMembers.id, c.req.param("id")), eq(propertyFamilyMembers.propertyId, ctx.property.id)),
+    )
+    .get();
+  if (!member?.dahuaUserId) return c.json({ error: "Familiar sin QR" }, 404);
+  await revokeAccessQr({ siteId: ctx.property.siteId, dahuaUserId: member.dahuaUserId, deletePersonIfOrphan: true });
+  return c.json({ ok: true });
 });
 
 // ── Portal: Grupo Familiar ──────────────────────────────────────────────────

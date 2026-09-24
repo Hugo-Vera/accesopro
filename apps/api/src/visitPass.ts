@@ -95,6 +95,22 @@ export async function scanVisitPass(
   });
   if (!hold.held) return { ok: false, error: "QR no encontrado" };
   if (hold.reason === "closed") return { ok: false, error: "QR revocado o denegado" };
+  if (hold.denied || hold.reason === "expired" || hold.reason === "too_early") {
+    return {
+      ok: false,
+      held: true,
+      denied: true,
+      reason: hold.reason,
+      guestName: hold.guestName,
+      passId: hold.passId,
+      validFrom: hold.validFrom,
+      validUntil: hold.validUntil,
+      error:
+        hold.reason === "too_early"
+          ? "El pase todavía no vale. Revisá la fecha de inicio."
+          : "El pase está vencido. Quedó en historial y se liberó del lector.",
+    };
+  }
   return {
     ok: true,
     held: true,
@@ -106,9 +122,6 @@ export async function scanVisitPass(
     sentido: hold.sentido || sentido,
     actuatorsFired: [] as string[],
     accessKind: "visita",
-    message:
-      hold.reason === "expired"
-        ? "El pase está vencido. El guardia tiene que autorizar o denegar."
-        : "Identificado. Esperá la aprobación del guardia.",
+    message: "Identificado. Esperá la aprobación del guardia.",
   };
 }

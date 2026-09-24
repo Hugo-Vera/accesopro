@@ -57,6 +57,16 @@ type Profile = {
   dahuaSynced: boolean;
 };
 
+type AccessQr = {
+  active: boolean;
+  credentialId: string | null;
+  payload: string | null;
+  qrHint: string | null;
+  validFrom: string | number | null;
+  validUntil: string | number | null;
+  label: string | null;
+};
+
 type FamilyMember = {
   id: string;
   name: string;
@@ -68,6 +78,7 @@ type FamilyMember = {
   active: boolean;
   userId?: string | null;
   birthDate?: string | null;
+  accessQr?: AccessQr | null;
 };
 
 type Service = {
@@ -228,6 +239,8 @@ export function OwnerPortal() {
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [syncingFace, setSyncingFace] = useState(false);
   const [syncSuccess, setSyncSuccess] = useState(false);
+  const [accessQr, setAccessQr] = useState<AccessQr | null>(null);
+  const [accessQrBusy, setAccessQrBusy] = useState(false);
 
   // Modales
   const [showFamilyModal, setShowFamilyModal] = useState(false);
@@ -289,6 +302,7 @@ export function OwnerPortal() {
         canManageSchedules?: boolean;
         visitAuthDefaultHours?: number;
         tenantName?: string | null;
+        accessQr?: AccessQr | null;
       }>("/api/residents/me");
 
       setUserName(me.profile?.fullName || me.user.name);
@@ -296,6 +310,7 @@ export function OwnerPortal() {
       setProfile(me.profile);
       setServices(me.services);
       setFamily(me.familyMembers || []);
+      setAccessQr(me.accessQr || null);
       setPanicEnabled(Boolean(me.panicEnabled));
       setIsTitular(me.isTitular !== false);
       setCanManageFamily(me.canManageFamily !== false);
@@ -395,6 +410,51 @@ export function OwnerPortal() {
       }
     };
     reader.readAsDataURL(file);
+  }
+
+  async function handleIssueAccessQr(opts?: { useDefaultHours?: boolean }) {
+    try {
+      setAccessQrBusy(true);
+      const res = await api<{ accessQr: AccessQr }>("/api/residents/me/access-qr", {
+        method: "POST",
+        body: JSON.stringify(opts?.useDefaultHours ? { useDefaultHours: true } : {}),
+      });
+      setAccessQr(res.accessQr);
+      await load();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "No se pudo generar el QR");
+    } finally {
+      setAccessQrBusy(false);
+    }
+  }
+
+  async function handleRevokeAccessQr() {
+    if (!confirm("¿Revocar tu QR de acceso? La cara sigue valiendo si la tenés enrolada.")) return;
+    try {
+      setAccessQrBusy(true);
+      await api("/api/residents/me/access-qr/revoke", { method: "POST" });
+      setAccessQr(null);
+      await load();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "No se pudo revocar");
+    } finally {
+      setAccessQrBusy(false);
+    }
+  }
+
+  async function handleFamilyQr(memberId: string, mode: "temp" | "permanent") {
+    try {
+      setAccessQrBusy(true);
+      await api(`/api/residents/me/family/${memberId}/qr`, {
+        method: "POST",
+        body: JSON.stringify(mode === "permanent" ? { permanent: true } : { useDefaultHours: true }),
+      });
+      await load();
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "No se pudo emitir el QR");
+    } finally {
+      setAccessQrBusy(false);
+    }
   }
 
   // Forzar sincronización del rostro con Dahua ASI
@@ -803,6 +863,75 @@ export function OwnerPortal() {
               </form>
             </div>
           </div>
+
+          {features.qr ? (
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 shadow-sm dark:border-slate-800 dark:bg-slate-900">
+              <h2 className="text-sm font-bold text-slate-900 dark:text-white">Mi QR de acceso</h2>
+              <p className="mt-0.5 text-xs text-slate-500 dark:text-slate-400">
+                Si la cara falla, mostrá este QR en el lector o a portería. Abre solo; no es el QR de visitas.
+              </p>
+              <div className="mt-4 flex flex-col items-center gap-3 sm:flex-row sm:items-start">
+                {accessQr?.active && accessQr.payload ? (
+                  <>
+                    <LocalQr payload={accessQr.payload} size={200} alt="Mi QR de acceso" />
+                    <div className="flex flex-1 flex-col gap-2 text-xs">
+                      <p className="font-semibold text-slate-700 dark:text-slate-200">
+                        {accessQr.validUntil
+                          ? `Vence ${fmtDate(accessQr.validUntil)}`
+                          : "Sin vencimiento (permanente)"}
+                      </p>
+                      <p className="text-slate-500">Pista: {accessQr.qrHint || "—"}</p>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          type="button"
+                          disabled={accessQrBusy}
+                          onClick={() => void handleIssueAccessQr()}
+                          className="rounded-xl border border-slate-300 px-3 py-1.5 font-bold dark:border-slate-600"
+                        >
+                          Renovar
+                        </button>
+                        <button
+                          type="button"
+                          disabled={accessQrBusy}
+                          onClick={() => void handleDownloadQr(accessQr.payload!, userName || "acceso")}
+                          className="rounded-xl border border-slate-300 px-3 py-1.5 font-bold dark:border-slate-600"
+                        >
+                          Descargar PNG
+                        </button>
+                        <button
+                          type="button"
+                          disabled={accessQrBusy}
+                          onClick={() => void handleRevokeAccessQr()}
+                          className="rounded-xl bg-rose-600 px-3 py-1.5 font-bold text-white"
+                        >
+                          Revocar
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      disabled={accessQrBusy}
+                      onClick={() => void handleIssueAccessQr()}
+                      className="rounded-xl bg-slate-900 px-3 py-2 text-xs font-bold text-white dark:bg-white dark:text-slate-900"
+                    >
+                      Generar QR permanente
+                    </button>
+                    <button
+                      type="button"
+                      disabled={accessQrBusy}
+                      onClick={() => void handleIssueAccessQr({ useDefaultHours: true })}
+                      className="rounded-xl border border-slate-300 px-3 py-2 text-xs font-bold dark:border-slate-600"
+                    >
+                      Generar por {visitAuthDefaultHours} h
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : null}
         </section>
       )}
 
@@ -934,6 +1063,85 @@ export function OwnerPortal() {
                       </div>
                     ) : null}
                   </div>
+
+                  {features.qr && canManageFamily ? (
+                    <div className="mt-3 space-y-2 rounded-xl border border-slate-100 bg-slate-50 p-3 dark:border-slate-800 dark:bg-slate-950/40">
+                      <p className="text-[10px] font-bold uppercase tracking-wide text-slate-500">QR de acceso</p>
+                      {f.accessQr?.active && f.accessQr.payload ? (
+                        <div className="flex flex-col items-center gap-2">
+                          <LocalQr payload={f.accessQr.payload} size={120} alt={`QR ${f.name}`} />
+                          <p className="text-[11px] text-slate-600 dark:text-slate-300">
+                            {f.accessQr.validUntil
+                              ? `Vence ${fmtDate(f.accessQr.validUntil)}`
+                              : "Permanente"}
+                          </p>
+                          <div className="flex flex-wrap justify-center gap-1.5">
+                            <button
+                              type="button"
+                              disabled={accessQrBusy}
+                              onClick={() => void handleDownloadQr(f.accessQr!.payload!, f.name)}
+                              className="rounded-lg border border-slate-300 px-2 py-1 text-[10px] font-bold dark:border-slate-600"
+                            >
+                              PNG
+                            </button>
+                            <button
+                              type="button"
+                              disabled={accessQrBusy}
+                              onClick={() => void handleFamilyQr(f.id, f.userId ? "permanent" : "temp")}
+                              className="rounded-lg border border-slate-300 px-2 py-1 text-[10px] font-bold dark:border-slate-600"
+                            >
+                              Renovar
+                            </button>
+                            <button
+                              type="button"
+                              disabled={accessQrBusy}
+                              onClick={async () => {
+                                if (!confirm(`¿Revocar QR de ${f.name}?`)) return;
+                                try {
+                                  setAccessQrBusy(true);
+                                  await api(`/api/residents/me/family/${f.id}/qr/revoke`, { method: "POST" });
+                                  await load();
+                                } catch (err) {
+                                  alert(err instanceof Error ? err.message : "No se pudo revocar");
+                                } finally {
+                                  setAccessQrBusy(false);
+                                }
+                              }}
+                              className="rounded-lg bg-rose-600 px-2 py-1 text-[10px] font-bold text-white"
+                            >
+                              Revocar
+                            </button>
+                          </div>
+                          {f.userId ? (
+                            <p className="text-center text-[10px] text-slate-500">
+                              También lo ve en su portal / app
+                            </p>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <div className="flex flex-wrap gap-1.5">
+                          <button
+                            type="button"
+                            disabled={accessQrBusy}
+                            onClick={() => void handleFamilyQr(f.id, "temp")}
+                            className="rounded-lg bg-slate-900 px-2.5 py-1.5 text-[10px] font-bold text-white dark:bg-white dark:text-slate-900"
+                          >
+                            QR {visitAuthDefaultHours} h
+                          </button>
+                          {f.userId || f.dahuaSynced ? (
+                            <button
+                              type="button"
+                              disabled={accessQrBusy}
+                              onClick={() => void handleFamilyQr(f.id, "permanent")}
+                              className="rounded-lg border border-slate-300 px-2.5 py-1.5 text-[10px] font-bold dark:border-slate-600"
+                            >
+                              QR permanente
+                            </button>
+                          ) : null}
+                        </div>
+                      )}
+                    </div>
+                  ) : null}
                 </div>
               ))}
             </div>

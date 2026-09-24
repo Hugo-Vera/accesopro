@@ -828,6 +828,7 @@ export const MANUAL_CHAPTERS: ManualChapter[] = [
             rows: [
               ["QR en el lector", "QR nativo del ASI (pack dahua.qr)"],
               ["QR de visita", "Pase del portal; identifica, no abre solo (módulo Visitas)"],
+              ["Mi QR de acceso", "own_/fam_ del titular o familiar; abre solo; backup de cara"],
               ["Abrir barreras", "Relé AccesoPro cableado al punto"],
               ["Abrir desde Dahua", "openDoor del terminal ASI"],
               ["Fichadas", "Asistencia del personal en el dashboard; pide grant y módulo"],
@@ -837,6 +838,58 @@ export const MANUAL_CHAPTERS: ManualChapter[] = [
           {
             type: "note",
             text: "Intercom, parámetros de puerta y alarma de tamper están en el catálogo. El i dice si la pantalla todavía no está o si falta FreePBX en la LAN. No hace falta generar APK.",
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: "mi-qr-acceso",
+    title: "Mi QR de acceso y QR vencido",
+    updated: "24/09/2026",
+    summary:
+      "El titular y el familiar con cuenta ven Mi QR en Ficha / app. Abre solo. Familiar sin foto puede recibir un QR temporal. Un QR de visita vencido no se aprueba: toast rojo, historial y baja del ASI.",
+    sections: [
+      {
+        id: "ficha-mi-qr",
+        title: "Portal Ficha: Mi QR de acceso",
+        blocks: [
+          {
+            type: "p",
+            text: "En /portal, pestaña Ficha, bloque Mi QR de acceso (pack dahua.qr). Generá permanente o por el plazo del barrio, mostralo grande en el lector, renovar o revocar. No es el QR de Visitas y QR.",
+          },
+          {
+            type: "ul",
+            items: [
+              "Titular y familiar adulto con cuenta: cada uno ve el suyo al entrar al portal o a la app (card Mi QR)",
+              "Si la cara falla, este QR es el backup: abre solo",
+              "Portería puede escanearlo en web o app: abre la barrera sin cola de visita",
+            ],
+          },
+        ],
+      },
+      {
+        id: "familia-emitir-qr",
+        title: "Familia: emitir QR",
+        blocks: [
+          {
+            type: "p",
+            text: "En pestaña Familia, por miembro: QR temporal (plazo del barrio) o permanente si tiene cuenta o facial. Si el familiar ya tiene app, no hace falta mandar PNG por WhatsApp: lo ve en su portal.",
+          },
+        ],
+      },
+      {
+        id: "visita-vencida",
+        title: "QR de visita vencido",
+        blocks: [
+          {
+            type: "ul",
+            items: [
+              "Toast rojo con el rango de fechas; no pide aprobar",
+              "status=expired; se libera v_ del ASI",
+              "Queda en historial como denegación",
+              "too_early (todavía no vale): deny sin borrar el pase del lector",
+            ],
           },
         ],
       },
