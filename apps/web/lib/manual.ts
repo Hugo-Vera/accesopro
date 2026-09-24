@@ -895,4 +895,34 @@ export const MANUAL_CHAPTERS: ManualChapter[] = [
       },
     ],
   },
+  {
+    id: "app-dni-anunciar",
+    title: "App portería: DNI sin pase",
+    updated: "24/09/2026",
+    summary:
+      "En la app, si escaneás un DNI que no tiene pase abierto, ves la identidad del PDF417 y elegís Anunciar al lote (walk-in 120 s) o Registrar visita (check-in sin ese aviso).",
+    sections: [
+      {
+        id: "flujo-app-dni",
+        title: "Qué hace el guardia",
+        blocks: [
+          {
+            type: "ul",
+            items: [
+              "Escanear QR o DNI desde la cola",
+              "Si el DNI ya está en un pase abierto: abre la ficha",
+              "Si no hay pase: pantalla Identidad leída con apellido, nombre, DNI, género, nacimiento, trámite",
+              "Anunciar al lote: elige lote; aviso 2 min al titular; después completar ficha y aprobar",
+              "Registrar visita: lote + quién autoriza; entra a cola sin 120 s; completar ficha y aprobar",
+              "QR de visita / Mi QR / vencido: mismas reglas que en web",
+            ],
+          },
+          {
+            type: "note",
+            text: "Si aparece «Este módulo no está en el plan o no está habilitado», el predio no tiene el módulo Visitas. No es un fallo del lector de DNI.",
+          },
+        ],
+      },
+    ],
+  },
 ];

@@ -103,6 +103,17 @@ data class ParsedDni(
     fun fullName(): String = "$lastName $firstName".replace(Regex("\\s+"), " ").trim()
 }
 
+data class PropertyLot(
+    val id: String,
+    val lotNumber: String,
+    val label: String,
+)
+
+data class CreateVisitResult(
+    val passId: String,
+    val approvalId: String?,
+)
+
 data class LoginResult(
     val token: String,
     val role: String,
@@ -348,6 +359,66 @@ class GuardApi(
             tramite = json.optString("tramite"),
             gender = json.optString("gender"),
             birthDate = json.optString("birthDate"),
+        )
+    }
+
+    suspend fun listProperties(): List<PropertyLot> = withContext(Dispatchers.IO) {
+        val json = get("/api/visitors/properties")
+        val arr = json.optJSONArray("properties") ?: JSONArray()
+        buildList {
+            for (i in 0 until arr.length()) {
+                val o = arr.getJSONObject(i)
+                add(
+                    PropertyLot(
+                        id = o.getString("id"),
+                        lotNumber = o.optString("lotNumber"),
+                        label = o.optString("label"),
+                    ),
+                )
+            }
+        }
+    }
+
+    suspend fun announceVisit(propertyId: String, guestName: String?, guestDni: String?): CreateVisitResult =
+        withContext(Dispatchers.IO) {
+            val body = JSONObject().put("propertyId", propertyId)
+            if (!guestName.isNullOrBlank()) body.put("guestName", guestName)
+            if (!guestDni.isNullOrBlank()) body.put("guestDni", guestDni)
+            val json = post("/api/visitors/announce", body)
+            CreateVisitResult(
+                passId = json.optString("passId"),
+                approvalId = json.optString("approvalId").ifBlank { null },
+            )
+        }
+
+    /** Check-in mínimo (identidad + lote + quién autoriza). Docs van en la ficha. */
+    suspend fun checkinVisit(
+        parsed: ParsedDni,
+        propertyId: String,
+        authorizedBy: String,
+        rawPdf417: String? = null,
+    ): CreateVisitResult = withContext(Dispatchers.IO) {
+        val identity = JSONObject()
+            .put("dniNumber", parsed.dni)
+            .put("lastName", parsed.lastName.ifBlank { "—" })
+            .put("firstName", parsed.firstName.ifBlank { "—" })
+        if (parsed.tramite.isNotBlank()) identity.put("tramiteNumber", parsed.tramite)
+        if (parsed.gender.isNotBlank()) identity.put("gender", parsed.gender)
+        if (parsed.birthDate.isNotBlank()) identity.put("birthDate", parsed.birthDate)
+        if (!rawPdf417.isNullOrBlank()) identity.put("rawPdf417", rawPdf417)
+        val destination = JSONObject()
+            .put("propertyId", propertyId)
+            .put("authorizedBy", authorizedBy.trim())
+        val body = JSONObject()
+            .put("identity", identity)
+            .put("destination", destination)
+            .put("isVehicular", false)
+            .put("arrivalMode", "peatonal")
+            .put("accessMethod", "qr")
+        val json = post("/api/visitors/checkin", body)
+        CreateVisitResult(
+            passId = json.optString("passId"),
+            approvalId = json.optString("approvalId").ifBlank { null },
         )
     }
 

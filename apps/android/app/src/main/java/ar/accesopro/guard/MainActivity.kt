@@ -203,6 +203,9 @@ fun GuardApp(prefs: android.content.SharedPreferences) {
     var census by remember { mutableStateOf<CensusSnapshot?>(null) }
     var scanOpen by remember { mutableStateOf(false) }
     var pendingScan by remember { mutableStateOf<String?>(null) }
+    var pendingParsedDni by remember { mutableStateOf<ParsedDni?>(null) }
+    var dniVisitMode by remember { mutableStateOf<DniVisitMode?>(null) }
+    var pendingScanRaw by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val api = remember(baseUrl, cloudUrl, token) { GuardApi(baseUrl, cloudUrl, token) }
 
@@ -309,10 +312,12 @@ fun GuardApp(prefs: android.content.SharedPreferences) {
                             "Acceso propio: ${result.personName}. ${if (result.actuatorsFired.isNotEmpty()) "Barrera abierta." else "Relé disparado."}"
                     }
                     is ScanQrResult.Denied -> {
-                        error = if (parsed != null) {
-                            "DNI ${parsed.dni} leído. Escaneá el QR de la visita para abrir la ficha."
+                        if (parsed != null) {
+                            pendingParsedDni = parsed
+                            pendingScanRaw = pendingRaw
+                            error = null
                         } else {
-                            result.message
+                            error = result.message
                         }
                     }
                 }
@@ -321,6 +326,50 @@ fun GuardApp(prefs: android.content.SharedPreferences) {
             isLoading = false
         }
         IdentifyingScanScreen(onCancel = { pendingScan = null })
+        return
+    }
+    val parsedPending = pendingParsedDni
+    val lotMode = dniVisitMode
+    if (parsedPending != null && lotMode != null) {
+        LotPickerScreen(
+            mode = lotMode,
+            parsed = parsedPending,
+            api = api,
+            rawPdf417 = pendingScanRaw,
+            onDone = { result ->
+                scope.launch {
+                    isLoading = true
+                    runCatching {
+                        items = api.listApprovals()
+                        selected = items.find { it.id == result.approvalId }
+                            ?: items.find { it.passId == result.passId }
+                            ?: items.firstOrNull()
+                        pendingParsedDni = null
+                        dniVisitMode = null
+                        pendingScanRaw = null
+                        error = null
+                    }.onFailure { error = it.message }
+                    isLoading = false
+                }
+            },
+            onBack = { dniVisitMode = null },
+            onError = { error = it },
+        )
+        return
+    }
+    if (parsedPending != null) {
+        DniIdentityScreen(
+            parsed = parsedPending,
+            busy = isLoading,
+            error = error,
+            onAnnounce = { dniVisitMode = DniVisitMode.Announce },
+            onCheckin = { dniVisitMode = DniVisitMode.Checkin },
+            onCancel = {
+                pendingParsedDni = null
+                pendingScanRaw = null
+                error = null
+            },
+        )
         return
     }
     if (role == "resident") {
@@ -518,7 +567,7 @@ fun GuardApp(prefs: android.content.SharedPreferences) {
                             style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
                         )
                         Text(
-                            text = "Cuando escaneen un QR en la garita, o escanealo vos desde la app, la ficha aparecerá aquí.",
+                            text = "Escaneá el QR de la visita, o el DNI del PDF417. Si no hay pase, podés anunciar al lote o registrar la visita.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.padding(horizontal = 24.dp),
@@ -531,7 +580,7 @@ fun GuardApp(prefs: android.content.SharedPreferences) {
                         ) {
                             Icon(Icons.Default.Add, contentDescription = null)
                             Spacer(Modifier.width(8.dp))
-                            Text("Escanear QR de visita", style = MaterialTheme.typography.labelLarge)
+                            Text("Escanear QR o DNI", style = MaterialTheme.typography.labelLarge)
                         }
                     }
                 }
@@ -616,21 +665,23 @@ fun GuardApp(prefs: android.content.SharedPreferences) {
                                                 style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
                                             )
                                         }
-                                        if (row.reason == "expired") {
                                             Text(
-                                                text = "Pase vencido",
-                                                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                                                color = MaterialTheme.colorScheme.error,
+                                                text = when {
+                                                    row.reason == "expired" -> "Pase vencido"
+                                                    row.reason == "walk_in" -> "Walk-in · espera titular (2 min)"
+                                                    row.reason == "incomplete" || row.missing.isNotEmpty() -> "Ficha incompleta · completar y aprobar"
+                                                    else -> "En cola · completar y aprobar"
+                                                },
+                                                style = MaterialTheme.typography.bodySmall.copy(
+                                                    fontWeight = if (row.reason == "expired" || row.reason == "walk_in") FontWeight.Bold else FontWeight.Normal,
+                                                ),
+                                                color = when {
+                                                    row.reason == "expired" -> MaterialTheme.colorScheme.error
+                                                    row.reason == "walk_in" -> MaterialTheme.colorScheme.tertiary
+                                                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                                },
                                                 modifier = Modifier.padding(top = 2.dp),
                                             )
-                                        } else {
-                                            Text(
-                                                text = if (row.reason == "walk_in") "Walk-in · espera titular" else "QR presentado · espera aprobación",
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                                modifier = Modifier.padding(top = 2.dp),
-                                            )
-                                        }
                                     }
                                     Surface(
                                         shape = RoundedCornerShape(8.dp),
@@ -1916,6 +1967,46 @@ fun ApprovalDetail(
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
+            if (item.reason == "walk_in") {
+                Surface(
+                    color = MaterialTheme.colorScheme.tertiaryContainer,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp),
+                    ) {
+                        Text(
+                            "Walk-in · espera al titular",
+                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.onTertiaryContainer,
+                        )
+                        Text(
+                            when (item.ownerAuthStatus) {
+                                "owner_approved" -> "El titular ya autorizó. Completá la ficha y aprobá."
+                                "pending_owner" -> "Aviso al lote por 2 minutos. Si no responde, pedí autorización telefónica con el código de guardia."
+                                else -> "Completá identidad y documentos. No se abre hasta que el titular autorice."
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onTertiaryContainer,
+                        )
+                    }
+                }
+            } else if (item.reason != "expired" && item.reason != "incomplete") {
+                Surface(
+                    color = MaterialTheme.colorScheme.secondaryContainer,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Text(
+                        "Visita en cola. Completá identidad y documentos; después Aprobar y abrir.",
+                        modifier = Modifier.padding(14.dp),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    )
+                }
+            }
             if (item.reason == "expired" || item.missing.isNotEmpty() || item.goodsAlert || item.expiredDocs.isNotEmpty()) {
                 Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                     if (item.reason == "expired") {
@@ -2054,21 +2145,33 @@ fun ApprovalDetail(
                     verticalArrangement = Arrangement.spacedBy(14.dp)
                 ) {
                     Text(
-                        text = "IDENTIFICACIÓN DEL VISITANTE",
+                        text = "IDENTIDAD",
                         style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold, letterSpacing = 1.2.sp),
                         color = MaterialTheme.colorScheme.primary
                     )
+                    Text(
+                        text = "Lote ${item.lotNumber ?: "—"} · ${item.ownerName.ifBlank { "Sin titular en ficha" }}",
+                        style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
+                    )
+                    if (!item.ownerPhone.isNullOrBlank()) {
+                        Text(
+                            text = "Tel. lote: ${item.ownerPhone}",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     if (!item.qrHint.isNullOrBlank() || !item.scanChannelLabel.isNullOrBlank()) {
                         Text(
                             text = buildString {
-                                if (!item.qrHint.isNullOrBlank()) append("QR que lo acredita: ${item.qrHint}")
+                                if (!item.qrHint.isNullOrBlank()) append("QR: ${item.qrHint}")
                                 if (!item.scanChannelLabel.isNullOrBlank()) {
-                                    if (isNotEmpty()) append("\n")
-                                    append("Leído en ${item.scanChannelLabel}")
+                                    if (isNotEmpty()) append(" · ")
+                                    append(item.scanChannelLabel)
                                     if (!item.scannedByName.isNullOrBlank()) append(" · ${item.scannedByName}")
                                 }
                             },
                             style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                     if (item.laneMismatch) {
@@ -2082,7 +2185,7 @@ fun ApprovalDetail(
                     OutlinedTextField(
                         value = guestName,
                         onValueChange = { guestName = it },
-                        label = { Text("Nombre") },
+                        label = { Text("Nombre y apellido") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp)
@@ -2091,7 +2194,7 @@ fun ApprovalDetail(
                     OutlinedTextField(
                         value = dni,
                         onValueChange = { dni = it },
-                        label = { Text("Número de DNI") },
+                        label = { Text("DNI") },
                         leadingIcon = {
                             Icon(Icons.Default.AccountBox, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
                         },

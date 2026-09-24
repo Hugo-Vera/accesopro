@@ -1436,10 +1436,13 @@ visitorsApi.post("/visitors/checkin", async (c) => {
     createdAt: now,
   });
 
+  const pending = (await listPendingApprovals(siteId)).find((x) => x.passId === passId);
+
   return c.json({
     ok: true,
     visitId,
     passId,
+    approvalId: pending?.id || null,
     passToken: token,
     qrPayload: token,
     person,
