@@ -63,6 +63,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import android.graphics.Bitmap
 import android.graphics.Color as AndroidColor
@@ -84,6 +85,34 @@ private fun qrBitmap(payload: String, size: Int = 512): Bitmap? {
             }
         }
     }.getOrNull()
+}
+
+/** Tras el check-in: el visitante le saca foto al QR con su celular y lo presenta en el lector. */
+@Composable
+private fun VisitQrDialog(payload: String, guestName: String, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("QR de la visita", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                Text(
+                    "Mostrale la pantalla al visitante para que le saque una foto. Con ese QR se identifica en el lector de entrada y de salida; vos aprobás.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                Surface(color = Color.White, shape = RoundedCornerShape(12.dp)) {
+                    AccessQrImage(payload, Modifier.padding(10.dp).size(260.dp))
+                }
+                if (guestName.isNotBlank()) Text(guestName, fontWeight = FontWeight.Bold)
+            }
+        },
+        confirmButton = {
+            Button(onClick = onDismiss, shape = RoundedCornerShape(12.dp)) { Text("Listo, ir a la ficha") }
+        },
+    )
 }
 
 @Composable
@@ -211,6 +240,7 @@ fun GuardApp(prefs: android.content.SharedPreferences) {
     var dniVisitMode by remember { mutableStateOf<DniVisitMode?>(null) }
     var pendingScanRaw by remember { mutableStateOf<String?>(null) }
     var dniHistory by remember { mutableStateOf<IdentityHistory?>(null) }
+    var visitQr by remember { mutableStateOf<Pair<String, String>?>(null) }
     var mainTab by remember { mutableStateOf("cola") }
     var capabilities by remember {
         mutableStateOf(prefs.getStringSet("capabilities", emptySet())?.toList() ?: emptyList())
@@ -309,6 +339,10 @@ fun GuardApp(prefs: android.content.SharedPreferences) {
     }
     BackHandler(enabled = backAction != null) { backAction?.invoke() }
 
+    visitQr?.let { (payload, guest) ->
+        VisitQrDialog(payload = payload, guestName = guest, onDismiss = { visitQr = null })
+    }
+
     val current = selected
     if (scanOpen) {
         BarcodeScanScreen(
@@ -370,6 +404,9 @@ fun GuardApp(prefs: android.content.SharedPreferences) {
             history = dniHistory,
             error = error,
             onDone = { result ->
+                if (!result.qrPayload.isNullOrBlank()) {
+                    visitQr = result.qrPayload to parsedPending.fullName()
+                }
                 scope.launch {
                     isLoading = true
                     runCatching {
@@ -1032,7 +1069,7 @@ fun ResidentHome(
 ) {
     var notices by remember { mutableStateOf(listOf<OwnerNotice>()) }
     var accessQr by remember { mutableStateOf<AccessQrInfo?>(null) }
-    var showMyQr by remember { mutableStateOf(false) }
+    var residentTab by remember { mutableStateOf("avisos") }
     var busy by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     LaunchedEffect(Unit) {
@@ -1042,97 +1079,8 @@ fun ResidentHome(
             delay(2000)
         }
     }
-    BackHandler(enabled = showMyQr) { showMyQr = false }
-    if (showMyQr) {
-        Scaffold(
-            topBar = {
-                TopAppBar(
-                    title = { Text("Mi QR de acceso") },
-                    navigationIcon = {
-                        IconButton(onClick = { showMyQr = false }) {
-                            Icon(Icons.Default.ArrowBack, contentDescription = "Volver")
-                        }
-                    },
-                )
-            },
-        ) { padding ->
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(padding)
-                    .padding(20.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(16.dp),
-            ) {
-                Text(
-                    "Si la cara falla, mostrá este QR en el lector o a portería. Abre solo; no es el de visitas.",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    textAlign = TextAlign.Center,
-                )
-                val payload = accessQr?.payload
-                if (accessQr?.active == true && !payload.isNullOrBlank()) {
-                    AccessQrImage(
-                        payload = payload,
-                        modifier = Modifier
-                            .size(260.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(androidx.compose.ui.graphics.Color.White)
-                            .padding(12.dp),
-                    )
-                    Text(
-                        accessQr?.validUntil?.let { "Vence $it" } ?: "Sin vencimiento",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        OutlinedButton(
-                            enabled = !busy,
-                            onClick = {
-                                scope.launch {
-                                    busy = true
-                                    runCatching {
-                                        accessQr = api.issueAccessQr()
-                                        onError("QR renovado")
-                                    }.onFailure { onError(it.message) }
-                                    busy = false
-                                }
-                            },
-                        ) { Text("Renovar") }
-                        Button(
-                            enabled = !busy,
-                            colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
-                            onClick = {
-                                scope.launch {
-                                    busy = true
-                                    runCatching {
-                                        api.revokeAccessQr()
-                                        accessQr = api.getAccessQr()
-                                        onError("QR revocado")
-                                    }.onFailure { onError(it.message) }
-                                    busy = false
-                                }
-                            },
-                        ) { Text("Revocar") }
-                    }
-                } else {
-                    Text("Todavía no tenés QR de acceso.", style = MaterialTheme.typography.titleMedium)
-                    Button(
-                        enabled = !busy,
-                        onClick = {
-                            scope.launch {
-                                busy = true
-                                runCatching { accessQr = api.issueAccessQr() }
-                                    .onFailure { onError(it.message) }
-                                busy = false
-                            }
-                        },
-                    ) { Text("Generar QR permanente") }
-                }
-            }
-        }
-        return
-    }
+    BackHandler(enabled = residentTab != "avisos") { residentTab = "avisos" }
+
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
@@ -1145,9 +1093,19 @@ fun ResidentHome(
                             color = MaterialTheme.colorScheme.primary
                         )
                         Text(
-                            if (name.isBlank()) "Portal del lote" else name,
+                            when (residentTab) {
+                                "mi_qr" -> "Mi QR de acceso"
+                                else -> if (name.isBlank()) "Portal del lote" else name
+                            },
                             style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold)
                         )
+                    }
+                },
+                navigationIcon = {
+                    if (residentTab != "avisos") {
+                        IconButton(onClick = { residentTab = "avisos" }) {
+                            Icon(Icons.Default.ArrowBack, contentDescription = "Volver")
+                        }
                     }
                 },
                 actions = {
@@ -1164,14 +1122,14 @@ fun ResidentHome(
                 tonalElevation = 3.dp,
             ) {
                 NavigationBarItem(
-                    selected = true,
-                    onClick = { },
+                    selected = residentTab == "avisos",
+                    onClick = { residentTab = "avisos" },
                     icon = { Icon(Icons.Default.Notifications, contentDescription = null) },
                     label = { Text("Avisos") },
                 )
                 NavigationBarItem(
-                    selected = false,
-                    onClick = { showMyQr = true },
+                    selected = residentTab == "mi_qr",
+                    onClick = { residentTab = "mi_qr" },
                     icon = { Icon(Icons.Default.AccountBox, contentDescription = null) },
                     label = { Text("Mi QR") },
                 )
@@ -1214,160 +1172,218 @@ fun ResidentHome(
                     }
                 }
             }
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable { showMyQr = true },
-                shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.6f)),
-            ) {
-                Row(
-                    modifier = Modifier.padding(16.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                ) {
-                    Icon(Icons.Default.AccountBox, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("Mi QR de acceso", style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold))
-                        Text(
-                            if (accessQr?.active == true) "Backup si la cara falla · Tocá para mostrar"
-                            else "Generá tu QR permanente desde acá",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    Icon(Icons.Default.KeyboardArrowRight, contentDescription = null)
-                }
-            }
-            val pending = notices.filter { it.status == "pending" }
-            if (pending.isEmpty()) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f),
-                    contentAlignment = Alignment.Center
-                ) {
+
+            when (residentTab) {
+                "mi_qr" -> {
                     Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .verticalScroll(rememberScrollState())
+                            .padding(vertical = 8.dp),
                         horizontalAlignment = Alignment.CenterHorizontally,
-                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                        verticalArrangement = Arrangement.spacedBy(16.dp),
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Notifications,
-                            contentDescription = null,
-                            modifier = Modifier.size(48.dp),
-                            tint = MaterialTheme.colorScheme.outline
-                        )
                         Text(
-                            "Sin avisos pendientes",
-                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
-                        )
-                        Text(
-                            "Cuando haya una visita en el lote, aparecerá aquí para autorizar o denegar.",
+                            "Si la cara falla, mostrá este QR en el lector o a portería. Abre solo; no es el de visitas.",
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             textAlign = TextAlign.Center,
-                            modifier = Modifier.padding(horizontal = 24.dp)
                         )
+                        val payload = accessQr?.payload
+                        if (accessQr?.active == true && !payload.isNullOrBlank()) {
+                            AccessQrImage(
+                                payload = payload,
+                                modifier = Modifier
+                                    .size(260.dp)
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(androidx.compose.ui.graphics.Color.White)
+                                    .padding(12.dp),
+                            )
+                            Text(
+                                accessQr?.validUntil?.let { "Vence $it" } ?: "Sin vencimiento",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                OutlinedButton(
+                                    enabled = !busy,
+                                    onClick = {
+                                        scope.launch {
+                                            busy = true
+                                            runCatching {
+                                                accessQr = api.issueAccessQr()
+                                                onError("QR renovado")
+                                            }.onFailure { onError(it.message) }
+                                            busy = false
+                                        }
+                                    },
+                                    shape = RoundedCornerShape(10.dp),
+                                ) { Text("Renovar") }
+                                Button(
+                                    enabled = !busy,
+                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                                    onClick = {
+                                        scope.launch {
+                                            busy = true
+                                            runCatching {
+                                                api.revokeAccessQr()
+                                                accessQr = api.getAccessQr()
+                                                onError("QR revocado")
+                                            }.onFailure { onError(it.message) }
+                                            busy = false
+                                        }
+                                    },
+                                    shape = RoundedCornerShape(10.dp),
+                                ) { Text("Revocar") }
+                            }
+                        } else {
+                            Text("Todavía no tenés QR de acceso.", style = MaterialTheme.typography.titleMedium)
+                            Button(
+                                enabled = !busy,
+                                onClick = {
+                                    scope.launch {
+                                        busy = true
+                                        runCatching { accessQr = api.issueAccessQr() }
+                                            .onFailure { onError(it.message) }
+                                        busy = false
+                                    }
+                                },
+                                shape = RoundedCornerShape(10.dp),
+                            ) { Text("Generar QR permanente") }
+                        }
                     }
                 }
-            } else {
-                LazyColumn(
-                    verticalArrangement = Arrangement.spacedBy(12.dp),
-                    modifier = Modifier.weight(1f)
-                ) {
-                    items(pending, key = { it.id }) { n ->
-                        Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(12.dp),
-                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.6f)),
+                else -> {
+                    val pending = notices.filter { it.status == "pending" }
+                    if (pending.isEmpty()) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .weight(1f),
+                            contentAlignment = Alignment.Center
                         ) {
                             Column(
-                                modifier = Modifier.padding(16.dp),
-                                verticalArrangement = Arrangement.spacedBy(10.dp)
+                                horizontalAlignment = Alignment.CenterHorizontally,
+                                verticalArrangement = Arrangement.spacedBy(12.dp)
                             ) {
+                                Icon(
+                                    imageVector = Icons.Default.Notifications,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(48.dp),
+                                    tint = MaterialTheme.colorScheme.outline
+                                )
                                 Text(
-                                    n.title,
+                                    "Sin avisos pendientes",
                                     style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
                                 )
                                 Text(
-                                    n.message,
+                                    "Cuando haya una visita en el lote, aparecerá aquí para autorizar o denegar.",
                                     style = MaterialTheme.typography.bodyMedium,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    textAlign = TextAlign.Center,
+                                    modifier = Modifier.padding(horizontal = 24.dp)
                                 )
-                                if (n.kind == "visit_qr") {
-                                    Surface(
-                                        shape = RoundedCornerShape(8.dp),
-                                        color = MaterialTheme.colorScheme.surfaceVariant,
-                                        modifier = Modifier.fillMaxWidth()
+                            }
+                        }
+                    } else {
+                        LazyColumn(
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            items(pending, key = { it.id }) { n ->
+                                Card(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    shape = RoundedCornerShape(12.dp),
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.6f)),
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(16.dp),
+                                        verticalArrangement = Arrangement.spacedBy(10.dp)
                                     ) {
                                         Text(
-                                            "Aviso informativo. Portería abre; no hace falta autorizar.",
-                                            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                            modifier = Modifier.padding(10.dp)
+                                            n.title,
+                                            style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold)
                                         )
-                                    }
-                                } else {
-                                    if (n.kind == "minors_mismatch") {
                                         Text(
-                                            "Portería marcó una diferencia de menores al salir de tu lote. Autorizá si corresponde.",
-                                            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
-                                            color = MaterialTheme.colorScheme.tertiary,
+                                            n.message,
+                                            style = MaterialTheme.typography.bodyMedium,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
-                                    }
-                                    Row(
-                                        horizontalArrangement = Arrangement.spacedBy(10.dp),
-                                        modifier = Modifier.padding(top = 4.dp)
-                                    ) {
-                                        Button(
-                                            enabled = !busy,
-                                            onClick = {
-                                                scope.launch {
-                                                    busy = true
-                                                    runCatching {
-                                                        api.decideNotice(n.id, "approved")
-                                                        notices = api.listNotices()
-                                                    }.onFailure { onError(it.message) }
-                                                    busy = false
+                                        if (n.kind == "visit_qr") {
+                                            Surface(
+                                                shape = RoundedCornerShape(8.dp),
+                                                color = MaterialTheme.colorScheme.surfaceVariant,
+                                                modifier = Modifier.fillMaxWidth()
+                                            ) {
+                                                Text(
+                                                    "Aviso informativo. Portería abre; no hace falta autorizar.",
+                                                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    modifier = Modifier.padding(10.dp)
+                                                )
+                                            }
+                                        } else {
+                                            if (n.kind == "minors_mismatch") {
+                                                Text(
+                                                    "Portería marcó una diferencia de menores al salir de tu lote. Autorizá si corresponde.",
+                                                    style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Bold),
+                                                    color = MaterialTheme.colorScheme.tertiary,
+                                                )
+                                            }
+                                            Row(
+                                                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                                                modifier = Modifier.padding(top = 4.dp)
+                                            ) {
+                                                Button(
+                                                    enabled = !busy,
+                                                    onClick = {
+                                                        scope.launch {
+                                                            busy = true
+                                                            runCatching {
+                                                                api.decideNotice(n.id, "approved")
+                                                                notices = api.listNotices()
+                                                            }.onFailure { onError(it.message) }
+                                                            busy = false
+                                                        }
+                                                    },
+                                                    shape = RoundedCornerShape(10.dp),
+                                                    modifier = Modifier.weight(1f)
+                                                ) {
+                                                    Text("Autorizar", fontWeight = FontWeight.Bold)
                                                 }
-                                            },
-                                            shape = RoundedCornerShape(10.dp),
-                                            modifier = Modifier.weight(1f)
-                                        ) {
-                                            Text("Autorizar", fontWeight = FontWeight.Bold)
-                                        }
-                                        OutlinedButton(
-                                            enabled = !busy,
-                                            onClick = {
-                                                scope.launch {
-                                                    busy = true
-                                                    runCatching {
-                                                        api.decideNotice(n.id, "denied")
-                                                        notices = api.listNotices()
-                                                    }.onFailure { onError(it.message) }
-                                                    busy = false
+                                                OutlinedButton(
+                                                    enabled = !busy,
+                                                    onClick = {
+                                                        scope.launch {
+                                                            busy = true
+                                                            runCatching {
+                                                                api.decideNotice(n.id, "denied")
+                                                                notices = api.listNotices()
+                                                            }.onFailure { onError(it.message) }
+                                                            busy = false
+                                                        }
+                                                    },
+                                                    shape = RoundedCornerShape(10.dp),
+                                                    modifier = Modifier.weight(1f)
+                                                ) {
+                                                    Text("Denegar", fontWeight = FontWeight.Bold)
                                                 }
-                                            },
-                                            shape = RoundedCornerShape(10.dp),
-                                            modifier = Modifier.weight(1f)
-                                        ) {
-                                            Text("Denegar", fontWeight = FontWeight.Bold)
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
                     }
+                    notices.filter { it.status != "pending" && it.decidedByName != null }.take(4).forEach { n ->
+                        Text(
+                            "${if (n.status == "approved") "Autorizó" else "Denegó"} ${n.decidedByName}: ${n.title}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
-            }
-            notices.filter { it.status != "pending" && it.decidedByName != null }.take(4).forEach { n ->
-                Text(
-                    "${if (n.status == "approved") "Autorizó" else "Denegó"} ${n.decidedByName}: ${n.title}",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
             }
         }
     }
@@ -1456,10 +1472,10 @@ fun CensusScreen(
                     horizontalArrangement = Arrangement.spacedBy(10.dp),
                     modifier = Modifier.fillMaxWidth()
                 ) {
-                    MetricCardLegacy("En predio", "${snapshot.total}", Modifier.weight(1f))
-                    MetricCardLegacy("Lotes", "${snapshot.lotsWithPeople}", Modifier.weight(1f))
-                    MetricCardLegacy("Adultos", "${snapshot.adults}", Modifier.weight(1f))
-                    MetricCardLegacy("Menores", "${snapshot.minors}", Modifier.weight(1f), alert = snapshot.minors > 0)
+                    MetricCard("En predio", "${snapshot.total}", Modifier.weight(1f))
+                    MetricCard("Lotes", "${snapshot.lotsWithPeople}", Modifier.weight(1f))
+                    MetricCard("Adultos", "${snapshot.adults}", Modifier.weight(1f))
+                    MetricCard("Menores", "${snapshot.minors}", Modifier.weight(1f), alert = snapshot.minors > 0)
                 }
 
                 Text(
@@ -1555,41 +1571,7 @@ fun CensusScreen(
     }
 }
 
-@Composable
-private fun MetricCardLegacy(
-    title: String,
-    value: String,
-    modifier: Modifier = Modifier,
-    alert: Boolean = false,
-) {
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(12.dp),
-        color = if (alert) MaterialTheme.colorScheme.secondaryContainer
-        else MaterialTheme.colorScheme.surface,
-        border = BorderStroke(
-            1.dp,
-            if (alert) MaterialTheme.colorScheme.secondary.copy(alpha = 0.5f)
-            else MaterialTheme.colorScheme.outline.copy(alpha = 0.6f),
-        ),
-    ) {
-        Column(
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 14.dp),
-            verticalArrangement = Arrangement.spacedBy(2.dp)
-        ) {
-            Text(
-                text = value,
-                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
-                color = if (alert) MaterialTheme.colorScheme.onSecondaryContainer else MaterialTheme.colorScheme.onSurface,
-            )
-            Text(
-                text = title,
-                style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
-                color = if (alert) MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.8f) else MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
-    }
-}
+
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

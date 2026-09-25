@@ -92,7 +92,7 @@ fun ApprovalDetail(
     var guestName by remember(item.id) { mutableStateOf(item.guestName) }
     var dniMatch by remember { mutableStateOf("") }
     var visitKind by remember(item.id) { mutableStateOf(item.visitKind.ifBlank { "social" }) }
-    var arrivalMode by remember(item.id) { mutableStateOf(item.arrivalMode) }
+    var arrivalMode by remember(item.id) { mutableStateOf(if (item.arrivalMode == "vehiculo") "vehiculo" else "peatonal") }
     val req = docRequirements(visitKind, arrivalMode)
     val pages = remember(out, req) {
         buildList {
@@ -148,9 +148,10 @@ fun ApprovalDetail(
     var localError by remember { mutableStateOf<String?>(null) }
     var saving by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
-    val shootVeh = rememberFullCamera(onPhoto = { vehPhoto = it }, onError = { localError = it })
-    val shootLic = rememberFullCamera(onPhoto = { licPhoto = it }, onError = { localError = it })
-    val shootArt = rememberFullCamera(onPhoto = { artPhoto = it }, onError = { localError = it })
+    var docScan by remember { mutableStateOf<String?>(null) }
+    val shootVeh = { docScan = "veh" }
+    val shootLic = { docScan = "lic" }
+    val shootArt = { docScan = "art" }
     val enabled = !busy && !saving
     val artLabel = artLabelFor(visitKind)
 
@@ -264,6 +265,27 @@ fun ApprovalDetail(
             page > 0 -> pageKey = pages[page - 1]
             else -> onBack()
         }
+    }
+
+    docScan?.let { kind ->
+        DocScanScreen(
+            title = when (kind) {
+                "veh" -> "Tarjeta del seguro"
+                "lic" -> "Licencia de conducir"
+                else -> artLabel
+            },
+            onPhoto = { b64 ->
+                when (kind) {
+                    "veh" -> vehPhoto = b64
+                    "lic" -> licPhoto = b64
+                    else -> artPhoto = b64
+                }
+                docScan = null
+            },
+            onClose = { docScan = null },
+            onError = { localError = it },
+        )
+        return
     }
 
     if (scanDni) {

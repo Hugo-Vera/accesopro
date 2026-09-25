@@ -7,6 +7,7 @@ import { DniScanPanel } from "@/components/DniScanPanel";
 import { parseDniScan } from "@/lib/parseDni";
 import { DocumentScanPanel, type AcceptedDoc, visitorDocUrl } from "@/components/ops/DocumentScanPanel";
 import { Modal } from "@/components/ui/Modal";
+import { LocalQr, downloadQrPng } from "@/components/LocalQr";
 import { artLabelFor, docRequirements, isPastDay, isoDay, personInsuranceKindFor } from "@/lib/visitDocs";
 import {
   Footprints,
@@ -31,6 +32,9 @@ import {
   QrCode,
   ClipboardList,
   Shield,
+  Minus,
+  Plus,
+  Download,
 } from "lucide-react";
 
 type VisitKind = "social" | "service" | "contractor" | "delivery";
@@ -111,12 +115,17 @@ type Props = {
 
 export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Props) {
   const [docOverlay, setDocOverlay] = useState<"life" | "ins" | "lic" | null>(null);
+  const [issued, setIssued] = useState<{ qrPayload: string; guestName: string; lot: string; validUntil: string | null } | null>(null);
+  const closeModal = () => {
+    if (issued) onSuccess();
+    onClose();
+  };
   useEscapeKey(() => {
     if (docOverlay) {
       setDocOverlay(null);
       return;
     }
-    onClose();
+    closeModal();
   }, isOpen);
   // Pasos: 1 DNI, 2 Destino, 3 Modalidad, 4 Vehículo, 5 Licencia, 6 Resumen, 7 QR (sin cara)
   const [step, setStep] = useState<number>(1);
@@ -149,9 +158,10 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
   const [askLife, setAskLife] = useState(false);
 
   // Paso 3: Modalidad
-  const [arrivalMode, setArrivalMode] = useState<"peatonal" | "plataforma" | "vehiculo">("peatonal");
+  const [arrivalMode, setArrivalMode] = useState<"peatonal" | "vehiculo">("peatonal");
   const isVehicular = arrivalMode === "vehiculo";
-  const [companions, setCompanions] = useState<{ name: string; dni: string; isMinor: boolean }[]>([{ name: "", dni: "", isMinor: false }]);
+  const [companions, setCompanions] = useState<{ name: string; dni: string }[]>([{ name: "", dni: "" }]);
+  const [minorsCount, setMinorsCount] = useState(0);
 
   // Paso 4: Vehículo & Seguro Automotor Argentina
   const [plate, setPlate] = useState("");
@@ -227,6 +237,10 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
     setLicDoc(null);
     setInsOnFile(null);
     setLicOnFile(null);
+    setIssued(null);
+    setArrivalMode("peatonal");
+    setCompanions([{ name: "", dni: "" }]);
+    setMinorsCount(0);
   }, [isOpen]);
 
   // Búsqueda automática de DNI al tipear 7 u 8 dígitos
@@ -457,6 +471,7 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
       isVehicular,
       arrivalMode,
       companions: companions.filter((x) => x.name.trim()),
+      minorsCount,
       vehicle: isVehicular
         ? {
             plate: plate.toUpperCase().trim(),
@@ -502,12 +517,23 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
     };
 
     try {
-      const res = await api<{ ok: boolean; message?: string }>(withTenant("/api/visitors/checkin", tenantId), {
-        method: "POST",
-        body: JSON.stringify(payload),
-      });
+      const res = await api<{ ok: boolean; message?: string; qrPayload?: string; validUntil?: string }>(
+        withTenant("/api/visitors/checkin", tenantId),
+        {
+          method: "POST",
+          body: JSON.stringify(payload),
+        }
+      );
 
-      if (res.ok) {
+      if (res.ok && res.qrPayload) {
+        const lot = properties.find((p) => p.id === propertyId);
+        setIssued({
+          qrPayload: res.qrPayload,
+          guestName: `${firstName} ${lastName}`.trim(),
+          lot: lot ? `Lote ${lot.lotNumber}` : "",
+          validUntil: res.validUntil ?? null,
+        });
+      } else if (res.ok) {
         onSuccess();
         onClose();
       }
@@ -527,7 +553,7 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
   if (!isOpen) return null;
 
   return (
-    <Modal open={isOpen} onClose={onClose} size="lg" closeOnEscape={false} panelClassName="p-6" labelledBy="ap-checkin-title">
+    <Modal open={isOpen} onClose={closeModal} size="lg" closeOnEscape={false} panelClassName="p-6" labelledBy="ap-checkin-title">
         {/* Cabecera del Modal */}
         <div className="flex items-center justify-between border-b border-slate-200 dark:border-slate-800 pb-4">
           <div className="flex items-center gap-2.5">
@@ -545,7 +571,8 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
           </div>
           <button
             type="button"
-            onClick={onClose}
+            onClick={closeModal}
+            aria-label="Cerrar"
             className="rounded-lg p-1 text-slate-400 hover:bg-slate-100 hover:text-slate-600 dark:hover:bg-slate-800 dark:hover:text-slate-200"
           >
             <X className="h-5 w-5" />
@@ -880,14 +907,13 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
                 </label>
                 <div className="space-y-2">
                   {companions.length > 0 ? (
-                    <div className="grid grid-cols-[1fr_1fr_auto] gap-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
+                    <div className="grid grid-cols-2 gap-2 text-[10px] font-semibold uppercase tracking-wider text-slate-500">
                       <span>Nombre</span>
                       <span>DNI</span>
-                      <span>Menor</span>
                     </div>
                   ) : null}
                   {companions.map((row, i) => (
-                    <div key={i} className="grid grid-cols-[1fr_1fr_auto] gap-2">
+                    <div key={i} className="grid grid-cols-2 gap-2">
                       <input
                         value={row.name}
                         onChange={(e) =>
@@ -904,24 +930,41 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
                         aria-label={`DNI acompañante ${i + 1}`}
                         className="rounded-lg border border-slate-300 bg-white px-2 py-1.5 text-xs dark:border-slate-700 dark:bg-slate-950 dark:text-white"
                       />
-                      <label className="flex items-center gap-1 text-[11px]">
-                        <input
-                          type="checkbox"
-                          checked={row.isMinor}
-                          onChange={(e) =>
-                            setCompanions((prev) => prev.map((p, j) => (j === i ? { ...p, isMinor: e.target.checked } : p)))
-                          }
-                        />
-                        Menor
-                      </label>
                     </div>
                   ))}
                   <button
                     type="button"
-                    onClick={() => setCompanions((prev) => [...prev, { name: "", dni: "", isMinor: false }])}
-                    className="text-[11px] font-bold text-blue-600"
+                    onClick={() => setCompanions((prev) => [...prev, { name: "", dni: "" }])}
+                    className="text-[11px] font-bold text-blue-600 dark:text-blue-400"
                   >
                     Agregar acompañante
+                  </button>
+                </div>
+              </div>
+
+              <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-950">
+                <div>
+                  <p className="text-xs font-semibold text-slate-700 dark:text-slate-300">Menores</p>
+                  <p className="text-[10px] text-slate-500 dark:text-slate-400">Solo la cantidad, sin nombre ni DNI. En la salida se contrasta.</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setMinorsCount((n) => Math.max(0, n - 1))}
+                    disabled={minorsCount === 0}
+                    aria-label="Un menor menos"
+                    className="grid h-8 w-8 place-items-center rounded-lg border border-slate-300 text-slate-700 disabled:opacity-40 dark:border-slate-600 dark:text-slate-200"
+                  >
+                    <Minus className="h-4 w-4" />
+                  </button>
+                  <span className="w-6 text-center font-mono text-sm font-bold text-slate-900 dark:text-white">{minorsCount}</span>
+                  <button
+                    type="button"
+                    onClick={() => setMinorsCount((n) => Math.min(20, n + 1))}
+                    aria-label="Un menor más"
+                    className="grid h-8 w-8 place-items-center rounded-lg border border-slate-300 text-slate-700 dark:border-slate-600 dark:text-slate-200"
+                  >
+                    <Plus className="h-4 w-4" />
                   </button>
                 </div>
               </div>
@@ -951,7 +994,7 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
                 </p>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 max-w-3xl mx-auto">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-2xl mx-auto">
                 <button
                   type="button"
                   onClick={() => setArrivalMode("peatonal")}
@@ -966,25 +1009,7 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
                   </div>
                   <p className="font-bold text-sm">A pie</p>
                   <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
-                    Ingreso peatonal. No hace falta seguro de auto.
-                  </p>
-                </button>
-
-                <button
-                  type="button"
-                  onClick={() => setArrivalMode("plataforma")}
-                  className={`p-5 rounded-2xl border-2 text-center transition-all ${
-                    arrivalMode === "plataforma"
-                      ? "border-blue-600 bg-blue-50/70 dark:bg-blue-950/40 text-blue-900 dark:text-blue-200 shadow-md"
-                      : "border-slate-200 hover:border-slate-300 dark:border-slate-800 dark:bg-slate-950/50 text-slate-700 dark:text-slate-300"
-                  }`}
-                >
-                  <div className="grid h-12 w-12 place-items-center rounded-xl bg-slate-100 dark:bg-slate-800 mx-auto text-slate-600 dark:text-slate-200 mb-3">
-                    <Car className="h-6 w-6" />
-                  </div>
-                  <p className="font-bold text-sm">Traslado por plataforma</p>
-                  <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
-                    Remís o app de viaje. El auto no entra; se trata como peatonal.
+                    Ingreso peatonal (también remís o app de viaje: el auto no entra). No hace falta seguro de auto.
                   </p>
                 </button>
 
@@ -1340,6 +1365,20 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
                   </span>
                 </div>
 
+                {companions.some((x) => x.name.trim()) || minorsCount > 0 ? (
+                  <div className="py-2.5">
+                    <p className="text-[10px] font-bold text-slate-500 uppercase">Acompañantes</p>
+                    <p className="text-[11px] text-slate-700 dark:text-slate-300">
+                      {[
+                        ...companions.filter((x) => x.name.trim()).map((x) => `${x.name.trim()}${x.dni.trim() ? ` (${x.dni.trim()})` : ""}`),
+                        minorsCount > 0 ? `${minorsCount} menor${minorsCount === 1 ? "" : "es"}` : "",
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </p>
+                  </div>
+                ) : null}
+
                 {lifeDoc && lifeValidUntil ? (
                   <div className="py-2.5 flex items-center justify-between">
                     <div>
@@ -1390,7 +1429,37 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
             </div>
           )}
 
-          {step === 7 && (
+          {step === 7 && issued && (
+            <div className="space-y-3 text-center animate-in fade-in">
+              <span className="text-xs font-bold text-emerald-700 dark:text-emerald-400 uppercase tracking-wider">
+                Visita registrada · QR de acceso
+              </span>
+              <p className="text-[12px] text-slate-600 dark:text-slate-400">
+                Mostrale la pantalla al visitante para que le saque una foto con el celular. Con ese QR se identifica en el lector de entrada y de salida; portería aprueba.
+              </p>
+              <div className="mx-auto w-fit rounded-2xl border border-slate-200 bg-white p-4 shadow-sm dark:border-slate-700">
+                <LocalQr payload={issued.qrPayload} size={300} alt={`QR de ${issued.guestName}`} />
+              </div>
+              <div>
+                <p className="text-sm font-bold text-slate-900 dark:text-white">{issued.guestName}</p>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                  {[issued.lot, issued.validUntil ? `vale hasta ${new Date(issued.validUntil).toLocaleString("es-AR", { dateStyle: "short", timeStyle: "short" })}` : ""]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => void downloadQrPng(issued.qrPayload, `qr-visita-${dniNumber || "visita"}`)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-[11px] font-bold text-slate-700 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-200"
+              >
+                <Download className="h-3.5 w-3.5" />
+                Descargar PNG
+              </button>
+            </div>
+          )}
+
+          {step === 7 && !issued && (
             <div className="space-y-4 animate-in fade-in">
               <span className="text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider">
                 Acceso de la visita
@@ -1401,13 +1470,27 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
               <div className="rounded-xl border border-blue-200 bg-blue-50/70 p-3 dark:border-blue-900 dark:bg-blue-950/30">
                 <QrCode className="mb-1 h-5 w-5 text-blue-600 dark:text-blue-400" />
                 <p className="text-xs font-bold text-slate-900 dark:text-white">Código QR</p>
-                <p className="text-[10px] text-slate-500">No enrolamos la cara del invitado en el lector: si no, el ASI abriría sin el guardia.</p>
+                <p className="text-[10px] text-slate-500">
+                  Al registrar aparece el QR en pantalla para que el visitante le saque una foto. No enrolamos la cara del invitado en el lector: si no, el ASI abriría sin el guardia.
+                </p>
               </div>
             </div>
           )}
         </div>
 
         {/* Botones de Navegación del Wizard */}
+        {issued ? (
+          <div className="mt-6 flex items-center justify-end border-t border-slate-200 dark:border-slate-800 pt-4">
+            <button
+              type="button"
+              onClick={closeModal}
+              className="inline-flex items-center gap-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 px-6 py-2 text-xs font-bold text-white shadow-md transition-colors"
+            >
+              <CheckCircle2 className="h-4 w-4" />
+              <span>Listo</span>
+            </button>
+          </div>
+        ) : (
         <div className="mt-6 flex items-center justify-between border-t border-slate-200 dark:border-slate-800 pt-4">
           <button
             type="button"
@@ -1439,6 +1522,7 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
             </button>
           )}
         </div>
+        )}
     </Modal>
   );
 }

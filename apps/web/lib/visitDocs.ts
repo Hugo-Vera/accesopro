@@ -20,7 +20,6 @@ export const VISIT_KINDS = [
 
 export const ARRIVAL_MODES = [
   { id: "peatonal", label: "A pie" },
-  { id: "plataforma", label: "Plataforma" },
   { id: "vehiculo", label: "Vehículo" },
 ] as const;
 

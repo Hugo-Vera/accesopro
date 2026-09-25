@@ -1127,6 +1127,8 @@ export type VisitorCheckinPayload = {
   };
   arrivalMode?: "peatonal" | "plataforma" | "vehiculo";
   companions?: { name?: string; dni?: string; birthDate?: string; isMinor?: boolean; situation?: string }[];
+  /** Menores: solo cantidad (sin nombre ni DNI); se contrasta en la salida. */
+  minorsCount?: number;
   /** Visita = QR + guardia. Cara de invitado no se enrola en el ASI. */
   accessMethod?: "qr";
   /** Seguro de vida / ART de la persona (no el del auto). */
@@ -1426,6 +1428,9 @@ visitorsApi.post("/visitors/checkin", async (c) => {
         comment: `Autorizó verbalmente: ${body.destination.authorizedBy.trim()}`,
       })
       .where(eq(guardApprovals.id, hold.approvalId));
+    if (typeof body.minorsCount === "number" && body.minorsCount > 0) {
+      await setApprovalMinorsCount({ siteId, approvalId: hold.approvalId, count: body.minorsCount });
+    }
   }
 
   // 5. Registrar evento en auditoría
@@ -1466,6 +1471,7 @@ visitorsApi.post("/visitors/checkin", async (c) => {
     approvalId: pending?.id || hold.approvalId || null,
     passToken: token,
     qrPayload: token,
+    validUntil: defaultUntil.toISOString(),
     person,
     vehicleId,
     insuranceId,

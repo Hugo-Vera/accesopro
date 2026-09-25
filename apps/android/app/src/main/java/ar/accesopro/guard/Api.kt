@@ -212,6 +212,7 @@ data class PropertyLot(
 data class CreateVisitResult(
     val passId: String,
     val approvalId: String?,
+    val qrPayload: String? = null,
 )
 
 data class LoginResult(
@@ -689,6 +690,7 @@ class GuardApi(
         CreateVisitResult(
             passId = json.optString("passId"),
             approvalId = json.optString("approvalId").ifBlank { null },
+            qrPayload = json.optString("qrPayload").ifBlank { null },
         )
     }
 

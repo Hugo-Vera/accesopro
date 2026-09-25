@@ -125,7 +125,7 @@ Visita: ingreso en carril 1 (`visit_passes.scanned_in_at`) y egreso en carril 2 
 | `dahua_period_slots` | Huella de horario → índice `AccessTimeSchedule` por ASI |
 | `credential_device_sync` | Enroll OK/error por lector (ingreso/salida) |
 | `visit_authorizations` | Autorización temporal (empleada, proveedor) |
-| `visit_passes` | QR de visita: vigencia, modalidad (`peatonal`/`plataforma`/`vehiculo`), estado de aprobación |
+| `visit_passes` | QR de visita: vigencia, modalidad (`peatonal`/`vehiculo`; `plataforma` legacy = peatonal), estado de aprobación |
 | `visit_companions` | Acompañantes (nombre, DNI, menor, situación) |
 | `guard_approvals` | Cola del guardia: entrada/salida, baúl, bien no registrado, walk-in |
 | `visitor_identities` | Persona filiatoria DNI (PDF417), lista negra |

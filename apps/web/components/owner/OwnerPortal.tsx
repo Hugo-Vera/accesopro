@@ -2038,14 +2038,10 @@ export function OwnerPortal() {
                 open={visitSection === "llegada"}
                 onToggle={() => setVisitSection(visitSection === "llegada" ? null : "llegada")}
               >
-                <div className="grid grid-cols-3 gap-2 text-[11px]">
+                <div className="grid grid-cols-2 gap-2 text-[11px]">
                   <label className="rounded-lg border border-slate-200 px-2 py-2 dark:border-slate-700">
                     <input type="radio" name="arrivalMode" value="peatonal" checked={visitArrival === "peatonal"} onChange={() => setVisitArrival("peatonal")} className="mr-1" />
                     A pie
-                  </label>
-                  <label className="rounded-lg border border-slate-200 px-2 py-2 dark:border-slate-700">
-                    <input type="radio" name="arrivalMode" value="plataforma" checked={visitArrival === "plataforma"} onChange={() => setVisitArrival("plataforma")} className="mr-1" />
-                    Plataforma
                   </label>
                   <label className="rounded-lg border border-slate-200 px-2 py-2 dark:border-slate-700">
                     <input type="radio" name="arrivalMode" value="vehiculo" checked={visitArrival === "vehiculo"} onChange={() => setVisitArrival("vehiculo")} className="mr-1" />

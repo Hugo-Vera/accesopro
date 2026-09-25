@@ -35,6 +35,9 @@ type ScanRes = {
   height: number;
 };
 
+/** Ticks de 180 ms con la hoja quieta antes de disparar (~1 s). */
+const AUTO_CAPTURE_TICKS = 6;
+
 function fileToBase64(file: File) {
   return new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
@@ -84,9 +87,13 @@ export function DocumentScanPanel({
   const streamRef = useRef<MediaStream | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const boxRef = useRef<DocBox | null>(null);
+  const steadyRef = useRef(0);
+  const firedRef = useRef(false);
+  const captureRef = useRef<() => void>(() => {});
   const [live, setLive] = useState(false);
   const [busy, setBusy] = useState(false);
   const [lockOn, setLockOn] = useState(false);
+  const [steady, setSteady] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [review, setReview] = useState<{
     previewUrl: string;
@@ -106,7 +113,9 @@ export function DocumentScanPanel({
     if (videoRef.current) videoRef.current.srcObject = null;
     setLive(false);
     setLockOn(false);
+    setSteady(0);
     boxRef.current = null;
+    steadyRef.current = 0;
   }
 
   useEffect(() => {
@@ -154,12 +163,29 @@ export function DocumentScanPanel({
       if (!wctx) return;
       wctx.drawImage(video, 0, 0, aw, ah);
       const img = wctx.getImageData(0, 0, aw, ah);
-      const box = detectDocBox(img.data, aw, ah, 4);
+      const raw = detectDocBox(img.data, aw, ah, 4);
+      // Una franja angosta (borde de cortina, marco de puerta) no es una hoja.
+      const box = raw && raw.w >= 0.18 && raw.h >= 0.18 ? raw : null;
+      const prevBox = boxRef.current;
       boxRef.current = box;
       setLockOn((prev) => {
         const next = Boolean(box);
         return prev === next ? prev : next;
       });
+      const still =
+        box &&
+        prevBox &&
+        Math.abs(box.x - prevBox.x) < 0.035 &&
+        Math.abs(box.y - prevBox.y) < 0.035 &&
+        Math.abs(box.w - prevBox.w) < 0.05 &&
+        Math.abs(box.h - prevBox.h) < 0.05;
+      steadyRef.current = still ? steadyRef.current + 1 : box ? 1 : 0;
+      const pct = Math.min(1, steadyRef.current / AUTO_CAPTURE_TICKS);
+      setSteady((prev) => (prev === pct ? prev : pct));
+      if (pct >= 1 && !firedRef.current) {
+        firedRef.current = true;
+        captureRef.current();
+      }
       const rect = overlay.getBoundingClientRect();
       const dpr = window.devicePixelRatio || 1;
       overlay.width = Math.max(1, Math.round(rect.width * dpr));
@@ -178,6 +204,10 @@ export function DocumentScanPanel({
       ctx.strokeStyle = "#22c55e";
       ctx.lineWidth = Math.max(3, 3 * dpr);
       ctx.strokeRect(ox + box.x * dispW, oy + box.y * dispH, box.w * dispW, box.h * dispH);
+      if (pct > 0 && pct < 1) {
+        ctx.fillStyle = "#22c55e";
+        ctx.fillRect(ox + box.x * dispW, oy + (box.y + box.h) * dispH - 6 * dpr, box.w * dispW * pct, 6 * dpr);
+      }
     };
     const id = window.setInterval(tick, 180);
     return () => window.clearInterval(id);
@@ -185,6 +215,7 @@ export function DocumentScanPanel({
 
   async function startCam() {
     setError(null);
+    firedRef.current = false;
     onOverlayChange(true);
     try {
       stopCam();
@@ -246,8 +277,10 @@ export function DocumentScanPanel({
     ctx.drawImage(video, 0, 0);
     const dataUrl = canvas.toDataURL("image/jpeg", 0.82);
     const b64 = dataUrl.split(",", 2)[1] || "";
+    firedRef.current = true;
     void sendToServer(b64, "scan", boxRef.current);
   }
+  captureRef.current = capture;
 
   async function onFile(file: File | undefined) {
     if (!file) return;
@@ -451,9 +484,13 @@ export function DocumentScanPanel({
                 <canvas ref={overlayRef} className="pointer-events-none absolute inset-0 h-full w-full" />
               </div>
               <p className="text-[10px] text-blue-800 dark:text-blue-300">
-                {lockOn
-                  ? "Hoja detectada (recuadro verde). Capturá: el servidor recorta y gira a formato página."
-                  : "Acercá la constancia. El recuadro verde aparece solo cuando ve la hoja (no es OCR)."}
+                {busy
+                  ? "Capturado. Recortando en el servidor…"
+                  : lockOn
+                    ? steady > 0.3
+                      ? "Hoja detectada. Mantenela quieta: se captura sola."
+                      : "Hoja detectada (recuadro verde)."
+                    : "Acercá la constancia. Cuando aparece el recuadro verde y queda quieta, se captura sola (no es OCR)."}
               </p>
               <button
                 type="button"

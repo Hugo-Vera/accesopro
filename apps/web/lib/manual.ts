@@ -641,7 +641,7 @@ export const MANUAL_CHAPTERS: ManualChapter[] = [
           },
           {
             type: "table",
-            headers: ["Tipo", "A pie / plataforma", "Vehículo"],
+            headers: ["Tipo", "A pie", "Vehículo"],
             rows: [
               ["Social / delivery", "DNI. Lote precargado", "+ patente + seguro con foto + licencia (vence + foto) + baúl"],
               ["Servicio / técnico", "DNI + ART o seguro de vida (vence + constancia)", "Lo anterior + ART"],
@@ -938,11 +938,11 @@ export const MANUAL_CHAPTERS: ManualChapter[] = [
         blocks: [
           {
             type: "p",
-            text: "Antes de cargar papeles, el guardia marca el tipo de visita (Social, Servicio / técnico, Contratista, Delivery) y cómo llega (A pie, Plataforma, Vehículo). En la app aparece después de elegir el lote al leer un DNI sin pase; en la ficha es el paso «Tipo de ingreso». Si la persona ya vino, se precarga lo de la última visita.",
+            text: "Antes de cargar papeles, el guardia marca el tipo de visita (Social, Servicio / técnico, Contratista, Delivery) y cómo llega (A pie o Vehículo; un remís o app de viaje cuenta como A pie porque el auto no entra). En la app aparece después de elegir el lote al leer un DNI sin pase; en la ficha es el paso «Tipo de ingreso». Si la persona ya vino, se precarga lo de la última visita.",
           },
           {
             type: "table",
-            headers: ["Tipo", "A pie / plataforma", "Vehículo"],
+            headers: ["Tipo", "A pie", "Vehículo"],
             rows: [
               ["Social / delivery", "DNI", "+ patente + seguro con foto de la tarjeta + licencia (vence + foto) + baúl"],
               ["Servicio / técnico", "DNI + ART o seguro de vida (vence + constancia)", "Lo anterior + ART"],
@@ -951,7 +951,7 @@ export const MANUAL_CHAPTERS: ManualChapter[] = [
           },
           {
             type: "note",
-            text: "Si el guardia cambia a A pie o Plataforma, se borran patente, seguro, licencia y la revisión del baúl de ingreso de ese pase.",
+            text: "Si el guardia cambia a A pie, se borran patente, seguro, licencia y la revisión del baúl de ingreso de ese pase.",
           },
         ],
       },

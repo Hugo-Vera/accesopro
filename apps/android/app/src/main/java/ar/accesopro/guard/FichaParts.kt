@@ -75,7 +75,6 @@ val VISIT_KINDS = listOf(
 
 val ARRIVAL_MODES = listOf(
     "peatonal" to "A pie",
-    "plataforma" to "Plataforma",
     "vehiculo" to "Vehículo",
 )
 

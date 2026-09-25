@@ -97,7 +97,7 @@ in_site
 
 Aprobar en app o web dispara `openDoor` **antes** de cerrar el ticket. Si el agent no pulsa, la solicitud sigue pendiente y se ve el error.
 
-Walk-up portería (`VisitorCheckinModal.tsx`): mismo `visit_passes` + hold de entrada. El wizard **no** abre barrera ni enrola cara. `visit_records.status` sigue al pase (`awaiting_entry` hasta que el guardia aprueba).
+Walk-up portería (`VisitorCheckinModal.tsx`): mismo `visit_passes` + hold de entrada. El wizard **no** abre barrera ni enrola cara. `visit_records.status` sigue al pase (`awaiting_entry` hasta que el guardia aprueba). Acompañantes con nombre/DNI; **menores solo como cantidad** (`minorsCount` → `guard_approvals.minors_count`, se contrasta en la salida). Al registrar, el modal (y la app tras el check-in) muestra el **QR del pase en pantalla** para que el visitante le saque una foto; con esa foto se identifica en el lector de entrada y salida.
 
 Walk-in desde el plano: **Anunciar visita** → aviso al portal del lote (120 s). El titular autoriza en el portal o **por teléfono**; el guardia confirma con su **código de guardia** (Usuarios) y recién ahí abre. El pase de walk-in usa el mismo `visit_auth_default_hours` del barrio (default 24 h); los 120 s son solo el TTL del aviso.
 
@@ -109,7 +109,7 @@ Egreso: baúl si hay vehículo. Bien no registrado: foto + aviso al lote; la bar
 
 Fuente: `docRequirements(visitKind, arrivalMode)` en `apps/api/src/visitHold.ts`. Espejo en `apps/web/lib/visitDocs.ts` y `apps/android/.../FichaParts.kt`. No duplicar la regla en otro lado.
 
-| Tipo | A pie / plataforma | Vehículo |
+| Tipo | A pie (incluye remís / app de viaje) | Vehículo |
 |---|---|---|
 | Social / delivery | DNI | + patente + seguro con foto de la tarjeta + licencia (vence + foto) + baúl |
 | Servicio / técnico | DNI + ART o seguro de vida (vence + constancia) | lo anterior + ART |
@@ -118,6 +118,8 @@ Fuente: `docRequirements(visitKind, arrivalMode)` en `apps/api/src/visitHold.ts`
 - El guardia elige **tipo** y **cómo llega** en la ficha (paso «Tipo de ingreso») o al leer el DNI en la app. Cambiar a un medio sin vehículo borra patente, seguro, licencia y la revisión del baúl de ingreso.
 - **Vencido no pasa**, sin excepción del titular ni autorización verbal. Seguro o licencia vencidos: **Pasar a peatonal** (`POST /api/visitors/approvals/:id/pedestrian`) y se sigue como ingreso caminando. ART vencida: solo denegar. `POST …/expired-exception` responde 410.
 - La autorización verbal cubre la espera del titular, no los documentos.
+- Medios: solo **A pie** y **Vehículo**. `plataforma` (remís) se dejó de ofrecer porque la persona igual entra caminando; la API lo sigue aceptando en pases viejos y lo trata como peatonal.
+- Fotos de constancias (seguro, licencia, ART): web (`DocumentScanPanel`) y app (`DocScan.kt`) muestran el recuadro verde cuando ven la hoja y **capturan solas** cuando queda quieta ~1 s; el botón Capturar sigue como respaldo. La API recorta al guardar.
 - **En archivo**: si la persona (por DNI) o la patente ya tienen ART, licencia o seguro cargados, la ficha los ofrece con «Usar» (`reuseId`). No se duplican filas con los mismos datos.
 - En la salida no se vuelven a pedir documentos: solo baúl, bienes y menores.
 - Faltantes que devuelve la API: `dni`, `patente`, `seguro_vehiculo`, `seguro_foto`, `licencia`, `licencia_foto`, `art`, `art_constancia`, `baul` y los vencidos `seguro_vehiculo_vencido`, `licencia_vencida`, `art_vencido`. Web y app los traducen a texto y saltan al paso.
