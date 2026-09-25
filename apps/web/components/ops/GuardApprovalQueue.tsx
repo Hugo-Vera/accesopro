@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { ArrowLeft, Baby, Bell, Check, FileCheck2, Footprints, Phone, Plus, QrCode, Trash2, X } from "lucide-react";
+import { ArrowLeft, Baby, Bell, Check, FileCheck2, Footprints, Minus, Phone, Plus, QrCode, Trash2, X } from "lucide-react";
 import { api, apiUrl, withTenant } from "@/lib/api";
 import { useEscapeKey } from "@/hooks/useEscapeKey";
 import { LiveVisitHoldToast, type VisitHoldAlert } from "@/components/ops/LiveVisitHoldToast";
@@ -10,7 +10,6 @@ import { DocumentScanPanel, type AcceptedDoc } from "@/components/ops/DocumentSc
 import {
   TrunkEditor,
   TrunkPhotoZoom,
-  TrunkSavedCard,
   trunkDraftDirty,
   trunkDraftFrom,
   type TrunkCheck,
@@ -37,6 +36,7 @@ import {
   type VisitKindId,
 } from "@/lib/visitDocs";
 import { Modal } from "@/components/ui/Modal";
+import { ExitFicha } from "@/components/ops/ExitFicha";
 
 type FichaStep = FichaPage;
 
@@ -50,12 +50,8 @@ const FICHA_LABEL: Record<FichaStep, string> = {
   summary: "Aprobar",
 };
 
-function fichaStepsOf(item: GuardApprovalItem, visitKind: string, arrivalMode: string): FichaStep[] {
+function fichaStepsOf(visitKind: string, arrivalMode: string): FichaStep[] {
   const steps: FichaStep[] = ["identity"];
-  if (item.sentido === "out") {
-    steps.push("companions", "exit", "summary");
-    return steps;
-  }
   const req = docRequirements(visitKind, arrivalMode);
   steps.push("type");
   if (req.vehicle) steps.push("vehicle");
@@ -160,7 +156,15 @@ export type GuardApprovalItem = {
   onFile?: { art: DocOnFile | null; license: DocOnFile | null; insurance: DocOnFile | null };
   trunkIn?: TrunkCheck | null;
   trunkOut?: TrunkCheck | null;
-  companions: { name: string; dni: string | null; isMinor?: boolean }[];
+  companions: { id?: string; name: string; dni: string | null; isMinor?: boolean; presence?: "in" | "out_temp" | "out" }[];
+  overstay?: boolean;
+  reentry?: boolean;
+  returns?: boolean;
+  exitPeople?: { guest: boolean; companionIds: string[]; vehicle: boolean } | null;
+  guestPresence?: "in" | "out_temp" | "out";
+  minorsOutTemp?: number;
+  trunkThisRound?: boolean;
+  verbalAuthorizedBy?: string | null;
   insurance?: {
     id?: string;
     company?: string;
@@ -225,11 +229,24 @@ function fmtWindow(v: string | number) {
   return d.toLocaleString("es-AR", { dateStyle: "short", timeStyle: "short" });
 }
 
-function windowCopy(item: GuardApprovalItem) {
-  if (item.windowState === "expired") return "Pase vencido o fuera de horario";
-  if (item.windowState === "too_early") return "Todavía no vale (temprano)";
-  if (item.windowState === "closed") return "Cerrado";
-  return "Ventana vigente";
+/** Una sola línea de estado en el encabezado de entrada, por prioridad. */
+function entryStatusLine(item: GuardApprovalItem, passExpired: boolean): { tone: "red" | "amber" | "slate"; text: string } | null {
+  if (passExpired) {
+    return item.windowState === "too_early" || item.reason === "too_early"
+      ? { tone: "red", text: `Todavía no vale: habilitado desde ${fmtWindow(item.validFrom)}` }
+      : { tone: "red", text: `Pase vencido: valía hasta ${fmtWindow(item.validUntil)}` };
+  }
+  if (item.reason === "walk_in") {
+    if (item.ownerAuthStatus === "owner_approved") return { tone: "slate", text: `Autorizó: ${item.ownerAuthorizedByName || "el lote"}` };
+    if (item.ownerAuthStatus === "owner_denied") return { tone: "red", text: `${item.ownerAuthorizedByName || "El lote"} rechazó. Denegá o llamá al lote.` };
+    if (item.ownerAuthStatus === "owner_expired") return { tone: "amber", text: "El lote no contestó. Llamá y confirmá con tu código de guardia." };
+    return { tone: "amber", text: "Avisamos al lote (2 min). La barrera la abrís vos." };
+  }
+  if (item.laneMismatch) {
+    return { tone: "amber", text: `Presentó el QR en el tótem de ${item.readerSentido === "out" ? "salida" : "ingreso"}: se trata como ingreso.` };
+  }
+  const who = item.ownerAuthorizedByName || item.verbalAuthorizedBy || (item.reason !== "preview" ? item.ownerName : null);
+  return who ? { tone: "slate", text: `Autorizó: ${who}` } : null;
 }
 
 export function GuardApprovalQueue({ tenantId, enabled }: Props) {
@@ -246,13 +263,9 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
   const [insPolicy, setInsPolicy] = useState("");
   const [insUntil, setInsUntil] = useState("");
   const [plate, setPlate] = useState("");
-  const [goodsDesc, setGoodsDesc] = useState("");
-  const [goodsPhoto, setGoodsPhoto] = useState<string | null>(null);
-  const [exitMinors, setExitMinors] = useState("");
-  const [originLot, setOriginLot] = useState("");
   const [guardCode, setGuardCode] = useState("");
   const [companionsDraft, setCompanionsDraft] = useState<{ name: string; dni: string }[]>([]);
-  const [lots, setLots] = useState<{ id: string; lotNumber: string }[]>([]);
+  const [exitOverlay, setExitOverlay] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [visitToast, setVisitToast] = useState<VisitHoldAlert | null>(null);
@@ -265,9 +278,7 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
   const [artCompany, setArtCompany] = useState("");
   const [licUntil, setLicUntil] = useState("");
   const [licNumber, setLicNumber] = useState("");
-  const [minorsOpen, setMinorsOpen] = useState(false);
-  const [minorsDraft, setMinorsDraft] = useState(1);
-  const [minorsSnapshot, setMinorsSnapshot] = useState(0);
+  const [minorsDraft, setMinorsDraft] = useState(0);
   const [visitKind, setVisitKind] = useState<VisitKindId>("social");
   const [arrivalMode, setArrivalMode] = useState<ArrivalModeId>("peatonal");
   const [insReuse, setInsReuse] = useState<string | null>(null);
@@ -280,9 +291,6 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
     if (!enabled || !tenantId) return;
     api<{ items: GuardApprovalItem[] }>(withTenant("/api/visitors/approvals", tenantId))
       .then((d) => setItems(d.items || []))
-      .catch(() => undefined);
-    api<{ properties: { id: string; lotNumber: string }[] }>(withTenant("/api/visitors/properties", tenantId))
-      .then((d) => setLots(d.properties || []))
       .catch(() => undefined);
   }, [enabled, tenantId]);
 
@@ -367,26 +375,21 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
   const passExpired = Boolean(
     current && (current.reason === "expired" || current.reason === "too_early" || current.windowState === "expired" || current.windowState === "too_early"),
   );
-  const isOut = current?.sentido === "out";
-  const req = isOut
-    ? { art: false, vehicle: Boolean(current?.needsVehicle ?? current?.needsTrunk), license: false, trunk: Boolean(current?.needsTrunk) }
-    : docRequirements(visitKind, arrivalMode);
-  const expiredDocs = !isOut ? current?.expiredDocs || [] : [];
+  const exitMode = Boolean(current && (current.sentido === "out" || current.reentry));
+  const req = docRequirements(visitKind, arrivalMode);
+  const expiredDocs = !exitMode ? current?.expiredDocs || [] : [];
   const canApprove = canDecide && !passExpired && expiredDocs.length === 0;
-  const fichaSteps = current ? fichaStepsOf(current, visitKind, arrivalMode) : [];
+  const fichaSteps = current && !exitMode ? fichaStepsOf(visitKind, arrivalMode) : [];
   const stepKey = fichaSteps[Math.min(fichaStep, Math.max(0, fichaSteps.length - 1))] ?? "identity";
-  const trunkSaved = isOut ? current?.trunkOut : current?.trunkIn;
+  const trunkSaved = current?.trunkIn;
   const artLabel = artLabelFor(visitKind);
+  const statusLine = current && !exitMode ? entryStatusLine(current, passExpired) : null;
   useEscapeKey(() => {
     if (zoom) {
       setZoom(null);
       return;
     }
-    if (minorsOpen) {
-      setMinorsDraft(minorsSnapshot);
-      setMinorsOpen(false);
-      return;
-    }
+    if (exitOverlay) return;
     if (docKind) {
       setDocKind(null);
       return;
@@ -395,13 +398,13 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
       setScanOpen(false);
       return;
     }
-    if (fichaStep > 0) {
+    if (fichaStep > 0 && !exitMode) {
       setFichaStep((n) => Math.max(0, n - 1));
       return;
     }
     setOpenId(null);
     setPreview(null);
-  }, Boolean(current) || scanOpen || Boolean(docKind) || minorsOpen || Boolean(zoom));
+  }, Boolean(current) || scanOpen || Boolean(docKind) || Boolean(zoom));
 
   useEffect(() => {
     if (!current) return;
@@ -412,20 +415,15 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
     setInsReuse(null);
     setArtReuse(null);
     setLicReuse(null);
-    setTrunkDraft(trunkDraftFrom(current.sentido === "out" ? current.trunkOut : current.trunkIn));
+    setTrunkDraft(trunkDraftFrom(current.trunkIn));
     setZoom(null);
+    setExitOverlay(false);
     setGuestDni(current.guestDni || "");
     setGuestName(current.guestName || "");
     setFichaStep(0);
     setDniMatch("idle");
     setPlate(current.patente || "");
-    setGoodsDesc(current.goodsDescription || "");
-    setExitMinors(String(current.minorsCount ?? current.minorsInCount ?? 0));
-    setMinorsDraft(
-      current.sentido === "out"
-        ? current.minorsCount ?? current.minorsInCount ?? 0
-        : current.minorsCount ?? 0,
-    );
+    setMinorsDraft(current.minorsCount ?? 0);
     setGuardCode("");
     setError(null);
     setCompanionsDraft((current.companions || []).map((x) => ({ name: x.name, dni: x.dni || "" })));
@@ -439,17 +437,16 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
     setVehDoc(null);
     setArtDoc(null);
     setLicDoc(null);
-  }, [current?.id]);
+  }, [current?.id, current?.sentido, current?.reentry]);
 
   function fichaPayload(): Record<string, unknown> {
-    if (!current) return {};
+    if (!current || exitMode) return {};
     const out: Record<string, unknown> = {
       guestDni,
       guestName,
       minorsCount: minorsDraft,
       companions: companionsDraft.filter((x) => x.name.trim()),
     };
-    if (current.sentido === "out") return out;
     out.visitKind = visitKind;
     out.arrivalMode = arrivalMode;
     if (req.vehicle) {
@@ -514,7 +511,6 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
       }),
     });
     setTrunkDraft((d) => ({ description: d.description, add: [], remove: [] }));
-    if (current.sentido === "out") setTrunkChecked(true);
   }
 
   async function decide(decision: "approved" | "denied") {
@@ -658,29 +654,6 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
     }
   }
 
-  async function saveMinors(count: number) {
-    if (!current || !canDecide) {
-      setMinorsDraft(count);
-      setMinorsOpen(false);
-      return;
-    }
-    setBusy(true);
-    setError(null);
-    try {
-      await api(withTenant(`/api/visitors/approvals/${current.id}/minors-count`, tenantId), {
-        method: "POST",
-        body: JSON.stringify({ count }),
-      });
-      setMinorsDraft(count);
-      setMinorsOpen(false);
-      load();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "No se pudo guardar los menores");
-    } finally {
-      setBusy(false);
-    }
-  }
-
   async function goNextFicha() {
     setDocKind(null);
     if (canDecide) {
@@ -784,88 +757,47 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
         closeOnEscape={false}
         labelledBy="ap-guard-ficha-title"
       >
+            {exitMode ? (
+              <ExitFicha
+                item={current}
+                tenantId={tenantId}
+                canDecide={canDecide}
+                onClose={() => {
+                  setOpenId(null);
+                  setPreview(null);
+                }}
+                onDone={() => {
+                  setOpenId(null);
+                  setPreview(null);
+                  load();
+                }}
+                onReload={load}
+                onZoom={(photos, index) => setZoom({ photos, index })}
+                onOverlayChange={setExitOverlay}
+              />
+            ) : (
+            <>
             <div className="mb-3 flex items-start justify-between">
               <div>
                 <p className="text-[10px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400">
-                  {current.sentido === "out" ? "Salida" : "Entrada"} · Lote {current.lotNumber || "—"}
+                  Entrada · Lote {current.lotNumber || "—"} · {current.ownerName}
                 </p>
                 <h3 id="ap-guard-ficha-title" className="text-lg font-bold text-slate-900 dark:text-white">{current.guestName}</h3>
                 <p className="text-xs text-slate-600 dark:text-slate-300">
                   {current.guestDni ? `DNI ${current.guestDni}` : "DNI pendiente"}
-                  {current.qrHint ? ` · QR ${current.qrHint}` : ""}
                 </p>
-                {current.scanChannelLabel ? (
-                  <p className="mt-0.5 text-[11px] text-slate-500">
-                    Leído en {current.scanChannelLabel}
-                    {current.scannedByName ? ` · ${current.scannedByName}` : ""}
-                  </p>
-                ) : null}
-                {current.laneMismatch ? (
-                  <p className="mt-0.5 text-[11px] font-semibold text-amber-800 dark:text-amber-300">
-                    Presentó el QR en el tótem de {current.readerSentido === "out" ? "salida" : "ingreso"}. Se trata como {current.sentido === "out" ? "salida" : "ingreso"} porque {current.sentido === "out" ? "ya había entrado" : "todavía no había entrado"}.
-                  </p>
-                ) : null}
-                <p className="text-xs text-slate-500">
-                  {current.reason === "expired"
-                    ? "Pase vencido o fuera de horario"
-                    : current.reason === "incomplete"
-                      ? "Faltan datos"
-                      : current.reason === "preview"
-                        ? "Todavía no pasó el QR por el lector"
-                        : current.reason === "walk_in"
-                      ? current.ownerAuthStatus === "owner_approved"
-                        ? `Autorizó ${current.ownerAuthorizedByName || "el lote"}. Completá la inspección y abrí.`
-                        : current.ownerAuthStatus === "owner_denied"
-                          ? `${current.ownerAuthorizedByName || "El lote"} rechazó. Denegá o llamá al lote.`
-                          : current.ownerAuthStatus === "owner_expired"
-                            ? "El lote no contestó a tiempo. Llamá y confirmá con tu código de guardia."
-                            : "Walk-in: avisamos al lote (2 min). La barrera la abrís vos."
-                    : current.scanChannelLabel
-                      ? `Identificado en ${current.scanChannelLabel}. El QR no abre: completá y aprobá.`
-                    : "Identificado. El QR no abre: completá y aprobá."}
-                </p>
-                <p className="mt-1 text-[11px] text-slate-600 dark:text-slate-400">
-                  {windowCopy(current)} · {fmtWindow(current.validFrom)} → {fmtWindow(current.validUntil)}
-                  {current.horaDesde && current.horaHasta ? ` · franja ${current.horaDesde}–${current.horaHasta}` : ""}
-                </p>
-                {current.reason === "walk_in" && current.ownerAuthorizedByName ? (
-                  <p className="mt-0.5 text-[11px] font-semibold text-slate-700 dark:text-slate-300">
-                    Autorizó {current.ownerAuthorizedByName}
-                  </p>
-                ) : current.reason !== "walk_in" ? (
-                  <p className="mt-0.5 text-[11px] text-slate-500">
-                    Preautorizado por el titular.{current.scanChannelLabel ? ` Lectura: ${current.scanChannelLabel}.` : " El QR solo identificó el pase."}
-                  </p>
-                ) : null}
-                {current.dwellLabel ? (
-                  <p className="mt-0.5 text-[11px] font-semibold text-slate-700 dark:text-slate-300">{current.dwellLabel}</p>
-                ) : null}
-                {canDecide ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      const next = Math.max(1, current.minorsCount || (current.sentido === "out" ? current.minorsInCount || 0 : 0) || 1);
-                      setMinorsSnapshot(minorsDraft);
-                      setMinorsDraft(next);
-                      setMinorsOpen(true);
-                    }}
-                    className="mt-2 mr-2 inline-flex items-center gap-1 rounded-lg border border-slate-300 px-2 py-1 text-[11px] font-semibold dark:border-slate-600"
+                {statusLine ? (
+                  <p
+                    className={`mt-0.5 text-[11px] font-semibold ${
+                      statusLine.tone === "red"
+                        ? "text-rose-700 dark:text-rose-300"
+                        : statusLine.tone === "amber"
+                          ? "text-amber-800 dark:text-amber-300"
+                          : "text-slate-600 dark:text-slate-300"
+                    }`}
                   >
-                    <Baby className="h-3 w-3" />
-                    {(current.minorsCount || 0) > 0 || (current.sentido === "out" && (current.minorsInCount || 0) > 0)
-                      ? `Menores · ${current.sentido === "out" ? `salen ${minorsDraft} / entraron ${current.minorsInCount || 0}` : minorsDraft || current.minorsCount || 0}`
-                      : "Menor"}
-                  </button>
-                ) : null}
-                {canDecide ? (
-                  <button
-                    type="button"
-                    onClick={() => setScanOpen(true)}
-                    className="mt-2 inline-flex items-center gap-1 rounded-lg border border-slate-300 px-2 py-1 text-[11px] font-semibold dark:border-slate-600"
-                  >
-                    <QrCode className="h-3 w-3" />
-                    Escanear QR de visita
-                  </button>
+                    {statusLine.text}
+                  </p>
                 ) : null}
               </div>
               <button type="button" onClick={() => { setOpenId(null); setPreview(null); }} className="rounded p-1 text-slate-500" aria-label="Cerrar">
@@ -935,22 +867,17 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
                 DNI
                 <input value={guestDni} onChange={(e) => setGuestDni(e.target.value)} className="mt-0.5 w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 dark:border-slate-700 dark:bg-slate-950 dark:text-white" />
               </label>
-              {current.qrHint ? (
-                <p className="col-span-2 rounded-lg border border-slate-200 bg-slate-50 px-2 py-1.5 text-[11px] font-semibold text-slate-700 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-200">
-                  QR que lo acredita: {current.qrHint}
-                </p>
-              ) : null}
               {dniMatch === "ok" ? (
                 <p className="col-span-2 text-[11px] font-semibold text-emerald-700 dark:text-emerald-400">El DNI coincide con el precargado.</p>
               ) : dniMatch === "filled" ? (
                 <p className="col-span-2 text-[11px] font-semibold text-amber-800 dark:text-amber-300">Se cargaron nombre y DNI desde el plástico.</p>
               ) : (
-                <p className="col-span-2 text-[11px] text-slate-500">Escaneá el DNI para validar el número y el nombre. Si no coinciden, se pisan los datos del plástico.</p>
+                <p className="col-span-2 text-[11px] text-slate-500">Escaneá el DNI para confirmar.</p>
               )}
               {canDecide ? (
                 <div className="col-span-2">
                   <DniScanPanel
-                    active={Boolean(current) && !scanOpen && !minorsOpen}
+                    active={Boolean(current) && !scanOpen}
                     title="Escanear DNI (cámara o pistola)"
                     onScan={(raw) => {
                       const parsed = parseDniScan(raw);
@@ -986,7 +913,7 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
                 </div>
                 <div>
                   <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">Cómo llega</p>
-                  <div className="grid grid-cols-3 gap-1.5">
+                  <div className="grid grid-cols-2 gap-1.5">
                     {ARRIVAL_MODES.map((m) => (
                       <button
                         key={m.id}
@@ -1240,8 +1167,36 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
                   <Plus className="h-3 w-3" />
                   Agregar acompañante
                 </button>
+                <div className="flex items-center justify-between gap-2 rounded-lg border border-slate-200 px-2 py-1.5 dark:border-slate-700">
+                  <div>
+                    <p className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-800 dark:text-slate-100">
+                      <Baby className="h-3.5 w-3.5" />
+                      Menores
+                    </p>
+                    <p className="text-[10px] text-slate-500">Solo la cantidad, sin nombre ni DNI. Se contrasta en la salida.</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      aria-label="Restar menor"
+                      className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-300 dark:border-slate-600 dark:text-white"
+                      onClick={() => setMinorsDraft((n) => Math.max(0, n - 1))}
+                    >
+                      <Minus className="h-4 w-4" />
+                    </button>
+                    <span className="min-w-[1.5rem] text-center text-base font-bold tabular-nums text-slate-900 dark:text-white">{minorsDraft}</span>
+                    <button
+                      type="button"
+                      aria-label="Sumar menor"
+                      className="flex h-8 w-8 items-center justify-center rounded-lg border border-slate-300 dark:border-slate-600 dark:text-white"
+                      onClick={() => setMinorsDraft((n) => Math.min(20, n + 1))}
+                    >
+                      <Plus className="h-4 w-4" />
+                    </button>
+                  </div>
+                </div>
                 <DniScanPanel
-                  active={Boolean(current) && !scanOpen && !minorsOpen}
+                  active={Boolean(current) && !scanOpen}
                   title="DNI de acompañante (cámara o pistola)"
                   onScan={(raw) => {
                     const parsed = parseDniScan(raw);
@@ -1268,176 +1223,11 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
             )
             ) : null}
 
-            {stepKey === "exit" ? (
-              <div className="space-y-2 rounded-lg border border-slate-200 p-2 dark:border-slate-700">
-                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Egreso</p>
-                <p className="text-[11px] text-slate-500">A la salida no se vuelven a pedir documentos: solo baúl, bienes y menores.</p>
-                {current.needsTrunk ? (
-                  <div className="space-y-2">
-                    <div className="grid gap-2 sm:grid-cols-2">
-                      <TrunkSavedCard
-                        tenantId={tenantId}
-                        check={current.trunkIn}
-                        title="Baúl al ingreso"
-                        onZoom={(photos, index) => setZoom({ photos, index })}
-                      />
-                      <TrunkEditor
-                        tenantId={tenantId}
-                        saved={current.trunkOut}
-                        draft={trunkDraft}
-                        onChange={setTrunkDraft}
-                        onZoom={(photos, index) => setZoom({ photos, index })}
-                        onError={setError}
-                        disabled={!canDecide}
-                        title="Baúl a la salida"
-                      />
-                    </div>
-                    <label className="flex items-center gap-2 text-[11px] font-semibold">
-                      <input type="checkbox" checked={trunkChecked} onChange={(e) => setTrunkChecked(e.target.checked)} />
-                      Baúl revisado a la salida (coincide con el ingreso)
-                    </label>
-                  </div>
-                ) : null}
-                <label className="block text-[11px] font-semibold">
-                  Descripción del bien no registrado
-                  <input
-                    value={goodsDesc}
-                    onChange={(e) => setGoodsDesc(e.target.value)}
-                    className="mt-0.5 w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
-                  />
-                </label>
-                <label className="block text-[11px] font-semibold">
-                  Foto del bien
-                  <input
-                    type="file"
-                    accept="image/*"
-                    capture="environment"
-                    className="mt-0.5 block w-full text-[11px]"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (!file) return;
-                      const reader = new FileReader();
-                      reader.onload = () => setGoodsPhoto(String(reader.result || ""));
-                      reader.readAsDataURL(file);
-                    }}
-                  />
-                </label>
-                <button
-                  type="button"
-                  disabled={busy || (!goodsDesc && !goodsPhoto)}
-                  className="rounded-lg bg-amber-600 px-2 py-1 text-[11px] font-bold text-white disabled:opacity-50"
-                  onClick={async () => {
-                    setBusy(true);
-                    try {
-                      await api(withTenant(`/api/visitors/approvals/${current.id}/goods`, tenantId), {
-                        method: "POST",
-                        body: JSON.stringify({ description: goodsDesc, photoBase64: goodsPhoto }),
-                      });
-                      load();
-                    } catch (err) {
-                      setError(err instanceof Error ? err.message : "No se pudo alertar");
-                    } finally {
-                      setBusy(false);
-                    }
-                  }}
-                >
-                  Alertar bien no registrado
-                </button>
-                {current.goodsAlert ? (
-                  <p className="text-[11px] text-amber-700 dark:text-amber-300">
-                    {current.goodsAuthorized
-                      ? "El titular autorizó el bien."
-                      : current.goodsCallReady
-                        ? "Sin respuesta: llamá al titular."
-                        : "Esperando autorización del lote. La barrera queda retenida."}
-                  </p>
-                ) : null}
-                <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 dark:border-amber-900/60 dark:bg-amber-950/30">
-                  <p className="text-[11px] font-bold text-amber-900 dark:text-amber-200">
-                    Ingresaron {current.minorsInCount ?? 0} menor(es). No hay que identificarlos: solo la cantidad.
-                  </p>
-                  <p className="mt-1 text-[11px] text-amber-800 dark:text-amber-300">Ahora salen: {minorsDraft}</p>
-                  <div className="mt-2 flex items-center gap-2">
-                    <button
-                      type="button"
-                      className="h-9 w-9 rounded-lg border border-slate-300 text-lg font-bold dark:border-slate-600"
-                      onClick={() => setMinorsDraft((n) => Math.max(0, n - 1))}
-                    >
-                      −
-                    </button>
-                    <span className="min-w-[2rem] text-center text-lg font-bold">{minorsDraft}</span>
-                    <button
-                      type="button"
-                      className="h-9 w-9 rounded-lg border border-slate-300 text-lg font-bold dark:border-slate-600"
-                      onClick={() => setMinorsDraft((n) => Math.min(20, n + 1))}
-                    >
-                      +
-                    </button>
-                    <button
-                      type="button"
-                      disabled={busy}
-                      className="rounded-lg border border-slate-300 px-2 py-1 text-[11px] font-semibold dark:border-slate-600"
-                      onClick={() => void saveMinors(minorsDraft)}
-                    >
-                      Guardar cantidad
-                    </button>
-                  </div>
-                  {minorsDraft !== (current.minorsInCount ?? 0) ? (
-                    <div className="mt-2 space-y-1">
-                      <p className="text-[11px] font-semibold text-rose-700 dark:text-rose-300">
-                        {minorsDraft > (current.minorsInCount ?? 0)
-                          ? `Salen ${minorsDraft - (current.minorsInCount ?? 0)} de más.`
-                          : `Salen menos: quedan ${(current.minorsInCount ?? 0) - minorsDraft} en el barrio.`}
-                      </p>
-                      <button
-                        type="button"
-                        disabled={busy}
-                        className="rounded-lg bg-amber-700 px-2 py-1 text-[11px] font-bold text-white disabled:opacity-50"
-                        onClick={async () => {
-                          setBusy(true);
-                          setError(null);
-                          try {
-                            await saveMinors(minorsDraft);
-                            await api(withTenant(`/api/visitors/approvals/${current.id}/minors-mismatch`, tenantId), {
-                              method: "POST",
-                            });
-                            load();
-                          } catch (err) {
-                            setError(err instanceof Error ? err.message : "No se pudo avisar al lote");
-                          } finally {
-                            setBusy(false);
-                          }
-                        }}
-                      >
-                        Marcar diferencia y avisar al lote {current.lotNumber || ""}
-                      </button>
-                      {current.minorsMismatchNotified ? (
-                        <p className="text-[11px] text-amber-800 dark:text-amber-300">
-                          Aviso enviado al lote
-                          {minorsDraft > (current.minorsInCount ?? 0) && !current.minorTransferAuthorized
-                            ? ". Esperá autorización para abrir."
-                            : "."}
-                        </p>
-                      ) : null}
-                      {current.minorTransferAuthorized ? (
-                        <p className="text-[11px] font-semibold text-emerald-700">El lote autorizó la diferencia.</p>
-                      ) : null}
-                    </div>
-                  ) : (
-                    <p className="mt-1 text-[11px] text-slate-500">La cantidad coincide con el ingreso.</p>
-                  )}
-                </div>
-              </div>
-            ) : null}
-
             {stepKey === "summary" ? (
               <div className="space-y-2 text-xs">
                 <div className="rounded-lg border border-slate-200 p-2 dark:border-slate-700">
                   <p className="font-semibold text-slate-800 dark:text-slate-100">{guestName || current.guestName}</p>
-                  <p className="text-slate-500">DNI {guestDni || current.guestDni || "—"}{current.qrHint ? ` · QR ${current.qrHint}` : ""}</p>
-                  {current.scanChannelLabel ? (
-                    <p className="text-slate-500">Lectura: {current.scanChannelLabel}{current.scannedByName ? ` · ${current.scannedByName}` : ""}</p>
-                  ) : null}
+                  <p className="text-slate-500">DNI {guestDni || current.guestDni || "—"}</p>
                   {current.approvedByName ? (
                     <p className="text-slate-500">
                       Aprobó {current.approvedByName}
@@ -1447,26 +1237,19 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
                   ) : current.phoneAuthVia === "guard_code" && current.ownerAuthorizedByName ? (
                     <p className="text-slate-500">Código de guardia: {current.ownerAuthorizedByName}</p>
                   ) : null}
-                  {!isOut ? (
-                    <p className="text-slate-500">
-                      {visitKindLabel(visitKind)} · {arrivalModeLabel(arrivalMode)}
-                    </p>
-                  ) : null}
+                  <p className="text-slate-500">
+                    {visitKindLabel(visitKind)} · {arrivalModeLabel(arrivalMode)}
+                  </p>
                   {req.vehicle ? (
                     <p className="text-slate-500">
                       Patente {plate || current.patente || "—"} · baúl{" "}
-                      {isOut
-                        ? trunkChecked || current.trunkOut
-                          ? "revisado a la salida"
-                          : "pendiente"
-                        : current.trunkIn || trunkDraftDirty(trunkDraft, current.trunkIn)
-                          ? "revisado"
-                          : "pendiente"}
+                      {current.trunkIn || trunkDraftDirty(trunkDraft, current.trunkIn) ? "revisado" : "pendiente"}
                     </p>
                   ) : (
                     <p className="text-slate-500">Ingreso sin vehículo</p>
                   )}
-                  {req.vehicle && !isOut ? (
+                  {minorsDraft > 0 ? <p className="text-slate-500">Menores: {minorsDraft}</p> : null}
+                  {req.vehicle ? (
                     <p className="text-slate-500">
                       Seguro {insReuse ? "en archivo" : `vence ${insUntil ? fmtDay(insUntil) : fmtDay(current.insurance?.validUntil)}`} · licencia{" "}
                       {licReuse ? "en archivo" : `vence ${licUntil ? fmtDay(licUntil) : fmtDay(current.license?.validUntil)}`}
@@ -1488,6 +1271,7 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
               </div>
             ) : null}
 
+            {stepKey === "summary" ? (
             <div className="mt-3 flex flex-wrap gap-2">
               {current.emergencies.map((e) => (
                 <a key={e.phone} href={`tel:${e.phone}`} className="inline-flex items-center gap-1 rounded-lg border border-slate-300 px-2 py-1 text-[11px] font-bold dark:border-slate-600">
@@ -1502,6 +1286,7 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
                 </a>
               ) : null}
             </div>
+            ) : null}
 
             {error ? <p className="mt-2 text-[11px] text-rose-600">{error}</p> : null}
 
@@ -1604,6 +1389,8 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
                 Hay un documento vencido: no se puede aprobar el ingreso con el vehículo.
               </p>
             ) : null}
+            </>
+            )}
       </Modal>
       ) : null}
 
@@ -1613,63 +1400,6 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
         onIndex={(i) => setZoom((z) => (z ? { ...z, index: i } : z))}
         onClose={() => setZoom(null)}
       />
-
-      <Modal
-        open={minorsOpen}
-        onClose={() => {
-          setMinorsDraft(minorsSnapshot);
-          setMinorsOpen(false);
-        }}
-        size="sm"
-        zClass="z-[70]"
-      >
-        <div className="space-y-3">
-          <h3 className="text-lg font-bold text-slate-900 dark:text-white">Menores en el vehículo</h3>
-          <p className="text-xs text-slate-500">
-            Solo la cantidad. No hay que cargar nombre ni DNI.
-            {current?.sentido === "out"
-              ? ` En el ingreso se anotaron ${current.minorsInCount ?? 0}.`
-              : " Se guarda en el ingreso y se contrasta en la salida."}
-          </p>
-          <div className="flex items-center justify-center gap-4 py-2">
-            <button
-              type="button"
-              className="h-12 w-12 rounded-xl border border-slate-300 text-2xl font-bold dark:border-slate-600"
-              onClick={() => setMinorsDraft((n) => Math.max(0, n - 1))}
-            >
-              −
-            </button>
-            <span className="min-w-[3rem] text-center text-3xl font-bold tabular-nums">{minorsDraft}</span>
-            <button
-              type="button"
-              className="h-12 w-12 rounded-xl border border-slate-300 text-2xl font-bold dark:border-slate-600"
-              onClick={() => setMinorsDraft((n) => Math.min(20, n + 1))}
-            >
-              +
-            </button>
-          </div>
-          <div className="flex gap-2">
-            <button
-              type="button"
-              className="flex-1 rounded-xl border border-slate-300 px-3 py-2 text-xs font-bold dark:border-slate-600"
-              onClick={() => {
-                setMinorsDraft(minorsSnapshot);
-                setMinorsOpen(false);
-              }}
-            >
-              Cancelar
-            </button>
-            <button
-              type="button"
-              disabled={busy}
-              className="flex-1 rounded-xl bg-slate-900 px-3 py-2 text-xs font-bold text-white dark:bg-white dark:text-slate-900 disabled:opacity-50"
-              onClick={() => void saveMinors(minorsDraft)}
-            >
-              Guardar
-            </button>
-          </div>
-        </div>
-      </Modal>
     </>
   );
 }

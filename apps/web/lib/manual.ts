@@ -889,6 +889,7 @@ export const MANUAL_CHAPTERS: ManualChapter[] = [
               "status=expired; se libera v_ del ASI",
               "Queda en historial como denegación",
               "too_early (todavía no vale): deny sin borrar el pase del lector",
+              "Solo aplica al ingreso: si la visita ya está adentro y se pasó del horario, la salida se aprueba igual con aviso ámbar",
             ],
           },
         ],
@@ -998,7 +999,7 @@ export const MANUAL_CHAPTERS: ManualChapter[] = [
             items: [
               "Ingreso con vehículo: en el paso Vehículo, campo «Qué lleva en el baúl» y botones Sacar foto / Subir foto (hasta 6 fotos)",
               "Sin descripción ni foto la ficha marca «Falta revisar el baúl» y no deja aprobar",
-              "Salida: a la izquierda «Baúl al ingreso» (texto, hora, guardia y fotos); a la derecha «Baúl a la salida» para cargar la revisión de egreso",
+              "Salida: se ve «Baúl al ingreso» (texto, hora, guardia y fotos) y el guardia tilda «Coincide con el ingreso»; la foto de salida es opcional",
               "Tocar una foto la abre grande; Escape la cierra",
               "A la salida no se vuelven a pedir documentos: solo baúl, bienes no registrados y menores",
             ],
@@ -1006,6 +1007,94 @@ export const MANUAL_CHAPTERS: ManualChapter[] = [
           {
             type: "p",
             text: "En la app Android la foto es de resolución completa (no la miniatura de la cámara) y la galería se desliza con el dedo.",
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: "salida-rapida",
+    title: "Salida rápida y sale y vuelve",
+    updated: "24/09/2026",
+    summary:
+      "La salida es una sola pantalla de solo lectura con los controles que aplican. Quien se pasó del horario sale igual con aviso. Un contratista o acompañante puede salir y volver con un reingreso rápido.",
+    sections: [
+      {
+        id: "pantalla-salida",
+        title: "Pantalla de salida",
+        blocks: [
+          {
+            type: "p",
+            text: "Al leer el QR o el DNI de alguien que está adentro, web y app abren una sola pantalla: SALIDA · Lote · Titular, nombre, DNI y hace cuánto entró. Lo cargado al entrar se ve como «Ingresó con» y no se edita.",
+          },
+          {
+            type: "table",
+            headers: ["Control", "Cuándo aparece"],
+            rows: [
+              ["Quién sale", "Si entró con acompañantes: se tilda quién sale ahora"],
+              ["Menores: salen X de Y", "Si entraron menores o se tocó «Sale con menores». Si no coincide, «Avisar al lote»"],
+              ["¿Vuelve?", "Siempre: Salida definitiva (por defecto) o Sale y vuelve"],
+              ["Sale con el vehículo", "Si entró con vehículo: baúl al ingreso y «Coincide con el ingreso»"],
+              ["Bien no registrado", "Link: abre un modal con descripción y foto; la barrera espera al lote"],
+            ],
+          },
+          {
+            type: "note",
+            text: "«Aprobar salida y abrir» queda gris con el motivo al lado (por ejemplo «Falta revisar el baúl» o «Avisá al lote la diferencia de menores»). Denegar no cierra el pase: la visita sigue adentro.",
+          },
+        ],
+      },
+      {
+        id: "overstay",
+        title: "Se pasó del horario",
+        blocks: [
+          {
+            type: "ul",
+            items: [
+              "El pase no se vence mientras la persona está adentro",
+              "En la salida aparece un aviso ámbar «Se pasó del horario autorizado» y se aprueba igual",
+              "Al cerrar la salida definitiva se da de baja la credencial v_ del lector",
+              "El deny duro por QR vencido sigue igual en el ingreso",
+            ],
+          },
+        ],
+      },
+      {
+        id: "sale-y-vuelve",
+        title: "Sale y vuelve (reingreso)",
+        blocks: [
+          {
+            type: "ul",
+            items: [
+              "En la salida, tildar quién sale y elegir «Sale y vuelve». Aprobar",
+              "El titular recibe un aviso informativo (sin botones): «X salió, vuelve»",
+              "Al volver, leer el mismo QR o el DNI (también sirve el de un acompañante): abre REINGRESO",
+              "Tildar quién vuelve, cuántos menores y, si vuelve con el vehículo, revisar el baúl",
+              "Aprobar reingreso y abrir. El titular recibe «X volvió a ingresar»",
+            ],
+          },
+          {
+            type: "note",
+            text: "No se piden los documentos de nuevo, pero vencido no pasa: con seguro o licencia vencidos vuelve a pie. Si en el pase hay gente adentro y gente afuera, arriba aparece «Sale alguien / Vuelve alguien» para elegir.",
+          },
+          {
+            type: "p",
+            text: "El censo de evacuación cuenta solo a quienes están adentro: el que salió y vuelve no figura hasta que reingresa.",
+          },
+        ],
+      },
+      {
+        id: "entrada-limpia",
+        title: "Encabezado de entrada",
+        blocks: [
+          {
+            type: "ul",
+            items: [
+              "Una sola línea de estado: vencido o todavía no vale (rojo), estado del aviso al lote en walk-in, tótem cambiado, o «Autorizó: …»",
+              "Menores: contador − / + dentro de Acompañantes, sin ventana aparte",
+              "Ya no se muestran el QR que lo acredita ni el canal de lectura",
+              "Los números de emergencia aparecen solo en el paso Aprobar",
+            ],
           },
         ],
       },

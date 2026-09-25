@@ -463,7 +463,7 @@ export const visitPasses = sqliteTable("visit_passes", {
   validUntil: integer("valid_until", { mode: "timestamp_ms" }).notNull(),
   horaDesde: text("hora_desde"),
   horaHasta: text("hora_hasta"),
-  /** preauthorized | awaiting_entry | in_site | awaiting_exit | completed | denied | expired | revoked | active (legacy) */
+  /** preauthorized | awaiting_entry | in_site | awaiting_exit | temp_out | completed | denied | expired | revoked | active (legacy) */
   status: text("status").notNull().default("preauthorized"),
   /** peatonal | plataforma | vehiculo */
   arrivalMode: text("arrival_mode").notNull().default("peatonal"),
@@ -483,6 +483,10 @@ export const visitPasses = sqliteTable("visit_passes", {
   scannedOutAt: integer("scanned_out_at", { mode: "timestamp_ms" }),
   /** Menores vistos en el ingreso (solo cantidad, sin identificar). */
   minorsInCount: integer("minors_in_count").notNull().default(0),
+  /** in | out_temp | out. Solo tiene sentido después del primer ingreso. */
+  guestPresence: text("guest_presence").notNull().default("in"),
+  /** Menores que salieron con "Sale y vuelve" (default del reingreso). */
+  minorsOutTemp: integer("minors_out_temp").notNull().default(0),
   createdByUserId: text("created_by_user_id")
     .notNull()
     .references(() => users.id),
@@ -500,6 +504,8 @@ export const visitCompanions = sqliteTable("visit_companions", {
   isMinor: integer("is_minor", { mode: "boolean" }).notNull().default(false),
   /** acompanante | queda_a_jugar | traslado */
   situation: text("situation").notNull().default("acompanante"),
+  /** in | out_temp | out */
+  presence: text("presence").notNull().default("in"),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
 });
 
@@ -546,6 +552,12 @@ export const guardApprovals = sqliteTable("guard_approvals", {
   minorsMismatchNotified: integer("minors_mismatch_notified", { mode: "boolean" }).notNull().default(false),
   originPropertyId: text("origin_property_id").references(() => properties.id),
   minorTransferAuthorizedByUserId: text("minor_transfer_authorized_by_user_id").references(() => users.id),
+  /** JSON { guest, companionIds, vehicle } de quién cruza en esta presentación (salida o reingreso). */
+  exitPeople: text("exit_people"),
+  /** Salida con "Sale y vuelve". */
+  returns: integer("returns", { mode: "boolean" }).notNull().default(false),
+  /** Ingreso de alguien que había salido con "Sale y vuelve". */
+  reentry: integer("reentry", { mode: "boolean" }).notNull().default(false),
 });
 
 /** Revisión de baúl por pase y sentido: descripción + fotos en data/evidence/<site>/trunk-<id>-<n>.jpg */
@@ -564,6 +576,8 @@ export const visitTrunkChecks = sqliteTable("visit_trunk_checks", {
   /** JSON string[] con los ids de foto */
   photoIds: text("photo_ids").notNull().default("[]"),
   guardUserId: text("guard_user_id").references(() => users.id),
+  /** 0 = primer cruce; cada sale y vuelve suma una vuelta. */
+  round: integer("round").notNull().default(0),
   createdAt: integer("created_at", { mode: "timestamp_ms" }).notNull(),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
 });

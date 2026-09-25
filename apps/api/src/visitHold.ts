@@ -32,18 +32,64 @@ import { getVisitAuthDefaultHours } from "./retention.js";
 import { processDocumentImage } from "./documentScan.js";
 import { notifyStaff } from "./pushNotify.js";
 import { saveVisitorDoc } from "./visitorDocs.js";
-import { expireVisitPassOnSite } from "./accessQr.js";
+import { expireVisitPassOnSite, releaseVisitCredential } from "./accessQr.js";
 
 export type ArrivalMode = "peatonal" | "plataforma" | "vehiculo";
 export type VisitKind = "social" | "service" | "contractor" | "delivery";
 
-const OPEN_STATUSES = new Set(["preauthorized", "active", "awaiting_entry", "in_site", "awaiting_exit"]);
+const OPEN_STATUSES = new Set(["preauthorized", "active", "awaiting_entry", "in_site", "awaiting_exit", "temp_out"]);
 
 export type ScanChannel = "totem" | "web" | "app";
+export type Presence = "in" | "out_temp" | "out";
+export type ExitPeople = { guest: boolean; companionIds: string[]; vehicle: boolean };
 
-/** No se sale si no se entró: primer acceso = in; ya en el predio = out. */
-export function visitSentidoFromPass(pass: { status: string }): "in" | "out" {
-  return pass.status === "in_site" || pass.status === "awaiting_exit" ? "out" : "in";
+/** Adentro del predio: in_site / awaiting_exit, o vencido por el barrido viejo sin salida registrada. */
+export function passIsInside(pass: {
+  status: string;
+  scannedInAt?: Date | number | null;
+  scannedOutAt?: Date | number | null;
+}) {
+  if (pass.status === "in_site" || pass.status === "awaiting_exit") return true;
+  return pass.status === "expired" && pass.scannedInAt != null && pass.scannedOutAt == null;
+}
+
+/** No se sale si no se entró: primer acceso = in; ya en el predio = out; temp_out = reingreso. */
+export function visitSentidoFromPass(pass: {
+  status: string;
+  scannedInAt?: Date | number | null;
+  scannedOutAt?: Date | number | null;
+}): "in" | "out" {
+  return passIsInside(pass) ? "out" : "in";
+}
+
+export function parseExitPeople(raw: string | null | undefined): ExitPeople | null {
+  if (!raw) return null;
+  try {
+    const v = JSON.parse(raw) as Partial<ExitPeople>;
+    return {
+      guest: Boolean(v.guest),
+      companionIds: Array.isArray(v.companionIds) ? v.companionIds.map(String) : [],
+      vehicle: Boolean(v.vehicle),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function presenceOf(v: string | null | undefined): Presence {
+  return v === "out_temp" || v === "out" ? v : "in";
+}
+
+/** Quién está adentro y quién salió con "Sale y vuelve". */
+export async function passPresence(pass: typeof visitPasses.$inferSelect) {
+  const comps = await listCompanions(pass.id);
+  const guest = presenceOf(pass.guestPresence);
+  return {
+    guest,
+    companions: comps.map((c) => ({ ...c, presence: presenceOf(c.presence) })),
+    anyInside: guest === "in" || comps.some((c) => presenceOf(c.presence) === "in"),
+    anyTempOut: guest === "out_temp" || comps.some((c) => presenceOf(c.presence) === "out_temp"),
+  };
 }
 
 export function qrHintOf(token?: string | null, dahuaCardNo?: string | null) {
@@ -138,6 +184,14 @@ export async function findVisitPassByCard(siteId: string, cardRaw: string) {
 }
 
 export async function findVisitPassByDni(siteId: string, dniRaw: string) {
+  return (await findVisitPassByPersonDni(siteId, dniRaw))?.pass ?? null;
+}
+
+/** Titular del pase o acompañante (este último solo con el pase adentro o en temp_out). */
+export async function findVisitPassByPersonDni(
+  siteId: string,
+  dniRaw: string,
+): Promise<{ pass: typeof visitPasses.$inferSelect; companionId: string | null; presence: Presence } | null> {
   const dni = String(dniRaw || "").replace(/\D/g, "");
   if (dni.length < 7) return null;
   const rows = await db.select().from(visitPasses).where(eq(visitPasses.siteId, siteId));
@@ -145,9 +199,15 @@ export async function findVisitPassByDni(siteId: string, dniRaw: string) {
     (p) => OPEN_STATUSES.has(p.status) && String(p.guestDni || "").replace(/\D/g, "") === dni,
   );
   const rank = (s: string) =>
-    s === "awaiting_exit" || s === "in_site" ? 0 : s === "awaiting_entry" ? 1 : 2;
+    s === "awaiting_exit" || s === "in_site" || s === "temp_out" ? 0 : s === "awaiting_entry" ? 1 : 2;
   open.sort((a, b) => rank(a.status) - rank(b.status));
-  return open[0] ?? null;
+  if (open[0]) return { pass: open[0], companionId: null, presence: presenceOf(open[0].guestPresence) };
+  const inside = rows.filter((p) => p.status === "in_site" || p.status === "awaiting_exit" || p.status === "temp_out");
+  for (const p of inside) {
+    const comp = (await listCompanions(p.id)).find((c) => String(c.dni || "").replace(/\D/g, "") === dni);
+    if (comp) return { pass: p, companionId: comp.id, presence: presenceOf(comp.presence) };
+  }
+  return null;
 }
 
 export async function applyPassIdentity(
@@ -224,9 +284,11 @@ export async function replaceCompanions(
 export async function syncVisitRecordFromPass(pass: typeof visitPasses.$inferSelect) {
   if (!pass.visitRecordId) return;
   const recordStatus =
-    pass.status === "in_site" || pass.status === "completed" || pass.status === "denied" || pass.status === "awaiting_exit"
-      ? pass.status
-      : "awaiting_entry";
+    pass.status === "temp_out"
+      ? "in_site"
+      : pass.status === "in_site" || pass.status === "completed" || pass.status === "denied" || pass.status === "awaiting_exit"
+        ? pass.status
+        : "awaiting_entry";
   await db
     .update(visitRecords)
     .set({
@@ -377,6 +439,8 @@ export async function holdVisitQr(input: {
   at?: Date;
   /** Aviso informativo al lote (QR preautorizado). Walk-in pasa false. */
   notifyLot?: boolean;
+  /** Presencia de la persona identificada por DNI (titular o acompañante). */
+  personPresence?: Presence | null;
 }): Promise<{
   held: boolean;
   passId?: string;
@@ -397,6 +461,8 @@ export async function holdVisitQr(input: {
   validUntil?: Date | number | null;
   horaDesde?: string | null;
   horaHasta?: string | null;
+  reentry?: boolean;
+  overstay?: boolean;
 }> {
   const pass = await findVisitPassByCard(input.siteId, input.cardRaw);
   if (!pass) return { held: false };
@@ -404,7 +470,11 @@ export async function holdVisitQr(input: {
     const row = await db.select().from(properties).where(eq(properties.id, propertyId)).get();
     return row?.lotNumber ?? null;
   };
-  if (pass.status === "revoked" || pass.status === "denied" || pass.status === "completed" || pass.status === "expired") {
+  const inside = passIsInside(pass);
+  if (
+    !inside &&
+    (pass.status === "revoked" || pass.status === "denied" || pass.status === "completed" || pass.status === "expired")
+  ) {
     return {
       held: true,
       passId: pass.id,
@@ -422,18 +492,29 @@ export async function holdVisitQr(input: {
 
   const now = input.at ?? new Date();
   const window = passWindowState(pass, now);
-  const sentido = visitSentidoFromPass(pass);
   const scanChannel = normalizeScanChannel(input.scanChannel, input.deviceId);
+  const presence = await passPresence(pass);
+  let sentido: "in" | "out" = inside ? "out" : "in";
+  let reentry = pass.status === "temp_out";
+  if (inside && presence.anyTempOut) {
+    const laneIn = scanChannel === "totem" && input.sentido === "in";
+    if (input.personPresence === "out_temp" || (input.personPresence !== "in" && laneIn)) {
+      sentido = "in";
+      reentry = true;
+    }
+  }
+  const overstay = sentido === "out" && window === "expired";
   const deviceName = await deviceNameOf(input.deviceId);
   const scannedByName = await userNameOf(input.scannedByUserId);
   const channelLabel = scanChannelLabel(scanChannel, deviceName);
   const qrHint = qrHintOf(pass.token, pass.dahuaCardNo);
   const lotNumber = await lotOf(pass.propertyId);
 
-  // Vencido / todavía no vale: deny duro, historial, sin cola ni aprobar.
+  // Vencido / todavía no vale al ENTRAR: deny duro, historial, sin cola ni aprobar.
   // Solo al vencer se baja el v_ del ASI y status=expired (too_early conserva el pase).
-  if (window === "expired" || window === "too_early") {
-    if (window === "expired") await expireVisitPassOnSite(input.siteId, pass);
+  // Quien ya está adentro sale igual (overstay); si queda gente adentro no se vence el pase.
+  if (sentido === "in" && (window === "expired" || window === "too_early")) {
+    if (window === "expired" && !inside) await expireVisitPassOnSite(input.siteId, pass);
     const eventId = nid();
     const reason = window === "too_early" ? "too_early" : "expired";
     const denyPayload = {
@@ -494,9 +575,10 @@ export async function holdVisitQr(input: {
     };
   }
 
-  const missing = await missingVisitFields(pass.id, sentido);
+  const missing = reentry ? [] : await missingVisitFields(pass.id, sentido);
   const reason = missing.length ? "incomplete" : "ok";
-  const nextStatus = sentido === "out" ? "awaiting_exit" : "awaiting_entry";
+  const nextStatus = reentry ? pass.status : sentido === "out" ? "awaiting_exit" : "awaiting_entry";
+  const initialMinors = reentry ? pass.minorsOutTemp ?? 0 : sentido === "out" ? pass.minorsInCount ?? 0 : 0;
   const readerSentido =
     scanChannel === "totem" && (input.sentido === "in" || input.sentido === "out") ? input.sentido : null;
 
@@ -522,16 +604,20 @@ export async function holdVisitQr(input: {
       scanChannel,
       scannedByUserId: input.scannedByUserId || null,
       readerSentido,
-      minorsCount: sentido === "out" ? pass.minorsInCount ?? 0 : 0,
+      minorsCount: initialMinors,
+      reentry,
       createdAt: now,
       decidedAt: null,
     });
   } else {
+    const flipped = existing.sentido !== sentido || Boolean(existing.reentry) !== reentry;
     await db
       .update(guardApprovals)
       .set({
         reason,
         sentido,
+        reentry,
+        ...(flipped ? { minorsCount: initialMinors, exitPeople: null, returns: false } : {}),
         deviceId: input.deviceId || existing.deviceId,
         scanChannel: existing.scanChannel || scanChannel,
         scannedByUserId: existing.scannedByUserId || input.scannedByUserId || null,
@@ -555,6 +641,8 @@ export async function holdVisitQr(input: {
         scanChannelLabel: channelLabel,
         scannedByName,
         deduped: true,
+        reentry,
+        overstay,
       };
     }
   }
@@ -586,6 +674,8 @@ export async function holdVisitQr(input: {
     accessKind: "visita" as const,
     dwellLabel: dwellLabel(pass.scannedInAt),
     minorsInCount: pass.minorsInCount ?? 0,
+    reentry,
+    overstay,
     photoStored: false,
   };
   await db.insert(events).values({
@@ -609,7 +699,7 @@ export async function holdVisitQr(input: {
     createdAt: now.getTime(),
   });
 
-  if (input.notifyLot !== false && input.tenantId && existing?.reason !== "walk_in") {
+  if (input.notifyLot !== false && input.tenantId && existing?.reason !== "walk_in" && sentido === "in" && !reentry) {
     const dup = await db
       .select({ id: ownerNotices.id })
       .from(ownerNotices)
@@ -645,7 +735,7 @@ export async function holdVisitQr(input: {
   if (scanChannel === "totem" && input.tenantId) {
     void notifyStaff({
       tenantId: input.tenantId,
-      title: sentido === "out" ? "Visita en salida" : "Visita en tótem",
+      title: sentido === "out" ? "Visita en salida" : reentry ? "Visita reingresa" : "Visita en tótem",
       message: `${pass.guestName}${property?.lotNumber ? ` · lote ${property.lotNumber}` : ""} · ${channelLabel}`,
       data: {
         type: "visit_hold",
@@ -670,6 +760,8 @@ export async function holdVisitQr(input: {
     scanChannelLabel: channelLabel,
     scannedByName,
     eventId,
+    reentry,
+    overstay,
   };
 }
 
@@ -776,6 +868,10 @@ export async function decideGuardApproval(input: {
   decision: "approved" | "denied";
   comment?: string | null;
   trunkChecked?: boolean;
+  /** Quién cruza (salida parcial o reingreso). Sin dato: todos los que están adentro / afuera temporalmente. */
+  exitPeople?: ExitPeople | null;
+  /** Salida con "Sale y vuelve". */
+  returns?: boolean;
 }): Promise<{ ok: true; actuatorsFired?: string[] } | { ok: false; error: string; missing?: string[] }> {
   const row = await db
     .select()
@@ -786,8 +882,35 @@ export async function decideGuardApproval(input: {
   if (row.status !== "pending") return { ok: false, error: "Esa solicitud ya se resolvió" };
   const pass = await db.select().from(visitPasses).where(eq(visitPasses.id, row.passId)).get();
   if (!pass) return { ok: false, error: "El pase ya no existe" };
+  const isOut = row.sentido === "out";
+  const isReentry = !isOut && Boolean(row.reentry);
 
   const now = new Date();
+  if (input.decision === "denied" && (isOut || isReentry)) {
+    // Negar una salida o un reingreso no cierra el pase: la gente sigue donde estaba.
+    const pr = await passPresence(pass);
+    const back = isOut || pr.anyInside ? "in_site" : "temp_out";
+    await db
+      .update(guardApprovals)
+      .set({
+        status: "denied",
+        comment: input.comment?.trim() || null,
+        guardUserId: input.guardUserId,
+        approvedVia: "login",
+        decidedAt: now,
+      })
+      .where(eq(guardApprovals.id, row.id));
+    await db.update(visitPasses).set({ status: back }).where(eq(visitPasses.id, pass.id));
+    broadcastRealtimeEvent({
+      id: nid(),
+      siteId: input.site.id,
+      tenantId: input.site.tenantId,
+      type: "visit_hold",
+      payload: { passId: pass.id, approvalId: row.id, decided: "denied", sentido: row.sentido },
+      createdAt: now.getTime(),
+    });
+    return { ok: true };
+  }
   if (input.decision === "denied") {
     await db
       .update(guardApprovals)
@@ -832,15 +955,56 @@ export async function decideGuardApproval(input: {
     return { ok: true };
   }
 
-  if (row.reason === "expired" || row.reason === "too_early") {
-    return { ok: false, error: "El pase está vencido o fuera de vigencia. Solo se puede denegar." };
-  }
-  const windowNow = passWindowState(pass);
-  if (windowNow === "expired" || windowNow === "too_early") {
-    return { ok: false, error: "El pase está vencido o fuera de vigencia. Solo se puede denegar." };
+  // Vigencia solo al entrar: quien ya está adentro sale aunque se haya pasado del horario.
+  if (!isOut) {
+    if (row.reason === "expired" || row.reason === "too_early") {
+      return { ok: false, error: "El pase está vencido o fuera de vigencia. Solo se puede denegar." };
+    }
+    const windowNow = passWindowState(pass);
+    if (windowNow === "expired" || windowNow === "too_early") {
+      return { ok: false, error: "El pase está vencido o fuera de vigencia. Solo se puede denegar." };
+    }
   }
 
-  if (row.reason === "walk_in") {
+  const pr = await passPresence(pass);
+  const req = docRequirements(pass.visitKind, pass.arrivalMode);
+  const crossing: Presence = isOut ? "in" : "out_temp";
+  const defaults: ExitPeople = {
+    guest: pr.guest === crossing,
+    companionIds: pr.companions.filter((c) => c.presence === crossing).map((c) => c.id),
+    vehicle: req.vehicle && pr.guest === crossing,
+  };
+  const asked = input.exitPeople ?? parseExitPeople(row.exitPeople) ?? defaults;
+  const people: ExitPeople = {
+    guest: asked.guest && pr.guest === crossing,
+    companionIds: asked.companionIds.filter((id) => pr.companions.some((c) => c.id === id && c.presence === crossing)),
+    vehicle: req.vehicle && asked.vehicle,
+  };
+  const returns = isOut && Boolean(input.returns ?? row.returns);
+  if ((isOut || isReentry) && !people.guest && !people.companionIds.length) {
+    return { ok: false, error: isOut ? "Marcá quién sale" : "Marcá quién vuelve a entrar" };
+  }
+
+  if (isReentry) {
+    const gaps = await visitFieldGaps(pass.id, "in");
+    const expiredNow = people.vehicle ? gaps.expired : gaps.expired.filter((k) => k !== "seguro_vehiculo" && k !== "licencia");
+    if (expiredNow.length) {
+      return {
+        ok: false,
+        error: canSwitchToPedestrian(expiredNow)
+          ? "Documento vencido: no puede volver a entrar con el vehículo. Puede dejarlo afuera y pasar a pie."
+          : "Documento vencido: no puede volver a entrar.",
+        missing: expiredNow.map(expiredKeyLabel),
+      };
+    }
+    if (people.vehicle) {
+      const t = await trunkCheckOf(pass.id, "in");
+      const ok = t && t.approvalId === row.id && (String(t.description || "").trim() || trunkPhotoIdsOf(t).length);
+      if (!ok) return { ok: false, error: "Revisá el baúl antes de abrir el reingreso", missing: ["baul"] };
+    }
+  }
+
+  if (row.reason === "walk_in" && !isReentry) {
     if (row.ownerAuthStatus === "owner_denied") {
       return { ok: false, error: "El titular rechazó. Denegá el paso o pedí otra autorización." };
     }
@@ -853,7 +1017,7 @@ export async function decideGuardApproval(input: {
   }
 
   const sentidoRow = row.sentido === "out" ? "out" : "in";
-  const gaps = await visitFieldGaps(pass.id, sentidoRow);
+  const gaps: VisitFieldGaps = isReentry ? { missing: [], expired: [] } : await visitFieldGaps(pass.id, sentidoRow);
   // Vencido no pasa, sin excepción del titular ni autorización verbal.
   if (gaps.expired.length) {
     return {
@@ -866,20 +1030,26 @@ export async function decideGuardApproval(input: {
   }
   if (gaps.missing.length) return { ok: false, error: "Faltan datos obligatorios", missing: gaps.missing };
   const trunkTicked = Boolean(input.trunkChecked || row.trunkChecked);
-  if (sentidoRow === "out" && needsVehicleDocs(pass.arrivalMode) && !trunkTicked) {
+  if (isOut && people.vehicle && !trunkTicked) {
     return { ok: false, error: "Hay que revisar el baúl antes de abrir la salida", missing: ["baul"] };
   }
 
-  if (row.sentido === "out") {
+  const inCount = pass.minorsInCount ?? 0;
+  const crossMinors = Math.max(0, row.minorsCount ?? row.exitMinorsCount ?? 0);
+  if (isOut) {
     if (row.goodsAlert && !row.goodsAuthorizedByUserId) {
       return {
         ok: false,
         error: "Hay un bien no registrado: el titular del lote tiene que autorizar la salida",
       };
     }
-    const inCount = pass.minorsInCount ?? 0;
-    const outCount = row.minorsCount ?? row.exitMinorsCount ?? 0;
-    if (inCount !== outCount) {
+    const outCount = crossMinors;
+    const adultsRemain =
+      (pr.guest === "in" && !people.guest) ||
+      pr.companions.some((c) => c.presence === "in" && !people.companionIds.includes(c.id));
+    // Salida parcial: pueden quedar menores con los adultos que siguen adentro; solos no.
+    const mismatch = outCount > inCount || (!adultsRemain && outCount !== inCount);
+    if (mismatch) {
       if (!row.minorsMismatchNotified) {
         return {
           ok: false,
@@ -900,19 +1070,52 @@ export async function decideGuardApproval(input: {
     return { ok: false, error: pulse.error || "No se pudo pulsar el relé. Revisá el agent y el cableado." };
   }
 
-  const nextStatus = row.sentido === "out" ? "completed" : "in_site";
-  const patch: Partial<typeof visitPasses.$inferInsert> = { status: nextStatus };
-  if (row.sentido === "in") {
+  const patch: Partial<typeof visitPasses.$inferInsert> = {};
+  let nextStatus: string;
+  if (isOut) {
+    const moved: Presence = returns ? "out_temp" : "out";
+    const guestAfter = people.guest ? moved : pr.guest;
+    const compsAfter = pr.companions.map((c) => (people.companionIds.includes(c.id) ? moved : c.presence));
+    const anyInAfter = guestAfter === "in" || compsAfter.includes("in");
+    const anyTempAfter = guestAfter === "out_temp" || compsAfter.includes("out_temp");
+    nextStatus = anyInAfter ? "in_site" : anyTempAfter ? "temp_out" : "completed";
+    patch.guestPresence = guestAfter;
+    patch.minorsInCount = Math.max(0, inCount - crossMinors);
+    if (returns) patch.minorsOutTemp = (pass.minorsOutTemp ?? 0) + crossMinors;
+    if (people.companionIds.length) {
+      await db
+        .update(visitCompanions)
+        .set({ presence: moved })
+        .where(inArray(visitCompanions.id, people.companionIds));
+    }
+    if (nextStatus === "completed") {
+      patch.scannedOutAt = now;
+      patch.minorsOutTemp = 0;
+      if (!pass.scannedInAt) patch.scannedInAt = now;
+    }
+  } else if (isReentry) {
+    nextStatus = "in_site";
+    if (people.guest) patch.guestPresence = "in";
+    if (people.companionIds.length) {
+      await db
+        .update(visitCompanions)
+        .set({ presence: "in" })
+        .where(inArray(visitCompanions.id, people.companionIds));
+    }
+    patch.minorsInCount = inCount + crossMinors;
+    patch.minorsOutTemp = Math.max(0, (pass.minorsOutTemp ?? 0) - crossMinors);
+  } else {
+    nextStatus = "in_site";
     patch.scannedInAt = pass.scannedInAt ?? now;
     patch.minorsInCount = row.minorsCount ?? 0;
+    patch.guestPresence = "in";
+    await db.update(visitCompanions).set({ presence: "in" }).where(eq(visitCompanions.passId, pass.id));
   }
-  if (row.sentido === "out") {
-    patch.scannedOutAt = now;
-    if (!pass.scannedInAt) patch.scannedInAt = now;
-  }
+  patch.status = nextStatus;
 
   await db.update(visitPasses).set(patch).where(eq(visitPasses.id, pass.id));
   await syncVisitRecordFromPass({ ...pass, ...patch, status: nextStatus });
+  if (nextStatus === "completed") void releaseVisitCredential(input.site.id, pass.id);
   await db
     .update(guardApprovals)
     .set({
@@ -922,8 +1125,34 @@ export async function decideGuardApproval(input: {
       guardUserId: input.guardUserId,
       approvedVia: "login",
       decidedAt: now,
+      exitPeople: isOut || isReentry ? JSON.stringify(people) : null,
+      returns,
     })
     .where(eq(guardApprovals.id, row.id));
+
+  if ((isOut && returns) || isReentry) {
+    const names = [
+      ...(people.guest ? [pass.guestName] : []),
+      ...pr.companions.filter((c) => people.companionIds.includes(c.id)).map((c) => c.name),
+    ];
+    const who = names.length > 1 ? `${names.slice(0, -1).join(", ")} y ${names[names.length - 1]}` : names[0] || pass.guestName;
+    const plural = names.length > 1;
+    const minorsTxt = crossMinors ? ` con ${crossMinors} menor${crossMinors === 1 ? "" : "es"}` : "";
+    await createOwnerNotice({
+      siteId: input.site.id,
+      tenantId: input.site.tenantId,
+      propertyId: pass.propertyId,
+      passId: pass.id,
+      approvalId: row.id,
+      kind: "visit_info",
+      title: isOut ? "Visita salió y vuelve" : "Visita volvió a ingresar",
+      message: isOut
+        ? `${who}${minorsTxt} ${plural ? "salieron" : "salió"}, ${plural ? "vuelven" : "vuelve"}.`
+        : `${who}${minorsTxt} ${plural ? "volvieron" : "volvió"} a ingresar.`,
+      payload: { guestName: pass.guestName, names, minors: crossMinors, returns: isOut },
+      ttlMs: 3_600_000,
+    });
+  }
 
   const property = await db.select().from(properties).where(eq(properties.id, pass.propertyId)).get();
   const approvedByName = await userNameOf(input.guardUserId);
@@ -949,6 +1178,9 @@ export async function decideGuardApproval(input: {
       approvedVia: "login",
       scanChannel: row.scanChannel,
       scanChannelLabel: channelLabel,
+      reentry: isReentry,
+      returns,
+      overstay: isOut && passWindowState(pass, now) === "expired",
     }),
     createdAt: now,
   });
@@ -982,7 +1214,7 @@ export async function decideGuardApproval(input: {
     .where(and(eq(ownerNotices.passId, pass.id), eq(ownerNotices.kind, "visit_qr")))
     .orderBy(desc(ownerNotices.createdAt))
     .get();
-  if (qrNotice) {
+  if (qrNotice && !isOut && !isReentry) {
     let extra: Record<string, unknown> = {};
     try {
       extra = qrNotice.payload ? (JSON.parse(qrNotice.payload) as Record<string, unknown>) : {};
@@ -1015,10 +1247,15 @@ export async function serializePassFicha(
     ? await db.select().from(visitRecords).where(eq(visitRecords.id, pass.visitRecordId)).get()
     : null;
   const companions = await listCompanions(pass.id);
-  const awaitingOut = pass.status === "in_site" || pass.status === "awaiting_exit";
+  const awaitingOut = passIsInside(pass);
   const sentidoNow: "in" | "out" = row?.sentido === "out" || (!row && awaitingOut) ? "out" : "in";
-  const gaps = await visitFieldGaps(pass.id, sentidoNow);
+  const reentry = row ? Boolean(row.reentry) && sentidoNow === "in" : pass.status === "temp_out";
+  const gaps = reentry
+    ? { missing: [] as string[], expired: (await visitFieldGaps(pass.id, "in")).expired }
+    : await visitFieldGaps(pass.id, sentidoNow);
   const missing = gaps.missing;
+  const windowState = passWindowState(pass);
+  const trunkNowRow = row ? await trunkCheckOf(pass.id, sentidoNow) : null;
   const req = docRequirements(pass.visitKind, pass.arrivalMode);
   const now = Date.now();
   let insurance: {
@@ -1117,7 +1354,14 @@ export async function serializePassFicha(
     validUntil: pass.validUntil,
     horaDesde: pass.horaDesde,
     horaHasta: pass.horaHasta,
-    windowState: passWindowState(pass),
+    windowState,
+    overstay: sentidoNow === "out" && windowState === "expired",
+    reentry,
+    returns: Boolean(row?.returns),
+    exitPeople: parseExitPeople(row?.exitPeople),
+    guestPresence: presenceOf(pass.guestPresence),
+    minorsOutTemp: pass.minorsOutTemp ?? 0,
+    trunkThisRound: Boolean(trunkNowRow && row && trunkNowRow.approvalId === row.id),
     needsTrunk: req.trunk,
     needsArt: req.art,
     needsLicense: req.license,
@@ -1135,6 +1379,7 @@ export async function serializePassFicha(
       birthDate: x.birthDate,
       isMinor: companionIsMinor(x),
       situation: x.situation,
+      presence: presenceOf(x.presence),
     })),
     insurance,
     personInsurance,
@@ -1171,11 +1416,14 @@ export async function serializePassFicha(
         (row.ownerAuthStatus === "pending_owner" ||
           row.ownerAuthStatus === "owner_expired" ||
           (row.goodsAlert && !row.goodsAuthorizedByUserId) ||
-          ((row.minorsCount ?? row.exitMinorsCount ?? 0) > (pass.minorsInCount ?? 0) &&
+          (row.sentido === "out" &&
+            (row.minorsCount ?? row.exitMinorsCount ?? 0) > (pass.minorsInCount ?? 0) &&
             !row.minorTransferAuthorizedByUserId)),
     ),
     minorsIn: pass.minorsInCount ?? 0,
-    adultsIn: 1 + companions.filter((x) => !companionIsMinor(x)).length,
+    adultsIn:
+      (presenceOf(pass.guestPresence) === "in" ? 1 : 0) +
+      companions.filter((x) => !companionIsMinor(x) && presenceOf(x.presence) === "in").length,
     emergencies: [
       { label: "Policía / emergencias", phone: "911" },
       { label: "SAME", phone: "107" },
@@ -1742,7 +1990,12 @@ export async function attachTrunkCheck(input: {
     .get();
   if (!row || row.status !== "pending") return { ok: false as const, error: "No hay una solicitud pendiente" };
   const sentido = row.sentido === "out" ? "out" : "in";
-  const existing = await trunkCheckOf(row.passId, sentido);
+  const latest = await trunkCheckOf(row.passId, sentido);
+  // Cada cruce aprobado cierra su revisión: sale y vuelve abre otra vuelta con fotos propias.
+  const latestApproval = latest?.approvalId && latest.approvalId !== row.id
+    ? await db.select({ status: guardApprovals.status }).from(guardApprovals).where(eq(guardApprovals.id, latest.approvalId)).get()
+    : null;
+  const existing = latest && latestApproval?.status === "approved" ? null : latest;
   const remove = new Set((input.removePhotoIds || []).map(String));
   const photoIds = trunkPhotoIdsOf(existing).filter((pid) => !remove.has(pid));
   for (const b64 of input.addPhotosBase64 || []) {
@@ -1787,12 +2040,13 @@ export async function attachTrunkCheck(input: {
       description,
       photoIds: JSON.stringify(photoIds),
       guardUserId: input.guardUserId,
+      round: latest ? (latest.round ?? 0) + 1 : 0,
       createdAt: now,
       updatedAt: now,
     });
   }
   await db.update(guardApprovals).set({ trunkChecked: true }).where(eq(guardApprovals.id, row.id));
-  if (sentido === "in" && row.reason !== "walk_in") {
+  if (sentido === "in" && row.reason !== "walk_in" && !row.reentry) {
     const missing = await missingVisitFields(row.passId, "in");
     await db
       .update(guardApprovals)
@@ -2011,6 +2265,36 @@ export async function setApprovalMinorsCount(input: {
     .set({ minorsCount: n, exitMinorsCount: n })
     .where(eq(guardApprovals.id, row.id));
   return { ok: true as const, minorsCount: n };
+}
+
+export async function setApprovalCrossingMode(input: { siteId: string; approvalId: string; mode: "exit" | "reentry" }) {
+  const row = await db
+    .select()
+    .from(guardApprovals)
+    .where(and(eq(guardApprovals.id, input.approvalId), eq(guardApprovals.siteId, input.siteId)))
+    .get();
+  if (!row || row.status !== "pending") return { ok: false as const, error: "No hay una solicitud pendiente" };
+  const pass = await db.select().from(visitPasses).where(eq(visitPasses.id, row.passId)).get();
+  if (!pass) return { ok: false as const, error: "El pase ya no existe" };
+  const pr = await passPresence(pass);
+  if (input.mode === "reentry" && !pr.anyTempOut) {
+    return { ok: false as const, error: "No hay nadie que haya salido con «Sale y vuelve»" };
+  }
+  if (input.mode === "exit" && !pr.anyInside) return { ok: false as const, error: "No queda nadie adentro" };
+  const reentry = input.mode === "reentry";
+  await db
+    .update(guardApprovals)
+    .set({
+      sentido: reentry ? "in" : "out",
+      reentry,
+      reason: "ok",
+      exitPeople: null,
+      returns: false,
+      minorsMismatchNotified: false,
+      minorsCount: reentry ? pass.minorsOutTemp ?? 0 : pass.minorsInCount ?? 0,
+    })
+    .where(eq(guardApprovals.id, row.id));
+  return { ok: true as const };
 }
 
 export async function notifyMinorsMismatch(input: {

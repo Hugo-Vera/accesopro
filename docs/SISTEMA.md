@@ -92,8 +92,15 @@ preauthorized (portal o walk-up)
   → QR IN → awaiting_entry → (aprueba) in_site | (deniega) denied
   → vecino revoca → revoked
 in_site
-  → QR OUT → awaiting_exit → (aprueba + baúl si auto) completed | (deniega) denied
+  → QR OUT → awaiting_exit → (aprueba, salida definitiva) completed
+                           → (aprueba, sale y vuelve) temp_out  [si sale todo el grupo]
+                           → (aprueba, sale una parte) in_site
+                           → (deniega) vuelve a in_site (no cierra el pase)
+temp_out
+  → QR / DNI → reingreso → (aprueba) in_site | (deniega) sigue temp_out
 ```
+
+Presencia por persona: `visit_passes.guest_presence` y `visit_companions.presence` (`in` | `out_temp` | `out`). Menores: `minors_in_count` (adentro ahora) y `minors_out_temp` (salieron y vuelven). El censo cuenta solo presencia `in`.
 
 Aprobar en app o web dispara `openDoor` **antes** de cerrar el ticket. Si el agent no pulsa, la solicitud sigue pendiente y se ve el error.
 
@@ -104,6 +111,28 @@ Walk-in desde el plano: **Anunciar visita** → aviso al portal del lote (120 s)
 QR preautorizado (portal WAN): el titular crea un `visit_passes` (nombre obligatorio; DNI y ventana opcionales). Sin fechas ni horario → `validFrom = now`, `validUntil = now + visit_auth_default_hours` (4|8|12|24|48|72, lo cambia el admin en Configuración). El QR **identifica**; portería completa faltantes (DNI, seguro/baúl si hay auto, acompañantes) y aprueba. La garita hace pull en 1–2 s mientras el pase está `preauthorized` / `awaiting_entry` reciente.
 
 Egreso: baúl si hay vehículo. Bien no registrado: foto + aviso al lote; la barrera no abre hasta que el titular autoriza. Menor de más: hay que pedir traslado al lote de procedencia.
+
+### Pantalla de salida (web `ExitFicha.tsx`, app `ExitFicha.kt`)
+
+Una sola pantalla, sin pasos. Lo cargado al entrar es **solo lectura** (no hay campos editables, escáner de DNI ni botones Menor / Escanear QR).
+
+- Encabezado: `SALIDA · Lote X · Titular`, nombre, DNI, «entró HH:MM (hace …)».
+- Aviso ámbar solo si aplica: se pasó del horario, bien no registrado, tótem cambiado.
+- **Ingresó con**: acompañantes (con quién ya salió o salió y vuelve), menores adentro, patente o «A pie».
+- **Quién sale**: checkboxes del titular del pase y cada acompañante adentro.
+- **Menores**: «salen X de Y»; si no coincide, «Avisar al lote». Menores de más esperan autorización del lote.
+- **¿Vuelve?**: Salida definitiva (default) o Sale y vuelve.
+- **Sale con el vehículo**: baúl al ingreso + «Coincide con el ingreso» (foto de salida opcional).
+- Links: Bien no registrado (modal), Agregar nota, Llamar al lote. Sin números de emergencia.
+- «Aprobar salida y abrir» se deshabilita mostrando el motivo (falta baúl, menores sin avisar, bien sin autorizar).
+
+**Se pasó del horario (overstay):** el barrido no vence pases `in_site` / `awaiting_exit`. Una salida con la ventana vencida es un hold normal con `overstay = true` (aviso ámbar) y se aprueba igual. El **deny duro por QR vencido aplica solo al ingreso**. Al cerrar en definitiva se da de baja la credencial `v_…` del ASI.
+
+### Sale y vuelve (reingreso rápido)
+
+El contratista que va a buscar material o un acompañante que sale un rato: en la salida se marca **Sale y vuelve** y quiénes salen. Al volver, el mismo QR o el DNI (también el de un acompañante) abre la pantalla **REINGRESO**: quién vuelve, cuántos menores y el baúl solo si vuelve con el vehículo. No se piden documentos de nuevo, pero **vencido no pasa**: con seguro o licencia vencidos vuelve a pie. Si en el pase hay gente adentro y gente afuera, el guardia elige «Sale alguien / Vuelve alguien» (`POST /api/visitors/approvals/:id/mode`).
+
+Cada salida o reingreso manda al lote un aviso informativo `visit_info` («X salió, vuelve» / «X volvió a ingresar»), sin botones. `guard_approvals` guarda `exit_people` (JSON `{guest, companionIds, vehicle}`), `returns` y `reentry`; la revisión de baúl lleva `round` para no pisar la de otra vuelta.
 
 ### Documentos por tipo de visita (regla única)
 
@@ -129,10 +158,10 @@ Fuente: `docRequirements(visitKind, arrivalMode)` en `apps/api/src/visitHold.ts`
 Tabla `visit_trunk_checks` (una fila por pase y sentido `in` / `out`): descripción + hasta 6 fotos (`data/evidence/<site>/trunk-<id>.jpg`).
 
 - Ingreso con vehículo: el paso Vehículo pide descripción o al menos una foto (faltante `baul`).
-- Salida: la ficha muestra **Baúl al ingreso** (texto + galería) al lado de **Baúl a la salida** para comparar. Guardar la revisión de salida marca `trunk_checked`.
+- Salida: la pantalla muestra **Baúl al ingreso** (texto + galería) y el guardia tilda **Coincide con el ingreso** (`trunk_checked`); la foto de salida es opcional. En el reingreso con vehículo el baúl es obligatorio (fila nueva con `round` + 1).
 - API: `POST /api/visitors/approvals/:id/trunk` (`description`, `addPhotosBase64[]`, `removePhotoIds[]`), `GET /api/visitors/trunk/:checkId/photos/:photoId`. La ficha trae `trunkIn` / `trunkOut` con `photoUrls`.
 
-Censo (`/dashboard/censo`, pack `visitors.census`): visitas `in_site` / `awaiting_exit` + acompañantes, teléfonos del titular. No cuenta dueños con cara (no hay reloj de permanencia).
+Censo (`/dashboard/censo`, pack `visitors.census`): visitas `in_site` / `awaiting_exit` + acompañantes con presencia `in` (quien salió y vuelve no cuenta), teléfonos del titular. No cuenta dueños con cara (no hay reloj de permanencia).
 
 `GET /api/visit-passes/verify` y `POST /api/visit-passes/scan` requieren sesión de guardia (`access.visitors.manage`). El ASI sigue por `holdVisitQr` interno.
 

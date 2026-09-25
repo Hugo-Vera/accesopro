@@ -10,6 +10,9 @@ import java.net.URL
 
 data class Emergency(val label: String, val phone: String)
 
+/** Quién cruza en una salida parcial o un reingreso. */
+data class ExitPeople(val guest: Boolean, val companionIds: List<String>, val vehicle: Boolean)
+
 data class ApprovalItem(
     val id: String,
     val passId: String,
@@ -59,6 +62,19 @@ data class ApprovalItem(
     val onFile: DocsOnFile = DocsOnFile(),
     val trunkIn: TrunkCheck? = null,
     val trunkOut: TrunkCheck? = null,
+    val validFrom: String? = null,
+    val validUntil: String? = null,
+    val windowState: String? = null,
+    val scannedInAt: String? = null,
+    /** Salida de alguien que se pasó del horario del pase: sale igual, con aviso. */
+    val overstay: Boolean = false,
+    /** Vuelve a entrar alguien que salió con "Sale y vuelve". */
+    val reentry: Boolean = false,
+    val returns: Boolean = false,
+    /** in | out_temp | out */
+    val guestPresence: String = "in",
+    val minorsOutTemp: Int = 0,
+    val trunkThisRound: Boolean = false,
 )
 
 /** Documento vinculado o en archivo (ART, seguro del auto, licencia). validUntil = AAAA-MM-DD. */
@@ -139,7 +155,13 @@ class ApiException(
     val item: JSONObject? = null,
 ) : IllegalStateException(message)
 
-data class CompanionItem(val name: String, val dni: String?)
+data class CompanionItem(
+    val name: String,
+    val dni: String?,
+    val id: String? = null,
+    /** in | out_temp | out */
+    val presence: String = "in",
+)
 
 data class CensusGuest(
     val passId: String,
@@ -343,14 +365,34 @@ class GuardApi(
         comment: String,
         trunkChecked: Boolean,
         guestDni: String,
+        exitPeople: ExitPeople? = null,
+        returns: Boolean? = null,
+        minorsCount: Int? = null,
     ) = withContext(Dispatchers.IO) {
         val body = JSONObject()
             .put("decision", decision)
             .put("comment", comment)
             .put("trunkChecked", trunkChecked)
         if (guestDni.isNotBlank()) body.put("guestDni", guestDni)
+        exitPeople?.let { p ->
+            body.put(
+                "exitPeople",
+                JSONObject()
+                    .put("guest", p.guest)
+                    .put("companionIds", JSONArray().apply { p.companionIds.forEach { put(it) } })
+                    .put("vehicle", p.vehicle),
+            )
+        }
+        returns?.let { body.put("returns", it) }
+        minorsCount?.let { body.put("minorsCount", it) }
         post("/api/visitors/approvals/$id/decide", body)
         Unit
+    }
+
+    /** Pase con gente adentro y gente afuera temporalmente: "exit" o "reentry". */
+    suspend fun setCrossingMode(id: String, mode: String): ApprovalItem? = withContext(Dispatchers.IO) {
+        val json = post("/api/visitors/approvals/$id/mode", JSONObject().put("mode", mode))
+        json.optJSONObject("item")?.let { parseItem(it) }
     }
 
     fun parseApprovalJson(o: JSONObject): ApprovalItem = parseItem(o)
@@ -526,7 +568,12 @@ class GuardApi(
                 val arr = o.optJSONArray("companions") ?: JSONArray()
                 (0 until arr.length()).map { i ->
                     val c = arr.getJSONObject(i)
-                    CompanionItem(c.optString("name"), c.optString("dni").ifBlank { null })
+                    CompanionItem(
+                        c.optString("name"),
+                        c.optString("dni").ifBlank { null },
+                        id = c.optString("id").ifBlank { null },
+                        presence = c.optString("presence").ifBlank { "in" },
+                    )
                 }
             },
             verbalAuthorizedBy = o.optString("verbalAuthorizedBy").ifBlank { null },
@@ -547,6 +594,16 @@ class GuardApi(
             } ?: DocsOnFile(),
             trunkIn = parseTrunk(o.optJSONObject("trunkIn")),
             trunkOut = parseTrunk(o.optJSONObject("trunkOut")),
+            validFrom = o.optStringOrNull("validFrom"),
+            validUntil = o.optStringOrNull("validUntil"),
+            windowState = o.optStringOrNull("windowState"),
+            scannedInAt = o.optStringOrNull("scannedInAt"),
+            overstay = o.optBoolean("overstay"),
+            reentry = o.optBoolean("reentry"),
+            returns = o.optBoolean("returns"),
+            guestPresence = o.optString("guestPresence").ifBlank { "in" },
+            minorsOutTemp = o.optInt("minorsOutTemp"),
+            trunkThisRound = o.optBoolean("trunkThisRound"),
         )
     }
 

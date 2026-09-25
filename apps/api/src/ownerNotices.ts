@@ -6,7 +6,17 @@ import { nid } from "./scope.js";
 import { fanoutLotNotice } from "./pushNotify.js";
 import { publishNoticeToHub } from "./hubSync.js";
 
-export type OwnerNoticeKind = "walk_in" | "goods" | "minor_transfer" | "visit_qr" | "expired_docs" | "minors_mismatch";
+export type OwnerNoticeKind =
+  | "walk_in"
+  | "goods"
+  | "minor_transfer"
+  | "visit_qr"
+  | "visit_info"
+  | "expired_docs"
+  | "minors_mismatch";
+
+/** Avisos informativos: el titular los ve sin botones de autorizar / rechazar. */
+export const INFO_NOTICE_KINDS = new Set<string>(["visit_qr", "visit_info"]);
 
 export async function expireOwnerNotices(now = new Date()) {
   const pending = await db.select().from(ownerNotices).where(eq(ownerNotices.status, "pending"));
@@ -123,7 +133,7 @@ export async function decideOwnerNotice(input: {
     .where(and(eq(ownerNotices.id, input.noticeId), eq(ownerNotices.propertyId, input.propertyId)))
     .get();
   if (!row) return { ok: false, error: "Aviso no encontrado" };
-  if (row.kind === "visit_qr") return { ok: false, error: "Este aviso es informativo" };
+  if (INFO_NOTICE_KINDS.has(row.kind)) return { ok: false, error: "Este aviso es informativo" };
   if (row.status !== "pending") return { ok: false, error: "Ese aviso ya se resolvió" };
   const now = new Date();
   await db

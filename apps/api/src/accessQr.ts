@@ -218,6 +218,8 @@ export async function expireTimedCredentialsAndPasses(now = new Date()) {
     if (pass.status === "revoked" || pass.status === "denied" || pass.status === "completed" || pass.status === "expired") {
       continue;
     }
+    // Con alguien adentro el pase no vence: la salida se aprueba con aviso de horario excedido.
+    if (pass.status === "in_site" || pass.status === "awaiting_exit") continue;
     const until = pass.validUntil instanceof Date ? pass.validUntil.getTime() : Number(pass.validUntil) || 0;
     if (!until || until >= t) continue;
     await expireVisitPassOnSite(pass.siteId, pass);
@@ -258,6 +260,17 @@ export async function expireTimedCredentialsAndPasses(now = new Date()) {
   }
 
   return { visits, creds };
+}
+
+/** Pase cerrado (salida definitiva): se da de baja el v_ del ASI. */
+export async function releaseVisitCredential(siteId: string, passId: string) {
+  const dahuaUserId = `v_${passId.slice(-8)}`;
+  await revokeCredentialsForUser(siteId, dahuaUserId);
+  try {
+    await deletePersonOnSiteDevicesWait(siteId, { userId: dahuaUserId });
+  } catch {
+    /* ignore */
+  }
 }
 
 export async function expireVisitPassOnSite(siteId: string, pass: { id: string; siteId: string }) {

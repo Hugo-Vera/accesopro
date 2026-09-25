@@ -1310,14 +1310,15 @@ fun ResidentHome(
                                             style = MaterialTheme.typography.bodyMedium,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant
                                         )
-                                        if (n.kind == "visit_qr") {
+                                        if (n.kind == "visit_qr" || n.kind == "visit_info") {
                                             Surface(
                                                 shape = RoundedCornerShape(8.dp),
                                                 color = MaterialTheme.colorScheme.surfaceVariant,
                                                 modifier = Modifier.fillMaxWidth()
                                             ) {
                                                 Text(
-                                                    "Aviso informativo. Portería abre; no hace falta autorizar.",
+                                                    if (n.kind == "visit_info") "Aviso informativo. No hace falta hacer nada."
+                                                    else "Aviso informativo. Portería abre; no hace falta autorizar.",
                                                     style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
                                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                                     modifier = Modifier.padding(10.dp)

@@ -59,11 +59,14 @@ export async function siteCensus(siteId: string) {
         companions: { name: string; dni: string | null; minor: boolean }[];
       }[] = [];
       for (const p of lotPasses) {
-        const comps = companionsByPass.get(p.id) ?? [];
+        // Solo cuenta quien está adentro: los que salieron (definitiva o sale y vuelve) no.
+        const comps = (companionsByPass.get(p.id) ?? []).filter((x) => (x.presence ?? "in") === "in");
         const minorComps = comps.filter((x) => companionIsMinor(x));
         const adultComps = comps.filter((x) => !companionIsMinor(x));
-        const a = 1 + adultComps.length;
+        const guestIn = (p.guestPresence ?? "in") === "in";
+        const a = (guestIn ? 1 : 0) + adultComps.length;
         const m = Math.max(p.minorsInCount ?? 0, minorComps.length);
+        if (!a && !m) continue;
         adults += a;
         minors += m;
         guests.push({

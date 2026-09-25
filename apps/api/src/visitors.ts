@@ -31,7 +31,8 @@ import {
   attachLicenseToPass,
   applyPassIdentity,
   decideGuardApproval,
-  findVisitPassByDni,
+  findVisitPassByPersonDni,
+  passIsInside,
   holdVisitQr,
   isArrivalMode,
   listPendingApprovals,
@@ -45,6 +46,7 @@ import {
   confirmPhoneAuth,
   applyPassKindAndMode,
   switchToPedestrian,
+  setApprovalCrossingMode,
   attachTrunkCheck,
   findTrunkCheck,
   trunkCheckHasPhoto,
@@ -182,11 +184,12 @@ visitorsApi.post("/visitors/approvals/scan-qr", async (c) => {
     scannedByUserId: user.id,
   };
   if (parsed?.dni) {
-    const pass = await findVisitPassByDni(scoped.site.id, parsed.dni);
-    if (!pass) {
+    const hit = await findVisitPassByPersonDni(scoped.site.id, parsed.dni);
+    if (!hit) {
       return c.json({ error: "DNI leído. Escaneá el QR de la visita para abrir la ficha.", parsed }, 404);
     }
-    const hold = await holdVisitQr({ ...holdOpts, cardRaw: pass.token });
+    const pass = hit.pass;
+    const hold = await holdVisitQr({ ...holdOpts, cardRaw: pass.token, personPresence: hit.presence });
     if (hold.reason === "closed") {
       return c.json({ error: "Ese pase ya se cerró. No se puede entrar ni salir.", parsed }, 409);
     }
@@ -317,6 +320,20 @@ visitorsApi.post("/visitors/approvals/:id/ficha", async (c) => {
   const fresh = (await listPendingApprovals(scoped.site.id)).find((x) => x.id === pending.id);
   if (error) return c.json({ error, item: fresh || pending }, 400);
   return c.json({ ok: true, item: fresh || pending });
+});
+
+/** Ficha de alguien adentro con gente afuera temporalmente: el guardia elige si sale o vuelve a entrar. */
+visitorsApi.post("/visitors/approvals/:id/mode", async (c) => {
+  const denied = await denyUnlessCapability(c.get("user"), "access.visitors.manage");
+  if (denied) return denied;
+  const scoped = await scopedSiteWithModule(c, "visitors");
+  if ("error" in scoped) return scoped.error;
+  const body = await c.req.json<{ mode?: string }>();
+  const mode = body.mode === "reentry" ? "reentry" : "exit";
+  const result = await setApprovalCrossingMode({ siteId: scoped.site.id, approvalId: c.req.param("id"), mode });
+  if (!result.ok) return c.json({ error: result.error }, 400);
+  const item = (await listPendingApprovals(scoped.site.id)).find((x) => x.id === c.req.param("id"));
+  return c.json({ ok: true, item: item || null });
 });
 
 visitorsApi.post("/visitors/approvals/:id/pedestrian", async (c) => {
@@ -788,7 +805,15 @@ visitorsApi.post("/visitors/approvals/:id/decide", async (c) => {
   if (denied) return denied;
   const scoped = await scopedSiteWithModule(c, "visitors");
   if ("error" in scoped) return scoped.error;
-  const body = await c.req.json<FichaBody & { decision?: "approved" | "denied"; comment?: string; trunkChecked?: boolean }>();
+  const body = await c.req.json<
+    FichaBody & {
+      decision?: "approved" | "denied";
+      comment?: string;
+      trunkChecked?: boolean;
+      exitPeople?: { guest?: boolean; companionIds?: string[]; vehicle?: boolean };
+      returns?: boolean;
+    }
+  >();
   const decision = body.decision === "denied" ? "denied" : body.decision === "approved" ? "approved" : null;
   if (!decision) return c.json({ error: "Indicá aprobar o denegar" }, 400);
 
@@ -806,6 +831,14 @@ visitorsApi.post("/visitors/approvals/:id/decide", async (c) => {
     decision,
     comment: body.comment,
     trunkChecked: Boolean(body.trunkChecked),
+    exitPeople: body.exitPeople
+      ? {
+          guest: Boolean(body.exitPeople.guest),
+          companionIds: Array.isArray(body.exitPeople.companionIds) ? body.exitPeople.companionIds.map(String) : [],
+          vehicle: Boolean(body.exitPeople.vehicle),
+        }
+      : null,
+    returns: typeof body.returns === "boolean" ? body.returns : undefined,
   });
   if (!result.ok) {
     const fresh = (await listPendingApprovals(scoped.site.id)).find((x) => x.id === approvalId);
@@ -1538,7 +1571,7 @@ visitorsApi.post("/visitors/passes/:id/request-exit", async (c) => {
     .where(and(eq(visitPasses.id, c.req.param("id")), eq(visitPasses.siteId, scoped.site.id)))
     .get();
   if (!pass) return c.json({ error: "Pase no encontrado" }, 404);
-  if (pass.status !== "in_site" && pass.status !== "awaiting_exit") {
+  if (!passIsInside(pass)) {
     return c.json({ error: "Esa visita no está adentro del predio" }, 409);
   }
   const hold = await holdVisitQr({
@@ -1548,6 +1581,7 @@ visitorsApi.post("/visitors/passes/:id/request-exit", async (c) => {
     sentido: "out",
     scanChannel: "app",
     scannedByUserId: c.get("user").id,
+    personPresence: "in",
   });
   if (!hold.held || hold.denied) {
     return c.json({ error: hold.reason === "closed" ? "El pase ya se cerró" : "No se pudo pedir la salida" }, 409);

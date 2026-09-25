@@ -867,6 +867,13 @@ async function backfillAccessPointsFromLegacy() {
     )
   `);
   await db.run(sql`CREATE INDEX IF NOT EXISTS visit_trunk_checks_pass ON visit_trunk_checks (pass_id, sentido)`);
+  await addColumn("visit_trunk_checks", "round", "INTEGER NOT NULL DEFAULT 0");
+  await addColumn("visit_passes", "guest_presence", "TEXT NOT NULL DEFAULT 'in'");
+  await addColumn("visit_passes", "minors_out_temp", "INTEGER NOT NULL DEFAULT 0");
+  await addColumn("visit_companions", "presence", "TEXT NOT NULL DEFAULT 'in'");
+  await addColumn("guard_approvals", "exit_people", "TEXT");
+  await addColumn("guard_approvals", "returns", "INTEGER NOT NULL DEFAULT 0");
+  await addColumn("guard_approvals", "reentry", "INTEGER NOT NULL DEFAULT 0");
   await db.run(sql`
     INSERT OR IGNORE INTO user_grants (user_id, capability_key, granted_at, granted_by_user_id)
     SELECT id, 'access.lot.authorize', CAST(strftime('%s','now') AS INTEGER) * 1000, NULL

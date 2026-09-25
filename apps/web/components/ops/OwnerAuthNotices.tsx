@@ -106,6 +106,7 @@ function statusTone(status: string) {
 function statusLabel(p: OwnerPassNotice) {
   if (p.scannedOutAt || p.status === "completed") return "Cerrado";
   if (p.status === "in_site") return "En predio";
+  if (p.status === "temp_out") return "Salió, vuelve";
   if (p.status === "revoked") return "Revocado";
   if (p.status === "expired") return "Vencido";
   if (p.status === "pending" || p.status === "active") return "Esperando";

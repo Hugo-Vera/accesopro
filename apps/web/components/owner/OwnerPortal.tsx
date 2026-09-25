@@ -111,7 +111,7 @@ type Pass = {
   qrPayload?: string;
 };
 
-const OPEN_PASS = new Set(["active", "preauthorized", "awaiting_entry", "in_site", "awaiting_exit"]);
+const OPEN_PASS = new Set(["active", "preauthorized", "awaiting_entry", "in_site", "awaiting_exit", "temp_out"]);
 
 function isOpenPass(status: string) {
   return OPEN_PASS.has(status);
@@ -122,6 +122,7 @@ function passStatusLabel(status: string) {
   if (status === "awaiting_entry") return "Esperando entrada";
   if (status === "in_site") return "En predio";
   if (status === "awaiting_exit") return "Esperando salida";
+  if (status === "temp_out") return "Salió, vuelve";
   if (status === "completed") return "Completado";
   if (status === "denied") return "Denegado";
   if (status === "expired") return "Vencido";
@@ -605,9 +606,11 @@ export function OwnerPortal() {
               >
                 <p className="text-sm font-bold text-amber-900 dark:text-amber-200">{n.title}</p>
                 <p className="mt-1 text-xs text-amber-800 dark:text-amber-300">{n.message}</p>
-                {n.kind === "visit_qr" ? (
+                {n.kind === "visit_qr" || n.kind === "visit_info" ? (
                   <p className="mt-2 text-[11px] font-semibold text-amber-700 dark:text-amber-400">
-                    Aviso informativo. Portería abre; no hace falta autorizar.
+                    {n.kind === "visit_info"
+                      ? "Aviso informativo. No hace falta hacer nada."
+                      : "Aviso informativo. Portería abre; no hace falta autorizar."}
                   </p>
                 ) : (
                 <div className="mt-3 space-y-2">
