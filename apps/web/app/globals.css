@@ -95,6 +95,11 @@
   }
   .ap-modal-panel {
     @apply relative w-full max-h-[min(94dvh,100%)] overflow-y-auto rounded-2xl border border-slate-200 bg-white shadow-2xl dark:border-slate-700 dark:bg-slate-900;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  .ap-modal-panel::-webkit-scrollbar {
+    display: none;
   }
   .relay-icon {
     @apply grid h-9 w-9 shrink-0 place-items-center rounded-md border border-line text-[10px] font-bold text-muted;

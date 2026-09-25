@@ -103,19 +103,6 @@ function toGray(data: Uint8ClampedArray, w: number, h: number, boost = false) {
   return g;
 }
 
-function cropGray(src: Uint8ClampedArray, sw: number, sh: number, box: ScanBox) {
-  const x0 = clamp(Math.floor(box.x * sw), 0, sw - 2);
-  const y0 = clamp(Math.floor(box.y * sh), 0, sh - 2);
-  const w = clamp(Math.ceil(box.w * sw), 8, sw - x0);
-  const h = clamp(Math.ceil(box.h * sh), 8, sh - y0);
-  const out = new Uint8ClampedArray(w * h);
-  for (let y = 0; y < h; y++) {
-    const row = (y0 + y) * sw + x0;
-    out.set(src.subarray(row, row + w), y * w);
-  }
-  return { gray: out, w, h };
-}
-
 /** Bandas anchas con mucha transición horizontal = PDF417 del dorso. */
 export function findPdf417Hint(gray: Uint8ClampedArray, w: number, h: number): ScanHint | null {
   if (w < 24 || h < 16) return null;
@@ -321,6 +308,8 @@ export function createDniLiveDecoder() {
   const workCtx = work.getContext("2d", { willReadFrequently: true });
   const crop = document.createElement("canvas");
   const cropCtx = crop.getContext("2d", { willReadFrequently: true, alpha: false });
+  const pdfCanvas = document.createElement("canvas");
+  const pdfCtx = pdfCanvas.getContext("2d", { willReadFrequently: true, alpha: false });
 
   async function loadZxing() {
     if (zxing) return zxing;
@@ -335,6 +324,7 @@ export function createDniLiveDecoder() {
     pdfHints = new Map();
     pdfHints.set(zxing.DecodeHintType.POSSIBLE_FORMATS, [zxing.BarcodeFormat.PDF_417]);
     pdfHints.set(zxing.DecodeHintType.CHARACTER_SET, "ISO-8859-1");
+    pdfHints.set(zxing.DecodeHintType.TRY_HARDER, true);
     return zxing;
   }
 
@@ -447,12 +437,20 @@ export function createDniLiveDecoder() {
     const lib = await loadZxing();
     if (!qrReader || !pdfReader) return { hit: leftover, hints };
 
-    const crops: ScanBox[] = [
-      ...qrBoxes,
-      { x: 0.08, y: 0.02, w: 0.84, h: 0.7 },
-      { x: 0.16, y: 0.08, w: 0.68, h: 0.62 },
-      { x: 0, y: 0, w: 1, h: 1 },
-    ];
+    // El PDF417 del DNI necesita el recorte a resolución nativa: a 720 px de frame no quedan módulos legibles.
+    if (!qrBoxes.length && pdfHint) {
+      const hit = tryPdf(lib, video, [pdfHint, grow(pdfHint, 0.08, 0.12)]);
+      if (hit && take(hit)) return { hit, hints };
+    }
+
+    const crops: ScanBox[] = qrBoxes.length
+      ? [...qrBoxes, { x: 0, y: 0, w: 1, h: 1 }]
+      : pdfHint || pass % 2 === 0
+        ? []
+        : [
+            { x: 0.08, y: 0.02, w: 0.84, h: 0.7 },
+            { x: 0, y: 0, w: 1, h: 1 },
+          ];
 
     for (const box of crops) {
       const canvas = paintCrop(video, box);
@@ -486,30 +484,63 @@ export function createDniLiveDecoder() {
       }
     }
 
-    if (!qrBoxes.length && pass % 3 === 0) {
-      const pdfCrops: ScanBox[] = pdfHint
-        ? [pdfHint, { x: 0.04, y: 0.55, w: 0.92, h: 0.4 }]
-        : [{ x: 0.04, y: 0.55, w: 0.92, h: 0.4 }];
-      const grayBoost = toGray(image.data, work.width, work.height, true);
-      for (const box of pdfCrops) {
-        const piece = cropGray(grayBoost, work.width, work.height, box);
-        const source = new lib.RGBLuminanceSource(piece.gray, piece.w, piece.h);
-        try {
-          const result = pdfReader.decode(
-            new lib.BinaryBitmap(new lib.HybridBinarizer(source)),
-            pdfHints as never,
-          );
-          if (result?.getText()) {
-            const hit: ScanHit = { text: result.getText(), format: "pdf417", box };
-            if (take(hit)) return { hit, hints };
-          }
-        } catch {
-          /* dorso no cerrado */
-        }
-      }
+    if (!qrBoxes.length && !pdfHint && pass % 2 === 0) {
+      const hit = tryPdf(lib, video, [
+        { x: 0.04, y: 0.22, w: 0.92, h: 0.56 },
+        { x: 0.04, y: 0.5, w: 0.92, h: 0.46 },
+        { x: 0, y: 0, w: 1, h: 1 },
+      ]);
+      if (hit && take(hit)) return { hit, hints };
     }
 
     return { hit: leftover, hints };
+  }
+
+  function grow(box: ScanBox, px: number, py: number): ScanBox {
+    const x = clamp(box.x - px, 0, 1);
+    const y = clamp(box.y - py, 0, 1);
+    return { x, y, w: clamp(box.w + px * 2, 0, 1 - x), h: clamp(box.h + py * 2, 0, 1 - y) };
+  }
+
+  /** Recorte a resolución nativa del video (hasta 1400 px de ancho, sube chicos x2). */
+  function grayFromVideo(video: HTMLVideoElement, box: ScanBox, boost: boolean) {
+    if (!pdfCtx) return null;
+    const vw = video.videoWidth;
+    const vh = video.videoHeight;
+    const sx = box.x * vw;
+    const sy = box.y * vh;
+    const sw = Math.max(24, box.w * vw);
+    const sh = Math.max(16, box.h * vh);
+    const scale = clamp(1400 / sw, 0.5, 2);
+    const dw = Math.max(48, Math.round(sw * scale));
+    const dh = Math.max(24, Math.round(sh * scale));
+    pdfCanvas.width = dw;
+    pdfCanvas.height = dh;
+    pdfCtx.imageSmoothingEnabled = true;
+    pdfCtx.imageSmoothingQuality = "high";
+    pdfCtx.drawImage(video, sx, sy, sw, sh, 0, 0, dw, dh);
+    const data = pdfCtx.getImageData(0, 0, dw, dh).data;
+    return { gray: toGray(data, dw, dh, boost), w: dw, h: dh };
+  }
+
+  function tryPdf(lib: ZxingBundle, video: HTMLVideoElement, boxes: ScanBox[]): ScanHit | null {
+    if (!pdfReader) return null;
+    for (const box of boxes) {
+      for (const boost of [false, true]) {
+        const piece = grayFromVideo(video, box, boost);
+        if (!piece) continue;
+        const source = new lib.RGBLuminanceSource(piece.gray, piece.w, piece.h);
+        for (const Binarizer of [lib.HybridBinarizer, lib.GlobalHistogramBinarizer]) {
+          try {
+            const result = pdfReader.decode(new lib.BinaryBitmap(new Binarizer(source)), pdfHints as never);
+            if (result?.getText()) return { text: result.getText(), format: "pdf417", box };
+          } catch {
+            /* siguiente intento */
+          }
+        }
+      }
+    }
+    return null;
   }
 
   return { decodeFrame, hasNativeDetector: Boolean(detector) };
