@@ -75,6 +75,11 @@ data class ApprovalItem(
     val guestPresence: String = "in",
     val minorsOutTemp: Int = 0,
     val trunkThisRound: Boolean = false,
+    val goodsDescription: String? = null,
+    val goodsPhotoUrl: String? = null,
+    val goodsAuthorizedByName: String? = null,
+    /** El lote rechazó el bien: no se lo lleva (o se deniega la salida). */
+    val goodsDenied: Boolean = false,
 )
 
 /** Documento vinculado o en archivo (ART, seguro del auto, licencia). validUntil = AAAA-MM-DD. */
@@ -288,7 +293,7 @@ class GuardApi(
                         message = o.optString("message"),
                         status = o.optString("status"),
                         kind = o.optString("kind"),
-                        decidedByName = o.optString("decidedByName").ifBlank { null },
+                        decidedByName = o.optStringOrNull("decidedByName"),
                     ),
                 )
             }
@@ -329,16 +334,16 @@ class GuardApi(
                     label = o.optString("label"),
                     adults = o.optInt("adults"),
                     minors = o.optInt("minors"),
-                    ownerName = o.optString("ownerName").ifBlank { null },
-                    phone = o.optString("phone").ifBlank { null },
-                    emergencyPhone = o.optString("emergencyPhone").ifBlank { null },
+                    ownerName = o.optStringOrNull("ownerName"),
+                    phone = o.optStringOrNull("phone"),
+                    emergencyPhone = o.optStringOrNull("emergencyPhone"),
                     guests = (0 until guestsArr.length()).map { gi ->
                         val g = guestsArr.getJSONObject(gi)
                         CensusGuest(
                             passId = g.optString("passId"),
                             name = g.optString("name"),
-                            dni = g.optString("dni").ifBlank { null },
-                            patente = g.optString("patente").ifBlank { null },
+                            dni = g.optStringOrNull("dni"),
+                            patente = g.optStringOrNull("patente"),
                             adults = g.optInt("adults"),
                             minors = g.optInt("minors"),
                         )
@@ -401,6 +406,11 @@ class GuardApi(
         val body = JSONObject().put("description", description)
         if (!photoBase64.isNullOrBlank()) body.put("photoBase64", photoBase64)
         post("/api/visitors/approvals/$id/goods", body)
+        Unit
+    }
+
+    suspend fun clearGoods(id: String) = withContext(Dispatchers.IO) {
+        post("/api/visitors/approvals/$id/goods/clear", JSONObject())
         Unit
     }
 
@@ -528,8 +538,8 @@ class GuardApi(
             sentido = o.optString("sentido"),
             reason = o.optString("reason"),
             guestName = o.optString("guestName"),
-            guestDni = o.optString("guestDni").ifBlank { null },
-            patente = o.optString("patente").ifBlank { null },
+            guestDni = o.optStringOrNull("guestDni"),
+            patente = o.optStringOrNull("patente"),
             needsTrunk = o.optBoolean("needsTrunk"),
             needsArt = o.optBoolean("needsArt"),
             visitKind = o.optString("visitKind"),
@@ -538,45 +548,45 @@ class GuardApi(
                 val arr = o.optJSONArray("expiredDocs") ?: JSONArray()
                 (0 until arr.length()).map { arr.getString(it) }
             },
-            lotNumber = o.optString("lotNumber").ifBlank { null },
+            lotNumber = o.optStringOrNull("lotNumber"),
             ownerName = o.optString("ownerName"),
-            ownerPhone = o.optString("ownerPhone").ifBlank { null },
+            ownerPhone = o.optStringOrNull("ownerPhone"),
             ownerAuthStatus = o.optString("ownerAuthStatus"),
             goodsAlert = o.optBoolean("goodsAlert"),
             goodsAuthorized = o.optBoolean("goodsAuthorized"),
             goodsCallReady = o.optBoolean("goodsCallReady"),
             needsPhoneAuth = o.optBoolean("needsPhoneAuth"),
-            ownerAuthorizedByName = o.optString("ownerAuthorizedByName").ifBlank { null },
+            ownerAuthorizedByName = o.optStringOrNull("ownerAuthorizedByName"),
             emergencies = (0 until em.length()).map {
                 val e = em.getJSONObject(it)
                 Emergency(e.optString("label"), e.optString("phone"))
             },
-            qrHint = o.optString("qrHint").ifBlank { null },
-            scanChannelLabel = o.optString("scanChannelLabel").ifBlank { null },
-            scannedByName = o.optString("scannedByName").ifBlank { null },
-            approvedByName = o.optString("approvedByName").ifBlank { null },
-            approvedVia = o.optString("approvedVia").ifBlank { null },
-            phoneAuthVia = o.optString("phoneAuthVia").ifBlank { null },
-            readerSentido = o.optString("readerSentido").ifBlank { null },
+            qrHint = o.optStringOrNull("qrHint"),
+            scanChannelLabel = o.optStringOrNull("scanChannelLabel"),
+            scannedByName = o.optStringOrNull("scannedByName"),
+            approvedByName = o.optStringOrNull("approvedByName"),
+            approvedVia = o.optStringOrNull("approvedVia"),
+            phoneAuthVia = o.optStringOrNull("phoneAuthVia"),
+            readerSentido = o.optStringOrNull("readerSentido"),
             laneMismatch = o.optBoolean("laneMismatch"),
             minorsInCount = o.optInt("minorsInCount"),
             minorsCount = o.optInt("minorsCount"),
             minorsMismatchNotified = o.optBoolean("minorsMismatchNotified"),
             minorTransferAuthorized = o.optBoolean("minorTransferAuthorized"),
-            dwellLabel = o.optString("dwellLabel").ifBlank { null },
+            dwellLabel = o.optStringOrNull("dwellLabel"),
             companions = (0 until (o.optJSONArray("companions") ?: JSONArray()).length()).let {
                 val arr = o.optJSONArray("companions") ?: JSONArray()
                 (0 until arr.length()).map { i ->
                     val c = arr.getJSONObject(i)
                     CompanionItem(
                         c.optString("name"),
-                        c.optString("dni").ifBlank { null },
-                        id = c.optString("id").ifBlank { null },
+                        c.optStringOrNull("dni"),
+                        id = c.optStringOrNull("id"),
                         presence = c.optString("presence").ifBlank { "in" },
                     )
                 }
             },
-            verbalAuthorizedBy = o.optString("verbalAuthorizedBy").ifBlank { null },
+            verbalAuthorizedBy = o.optStringOrNull("verbalAuthorizedBy"),
             arrivalMode = o.optString("arrivalMode").ifBlank { "peatonal" },
             needsLicense = o.optBoolean("needsLicense"),
             needsVehicle = o.optBoolean("needsVehicle", o.optBoolean("needsTrunk")),
@@ -604,6 +614,10 @@ class GuardApi(
             guestPresence = o.optString("guestPresence").ifBlank { "in" },
             minorsOutTemp = o.optInt("minorsOutTemp"),
             trunkThisRound = o.optBoolean("trunkThisRound"),
+            goodsDescription = o.optStringOrNull("goodsDescription"),
+            goodsPhotoUrl = o.optStringOrNull("goodsPhotoUrl"),
+            goodsAuthorizedByName = o.optStringOrNull("goodsAuthorizedByName"),
+            goodsDenied = o.optBoolean("goodsDenied"),
         )
     }
 
@@ -632,10 +646,10 @@ class GuardApi(
         val o = json.optJSONObject("accessQr") ?: return@withContext AccessQrInfo(false, null, null, null, null)
         AccessQrInfo(
             active = o.optBoolean("active"),
-            payload = o.optString("payload").ifBlank { null },
-            qrHint = o.optString("qrHint").ifBlank { null },
+            payload = o.optStringOrNull("payload"),
+            qrHint = o.optStringOrNull("qrHint"),
             validUntil = o.opt("validUntil")?.toString()?.takeIf { it != "null" && it.isNotBlank() },
-            label = o.optString("label").ifBlank { null },
+            label = o.optStringOrNull("label"),
         )
     }
 
@@ -646,10 +660,10 @@ class GuardApi(
         val o = json.optJSONObject("accessQr") ?: return@withContext getAccessQr()
         AccessQrInfo(
             active = o.optBoolean("active", true),
-            payload = o.optString("payload").ifBlank { null },
-            qrHint = o.optString("qrHint").ifBlank { null },
+            payload = o.optStringOrNull("payload"),
+            qrHint = o.optStringOrNull("qrHint"),
             validUntil = o.opt("validUntil")?.toString()?.takeIf { it != "null" && it.isNotBlank() },
-            label = o.optString("label").ifBlank { null },
+            label = o.optStringOrNull("label"),
         )
     }
 
@@ -707,7 +721,7 @@ class GuardApi(
             val json = post("/api/visitors/announce", body)
             CreateVisitResult(
                 passId = json.optString("passId"),
-                approvalId = json.optString("approvalId").ifBlank { null },
+                approvalId = json.optStringOrNull("approvalId"),
             )
         }
 
@@ -746,8 +760,8 @@ class GuardApi(
         val json = post("/api/visitors/checkin", body)
         CreateVisitResult(
             passId = json.optString("passId"),
-            approvalId = json.optString("approvalId").ifBlank { null },
-            qrPayload = json.optString("qrPayload").ifBlank { null },
+            approvalId = json.optStringOrNull("approvalId"),
+            qrPayload = json.optStringOrNull("qrPayload"),
         )
     }
 

@@ -1035,7 +1035,7 @@ export const MANUAL_CHAPTERS: ManualChapter[] = [
               ["Menores: salen X de Y", "Si entraron menores o se tocó «Sale con menores». Si no coincide, «Avisar al lote»"],
               ["¿Vuelve?", "Siempre: Salida definitiva (por defecto) o Sale y vuelve"],
               ["Sale con el vehículo", "Si entró con vehículo: baúl al ingreso y «Coincide con el ingreso»"],
-              ["Bien no registrado", "Link: abre un modal con descripción y foto; la barrera espera al lote"],
+              ["¿Sale con algo?", "Siempre en la salida (a pie o en auto): «Lleva un bien» abre un modal con descripción y foto; la barrera espera al lote"],
             ],
           },
           {
@@ -1053,8 +1053,29 @@ export const MANUAL_CHAPTERS: ManualChapter[] = [
             items: [
               "El pase no se vence mientras la persona está adentro",
               "En la salida aparece un aviso ámbar «Se pasó del horario autorizado» y se aprueba igual",
+              "La salida es siempre definitiva: no aparece «Sale y vuelve». Para volver, el lote tiene que autorizar una visita nueva",
               "Al cerrar la salida definitiva se da de baja la credencial v_ del lector",
               "El deny duro por QR vencido sigue igual en el ingreso",
+            ],
+          },
+        ],
+      },
+      {
+        id: "sale-con-algo",
+        title: "Sale con algo (bien del lote)",
+        blocks: [
+          {
+            type: "p",
+            text: "Ejemplo: el propietario le regaló o le vendió un televisor a la visita. Vale igual si sale a pie o en auto; a pie no se revisa baúl, se declara lo que lleva.",
+          },
+          {
+            type: "table",
+            headers: ["Estado", "Qué hace el guardia"],
+            rows: [
+              ["Sin declarar", "«Lleva un bien»: describe y saca foto. Se avisa a todo el grupo familiar del lote"],
+              ["Esperando al lote", "«Llamar al lote». Si autoriza por teléfono o no contesta, confirma con su código de guardia"],
+              ["Autorizó: nombre", "Aprobar salida y abrir"],
+              ["El lote rechazó", "«Sale sin el bien» (queda anotado en el historial) o Denegar. El código de guardia no pisa un rechazo"],
             ],
           },
         ],

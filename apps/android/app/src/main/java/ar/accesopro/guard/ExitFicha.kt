@@ -77,6 +77,28 @@ private fun MinorsCounter(value: Int, enabled: Boolean, onChange: (Int) -> Unit)
     }
 }
 
+@Composable
+private fun GuardCodeRow(code: String, onCode: (String) -> Unit, enabled: Boolean, onConfirm: () -> Unit) {
+    Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+        OutlinedTextField(
+            value = code,
+            onValueChange = { onCode(it.filter { ch -> ch.isDigit() }.take(8)) },
+            label = { Text("Código de guardia") },
+            singleLine = true,
+            modifier = Modifier.weight(1f),
+            shape = RoundedCornerShape(12.dp),
+            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+            visualTransformation = PasswordVisualTransformation(),
+        )
+        Button(
+            onClick = onConfirm,
+            enabled = enabled && code.length >= 4,
+            modifier = Modifier.height(52.dp),
+            shape = RoundedCornerShape(12.dp),
+        ) { Text("Autorizar") }
+    }
+}
+
 /** Salida y reingreso en una sola pantalla: lo que se cargó al entrar es solo lectura. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -116,6 +138,8 @@ fun ExitFicha(
     var noteOpen by remember(key) { mutableStateOf(false) }
     var note by remember(key) { mutableStateOf("") }
     var goodsOpen by remember { mutableStateOf(false) }
+    var goodsZoom by remember { mutableStateOf(false) }
+    val goodsPending = item.goodsAlert && !item.goodsAuthorized && !item.goodsDenied
     var guardCode by remember { mutableStateOf("") }
     var saving by remember { mutableStateOf(false) }
     var localError by remember(key) { mutableStateOf<String?>(null) }
@@ -134,6 +158,7 @@ fun ExitFicha(
         reentryExpired.isNotEmpty() -> "Documento vencido"
         !reentry && vehicle && !trunkOk && !trunkDraft.dirty() -> "Falta revisar el baúl"
         reentry && vehicle && !reentryTrunkReady -> "Falta revisar el baúl"
+        !reentry && item.goodsAlert && item.goodsDenied -> "El lote rechazó el bien: sale sin él o denegá"
         !reentry && item.goodsAlert && !item.goodsAuthorized -> "Esperando que el lote autorice el bien"
         minorsMismatch && !item.minorsMismatchNotified -> "Avisá al lote la diferencia de menores"
         !reentry && minors > minorsInside && !item.minorTransferAuthorized -> "Esperando que el lote autorice los menores"
@@ -141,15 +166,8 @@ fun ExitFicha(
     }
 
     val notices = buildList {
-        if (item.overstay) add("Se pasó del horario autorizado (vencía ${fmtDateTime(item.validUntil)}). Puede salir igual.")
-        if (!reentry && item.goodsAlert) {
-            add(
-                when {
-                    item.goodsAuthorized -> "El titular autorizó el bien no registrado."
-                    item.goodsCallReady -> "Bien no registrado: el lote no contesta. Llamá al titular."
-                    else -> "Bien no registrado: esperando autorización del lote."
-                },
-            )
+        if (item.overstay) {
+            add("Se pasó del horario autorizado (vencía ${fmtDateTime(item.validUntil)}). Sale en definitiva: para volver, el lote tiene que autorizarlo de nuevo.")
         }
         if (item.laneMismatch && !reentry) {
             add("Presentó el QR en el tótem de ${if (item.readerSentido == "out") "salida" else "ingreso"}. Se trata como salida porque ya había entrado.")
@@ -190,7 +208,7 @@ fun ExitFicha(
                     trunkOk,
                     "",
                     exitPeople = ExitPeople(guest, compIds, vehicle),
-                    returns = !reentry && returns,
+                    returns = !reentry && !item.overstay && returns,
                     minorsCount = minors,
                 )
             }.onSuccess { onDecided() }
@@ -199,8 +217,27 @@ fun ExitFicha(
         }
     }
 
+    fun clearGoods() {
+        val a = api ?: return
+        scope.launch {
+            saving = true
+            localError = null
+            runCatching { a.clearGoods(item.id) }
+                .onFailure { showError(it) }
+            saving = false
+        }
+    }
+
     BackHandler {
-        if (goodsOpen) goodsOpen = false else onBack()
+        when {
+            goodsZoom -> goodsZoom = false
+            goodsOpen -> goodsOpen = false
+            else -> onBack()
+        }
+    }
+
+    if (goodsZoom) {
+        item.goodsPhotoUrl?.let { url -> FullscreenGallery(api, listOf(url), 0, "Bien que lleva") { goodsZoom = false } }
     }
 
     if (goodsOpen) {
@@ -362,8 +399,12 @@ fun ExitFicha(
                     buildString {
                         append(if (minorsInside > 0) "$minorsInside menor(es) adentro" else "Sin menores adentro")
                         if (item.minorsOutTemp > 0) append(" · ${item.minorsOutTemp} afuera (vuelven)")
-                        if (!item.patente.isNullOrBlank()) append(" · Patente ${item.patente}")
-                        else if (!needsVehicle) append(" · A pie")
+                        if (item.arrivalMode == "vehiculo" || needsVehicle) {
+                            append(" · Vehículo")
+                            item.patente?.let { append(" · $it") }
+                        } else {
+                            append(" · A pie")
+                        }
                     },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -438,7 +479,7 @@ fun ExitFicha(
                 }
             }
 
-            if (!reentry) {
+            if (!reentry && !item.overstay) {
                 FichaCard {
                     SectionTitle("¿VUELVE?")
                     ChoiceGrid(
@@ -494,32 +535,74 @@ fun ExitFicha(
                 )
             }
 
-            if (item.needsPhoneAuth) {
+            if (!reentry) {
+                FichaCard {
+                    SectionTitle("¿SALE CON ALGO?")
+                    if (!item.goodsAlert) {
+                        OutlinedButton(
+                            onClick = { goodsOpen = true },
+                            enabled = enabled,
+                            modifier = Modifier.fillMaxWidth().height(48.dp),
+                            shape = RoundedCornerShape(12.dp),
+                        ) { Text("Lleva un bien (TV, electrodoméstico, herramienta…)", textAlign = TextAlign.Center) }
+                    } else {
+                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.Top) {
+                            item.goodsPhotoUrl?.let { url ->
+                                RemoteImage(
+                                    api,
+                                    url,
+                                    Modifier.size(72.dp).clip(RoundedCornerShape(10.dp)).clickable { goodsZoom = true },
+                                )
+                            }
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                                Text(item.goodsDescription ?: "Bien sin descripción", fontWeight = FontWeight.Bold)
+                                Text(
+                                    when {
+                                        item.goodsAuthorized -> "Autorizó: ${item.goodsAuthorizedByName ?: "el lote"}"
+                                        item.goodsDenied -> "El lote rechazó: no puede sacarlo."
+                                        item.goodsCallReady -> "El lote no contesta. Llamá y confirmá con tu código de guardia."
+                                        else -> "Esperando al lote (avisado a todo el grupo familiar)."
+                                    },
+                                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
+                                    color = when {
+                                        item.goodsAuthorized -> MaterialTheme.colorScheme.primary
+                                        item.goodsDenied -> MaterialTheme.colorScheme.error
+                                        else -> MaterialTheme.colorScheme.tertiary
+                                    },
+                                )
+                            }
+                        }
+                        if (goodsPending) {
+                            item.ownerPhone?.let { phone ->
+                                TextButton(onClick = { ctx.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$phone"))) }) {
+                                    Icon(Icons.Default.Call, contentDescription = null, modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(4.dp))
+                                    Text("Llamar al lote")
+                                }
+                            }
+                            GuardCodeRow(guardCode, { guardCode = it }, !busy) { onPhoneAuth(guardCode) }
+                        }
+                        if (goodsPending || item.goodsDenied) {
+                            OutlinedButton(
+                                onClick = { clearGoods() },
+                                enabled = enabled,
+                                modifier = Modifier.fillMaxWidth().height(44.dp),
+                                shape = RoundedCornerShape(12.dp),
+                            ) { Text("Sale sin el bien") }
+                        }
+                    }
+                }
+            }
+
+            if (item.needsPhoneAuth && !goodsPending) {
                 FichaCard {
                     SectionTitle("AUTORIZACIÓN POR LLAMADA")
                     Text("Si el titular autorizó por teléfono, confirmá con tu código de guardia.", style = MaterialTheme.typography.bodyMedium)
-                    OutlinedTextField(
-                        value = guardCode,
-                        onValueChange = { guardCode = it.filter { ch -> ch.isDigit() }.take(8) },
-                        label = { Text("Código de guardia") },
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp),
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-                        visualTransformation = PasswordVisualTransformation(),
-                    )
-                    Button(
-                        onClick = { onPhoneAuth(guardCode) },
-                        enabled = !busy && guardCode.length >= 4,
-                        modifier = Modifier.fillMaxWidth().height(46.dp),
-                        shape = RoundedCornerShape(12.dp),
-                    ) { Text("Confirmar") }
+                    GuardCodeRow(guardCode, { guardCode = it }, !busy) { onPhoneAuth(guardCode) }
                 }
             }
 
             Row(horizontalArrangement = Arrangement.spacedBy(4.dp), verticalAlignment = Alignment.CenterVertically) {
-                if (!reentry && !item.goodsAlert) {
-                    TextButton(onClick = { goodsOpen = true }, enabled = enabled) { Text("Bien no registrado") }
-                }
                 TextButton(onClick = { noteOpen = !noteOpen }, enabled = enabled) {
                     Text(if (noteOpen) "Quitar nota" else "Agregar nota")
                 }

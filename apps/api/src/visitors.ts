@@ -40,6 +40,7 @@ import {
   serializePassFicha,
   announceWalkIn,
   attachGoodsAlert,
+  clearGoodsAlert,
   requestMinorTransfer,
   notifyMinorsMismatch,
   setApprovalMinorsCount,
@@ -902,6 +903,20 @@ visitorsApi.post("/visitors/approvals/:id/goods", async (c) => {
     approvalId: c.req.param("id"),
     description: body.description || "",
     photoBase64: body.photoBase64,
+  });
+  if (!result.ok) return c.json({ error: result.error }, 400);
+  return c.json({ ok: true });
+});
+
+visitorsApi.post("/visitors/approvals/:id/goods/clear", async (c) => {
+  const denied = await denyUnlessCapability(c.get("user"), "access.visitors.manage");
+  if (denied) return denied;
+  const scoped = await scopedSiteWithModule(c, "visitors");
+  if ("error" in scoped) return scoped.error;
+  const result = await clearGoodsAlert({
+    site: scoped.site,
+    approvalId: c.req.param("id"),
+    guardUserId: c.get("user").id,
   });
   if (!result.ok) return c.json({ error: result.error }, 400);
   return c.json({ ok: true });

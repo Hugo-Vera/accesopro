@@ -128,6 +128,20 @@ async function userNameOf(id?: string | null) {
   return (await db.select({ name: users.name }).from(users).where(eq(users.id, id)).get())?.name ?? null;
 }
 
+function mergeComment(prev: string | null | undefined, next: string | null | undefined) {
+  const parts = [prev?.trim(), next?.trim()].filter(Boolean);
+  return parts.length ? parts.join("\n") : null;
+}
+
+async function goodsNoticeOf(approvalId: string) {
+  return db
+    .select({ status: ownerNotices.status, createdAt: ownerNotices.createdAt })
+    .from(ownerNotices)
+    .where(and(eq(ownerNotices.approvalId, approvalId), eq(ownerNotices.kind, "goods")))
+    .orderBy(desc(ownerNotices.createdAt))
+    .get();
+}
+
 async function deviceNameOf(id?: string | null) {
   if (!id) return null;
   return (await db.select({ name: dahuaDevices.name }).from(dahuaDevices).where(eq(dahuaDevices.id, id)).get())?.name ?? null;
@@ -894,7 +908,7 @@ export async function decideGuardApproval(input: {
       .update(guardApprovals)
       .set({
         status: "denied",
-        comment: input.comment?.trim() || null,
+        comment: mergeComment(row.comment, input.comment),
         guardUserId: input.guardUserId,
         approvedVia: "login",
         decidedAt: now,
@@ -916,7 +930,7 @@ export async function decideGuardApproval(input: {
       .update(guardApprovals)
       .set({
         status: "denied",
-        comment: input.comment?.trim() || null,
+        comment: mergeComment(row.comment, input.comment),
         trunkChecked: Boolean(input.trunkChecked),
         guardUserId: input.guardUserId,
         approvedVia: "login",
@@ -980,7 +994,11 @@ export async function decideGuardApproval(input: {
     companionIds: asked.companionIds.filter((id) => pr.companions.some((c) => c.id === id && c.presence === crossing)),
     vehicle: req.vehicle && asked.vehicle,
   };
-  const returns = isOut && Boolean(input.returns ?? row.returns);
+  const overstayNow = isOut && passWindowState(pass) === "expired";
+  if (overstayNow && input.returns === true) {
+    return { ok: false, error: "Se pasó del horario: la salida es definitiva. Para volver necesita una nueva autorización." };
+  }
+  const returns = isOut && !overstayNow && Boolean(input.returns ?? row.returns);
   if ((isOut || isReentry) && !people.guest && !people.companionIds.length) {
     return { ok: false, error: isOut ? "Marcá quién sale" : "Marcá quién vuelve a entrar" };
   }
@@ -1038,9 +1056,12 @@ export async function decideGuardApproval(input: {
   const crossMinors = Math.max(0, row.minorsCount ?? row.exitMinorsCount ?? 0);
   if (isOut) {
     if (row.goodsAlert && !row.goodsAuthorizedByUserId) {
+      const denied = (await goodsNoticeOf(row.id))?.status === "denied";
       return {
         ok: false,
-        error: "Hay un bien no registrado: el titular del lote tiene que autorizar la salida",
+        error: denied
+          ? "El lote rechazó el bien: sale sin él o denegá"
+          : "Sale con un bien: el lote tiene que autorizarlo (o confirmá con tu código de guardia)",
       };
     }
     const outCount = crossMinors;
@@ -1120,7 +1141,7 @@ export async function decideGuardApproval(input: {
     .update(guardApprovals)
     .set({
       status: "approved",
-      comment: input.comment?.trim() || null,
+      comment: mergeComment(row.comment, input.comment),
       trunkChecked: trunkTicked,
       guardUserId: input.guardUserId,
       approvedVia: "login",
@@ -1319,6 +1340,9 @@ export async function serializePassFicha(
   const pending = Boolean(row && row.status === "pending");
   const deviceName = await deviceNameOf(row?.deviceId);
   const channel = row?.scanChannel || null;
+  const goodsNotice = row?.goodsAlert ? await goodsNoticeOf(row.id) : null;
+  const goodsDenied = Boolean(row?.goodsAlert && !row.goodsAuthorizedByUserId && goodsNotice?.status === "denied");
+  const goodsSince = goodsNotice?.createdAt ?? row?.createdAt ?? null;
   return {
     id: row?.id ?? `preview:${pass.id}`,
     pending,
@@ -1400,11 +1424,16 @@ export async function serializePassFicha(
     goodsAlert: Boolean(row?.goodsAlert),
     goodsDescription: row?.goodsDescription ?? null,
     goodsPhotoPath: row?.goodsPhotoPath ?? null,
+    goodsPhotoUrl: row?.goodsPhotoPath ? `/api/visitors/approvals/${row.id}/goods-photo` : null,
     goodsAuthorized: Boolean(row?.goodsAuthorizedByUserId),
+    goodsAuthorizedByName: await userNameOf(row?.goodsAuthorizedByUserId),
+    goodsDenied,
     goodsCallReady: Boolean(
       row?.goodsAlert &&
         !row.goodsAuthorizedByUserId &&
-        Date.now() - (row.createdAt instanceof Date ? row.createdAt.getTime() : Number(row.createdAt)) >= 30_000,
+        !goodsDenied &&
+        goodsSince != null &&
+        Date.now() - (goodsSince instanceof Date ? goodsSince.getTime() : Number(goodsSince)) >= 30_000,
     ),
     exitAdultsCount: row?.exitAdultsCount ?? null,
     exitMinorsCount: row?.exitMinorsCount ?? null,
@@ -1415,7 +1444,7 @@ export async function serializePassFicha(
         row.status === "pending" &&
         (row.ownerAuthStatus === "pending_owner" ||
           row.ownerAuthStatus === "owner_expired" ||
-          (row.goodsAlert && !row.goodsAuthorizedByUserId) ||
+          (row.goodsAlert && !row.goodsAuthorizedByUserId && !goodsDenied) ||
           (row.sentido === "out" &&
             (row.minorsCount ?? row.exitMinorsCount ?? 0) > (pass.minorsInCount ?? 0) &&
             !row.minorTransferAuthorizedByUserId)),
@@ -2187,10 +2216,50 @@ export async function attachGoodsAlert(input: {
     passId: pass.id,
     approvalId: row.id,
     kind: "goods",
-    title: "Bien no registrado en la salida",
-    message: `${pass.guestName} sale con: ${input.description.trim() || "un objeto no declarado"}. La barrera queda retenida hasta que autorices.`,
+    title: "Sale con un bien de tu lote",
+    message: `${pass.guestName} sale con: ${input.description.trim() || "un objeto no declarado"}. ¿Lo autorizás? La barrera queda retenida hasta que alguien del lote responda.`,
     payload: { description: input.description, hasPhoto: Boolean(photoPath) },
     ttlMs: 30 * 60 * 1000,
+  });
+  return { ok: true };
+}
+
+/** "Sale sin el bien": el guardia saca el aviso y la salida sigue sin ese objeto. */
+export async function clearGoodsAlert(input: {
+  site: { id: string; tenantId: string };
+  approvalId: string;
+  guardUserId: string;
+}): Promise<{ ok: true } | { ok: false; error: string }> {
+  const row = await db
+    .select()
+    .from(guardApprovals)
+    .where(and(eq(guardApprovals.id, input.approvalId), eq(guardApprovals.siteId, input.site.id)))
+    .get();
+  if (!row || row.status !== "pending" || row.sentido !== "out") return { ok: false, error: "No hay una salida pendiente" };
+  if (!row.goodsAlert) return { ok: true };
+  const guardName = (await userNameOf(input.guardUserId)) || "guardia";
+  const line = `Salió sin el bien «${row.goodsDescription || "sin descripción"}» (${guardName}).`;
+  await db
+    .update(guardApprovals)
+    .set({
+      goodsAlert: false,
+      goodsDescription: null,
+      goodsPhotoPath: null,
+      goodsAuthorizedByUserId: null,
+      comment: row.comment ? `${row.comment}\n${line}` : line,
+    })
+    .where(eq(guardApprovals.id, row.id));
+  await db
+    .update(ownerNotices)
+    .set({ status: "expired", decidedAt: new Date(), decidedByUserId: input.guardUserId })
+    .where(and(eq(ownerNotices.approvalId, row.id), eq(ownerNotices.kind, "goods"), eq(ownerNotices.status, "pending")));
+  broadcastRealtimeEvent({
+    id: nid(),
+    siteId: input.site.id,
+    tenantId: input.site.tenantId,
+    type: "visit_hold",
+    payload: { approvalId: row.id, passId: row.passId, goodsCleared: true },
+    createdAt: Date.now(),
   });
   return { ok: true };
 }
@@ -2363,7 +2432,7 @@ export async function confirmPhoneAuth(input: {
     patch.ownerAuthStatus = "owner_approved";
     patch.ownerAuthorizedByUserId = input.guardUserId;
   }
-  if (row.goodsAlert && !row.goodsAuthorizedByUserId) {
+  if (row.goodsAlert && !row.goodsAuthorizedByUserId && (await goodsNoticeOf(row.id))?.status !== "denied") {
     patch.goodsAuthorizedByUserId = input.guardUserId;
   }
   if (extraMinors) patch.minorTransferAuthorizedByUserId = input.guardUserId;

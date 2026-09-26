@@ -8,6 +8,7 @@ import {
   TrunkEditor,
   TrunkSavedCard,
   trunkDraftDirty,
+  trunkPhotoSrc,
   type TrunkDraft,
 } from "@/components/ops/TrunkInspection";
 import { expiredLabel, fileToJpegDataUrl } from "@/lib/visitDocs";
@@ -87,6 +88,7 @@ export function ExitFicha({ item, tenantId, canDecide, onClose, onDone, onReload
   const minorsInside = item.minorsInCount ?? 0;
   const minorsDefault = reentry ? item.minorsOutTemp ?? 0 : item.minorsCount ?? minorsInside;
   const needsVehicle = Boolean(item.needsVehicle ?? item.needsTrunk);
+  const arrivedByCar = item.arrivalMode === "vehiculo" || needsVehicle;
 
   const [guest, setGuest] = useState(guestHere);
   const [compIds, setCompIds] = useState<string[]>(compsHere.map((c) => c.id as string));
@@ -143,19 +145,15 @@ export function ExitFicha({ item, tenantId, canDecide, onClose, onDone, onReload
   else if (reentryExpired.length) blockReason = "Documento vencido";
   else if (!reentry && vehicle && !trunkOk && !trunkDraftDirty(trunkDraft, roundTrunk)) blockReason = "Falta revisar el baúl";
   else if (reentry && vehicle && !reentryTrunkReady) blockReason = "Falta revisar el baúl";
+  else if (!reentry && item.goodsAlert && item.goodsDenied) blockReason = "El lote rechazó el bien: sale sin él o denegá";
   else if (!reentry && item.goodsAlert && !item.goodsAuthorized) blockReason = "Esperando que el lote autorice el bien";
   else if (minorsMismatch && !item.minorsMismatchNotified) blockReason = "Avisá al lote la diferencia de menores";
   else if (!reentry && minors > minorsInside && !item.minorTransferAuthorized) blockReason = "Esperando que el lote autorice los menores";
 
   const notices: string[] = [];
-  if (item.overstay) notices.push(`Se pasó del horario autorizado (vencía ${fmtDateTime(item.validUntil)}). Puede salir igual.`);
-  if (!reentry && item.goodsAlert) {
+  if (item.overstay) {
     notices.push(
-      item.goodsAuthorized
-        ? "El titular autorizó el bien no registrado."
-        : item.goodsCallReady
-          ? "Bien no registrado: el lote no contesta. Llamá al titular."
-          : "Bien no registrado: esperando autorización del lote.",
+      `Se pasó del horario autorizado (vencía ${fmtDateTime(item.validUntil)}). Sale en definitiva: para volver, el lote tiene que autorizarlo de nuevo.`,
     );
   }
   if (item.laneMismatch && !reentry) {
@@ -230,6 +228,21 @@ export function ExitFicha({ item, tenantId, canDecide, onClose, onDone, onReload
     }
   }
 
+  async function clearGoods() {
+    setBusy(true);
+    setError(null);
+    try {
+      await api(withTenant(`/api/visitors/approvals/${item.id}/goods/clear`, tenantId), { method: "POST" });
+      setGoodsDesc("");
+      setGoodsPhoto(null);
+      onReload();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "No se pudo sacar el bien");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function confirmPhone() {
     setBusy(true);
     setError(null);
@@ -261,7 +274,7 @@ export function ExitFicha({ item, tenantId, canDecide, onClose, onDone, onReload
           trunkChecked: trunkOk,
           minorsCount: minors,
           exitPeople: { guest, companionIds: compIds, vehicle },
-          returns: !reentry && returns,
+          returns: !reentry && !item.overstay && returns,
         }),
       });
       onDone();
@@ -275,6 +288,31 @@ export function ExitFicha({ item, tenantId, canDecide, onClose, onDone, onReload
 
   const entered = enteredLabel(item.scannedInAt);
   const minorsLabel = reentry ? "Menores que vuelven" : "Menores que salen";
+  const goodsPending = Boolean(item.goodsAlert && !item.goodsAuthorized && !item.goodsDenied);
+
+  const guardCodeRow = (
+    <div className="flex items-end gap-2">
+      <label className="block flex-1 text-[11px] font-semibold text-slate-700 dark:text-slate-300">
+        Código de guardia
+        <input
+          type="password"
+          inputMode="numeric"
+          autoComplete="off"
+          value={guardCode}
+          onChange={(e) => setGuardCode(e.target.value.replace(/\D/g, "").slice(0, 8))}
+          className="mt-0.5 w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
+        />
+      </label>
+      <button
+        type="button"
+        disabled={busy || guardCode.length < 4}
+        onClick={() => void confirmPhone()}
+        className="rounded-lg bg-slate-900 px-3 py-1.5 text-[11px] font-bold text-white disabled:opacity-50 dark:bg-white dark:text-slate-900"
+      >
+        Autorizar con mi código
+      </button>
+    </div>
+  );
 
   return (
     <div className="space-y-3 text-xs">
@@ -346,7 +384,7 @@ export function ExitFicha({ item, tenantId, canDecide, onClose, onDone, onReload
         <p className="mt-0.5 text-slate-600 dark:text-slate-400">
           {minorsInside ? `${minorsInside} menor${minorsInside === 1 ? "" : "es"} adentro` : "Sin menores adentro"}
           {(item.minorsOutTemp ?? 0) > 0 ? ` · ${item.minorsOutTemp} afuera (vuelven)` : ""}
-          {item.patente ? ` · Patente ${item.patente}` : needsVehicle ? "" : " · A pie"}
+          {arrivedByCar ? ` · Vehículo${item.patente ? ` · ${item.patente}` : ""}` : " · A pie"}
         </p>
       </div>
 
@@ -427,7 +465,7 @@ export function ExitFicha({ item, tenantId, canDecide, onClose, onDone, onReload
         </button>
       ) : null}
 
-      {!reentry ? (
+      {!reentry && !item.overstay ? (
         <div>
           <SectionTitle>¿Vuelve?</SectionTitle>
           <div className="grid grid-cols-2 gap-1.5">
@@ -520,46 +558,94 @@ export function ExitFicha({ item, tenantId, canDecide, onClose, onDone, onReload
         </p>
       ) : null}
 
-      {canDecide && item.needsPhoneAuth ? (
+      {!reentry ? (
+        <div className="space-y-2 rounded-lg border border-slate-200 p-2 dark:border-slate-700">
+          <SectionTitle>¿Sale con algo?</SectionTitle>
+          {!item.goodsAlert ? (
+            canDecide ? (
+              <button
+                type="button"
+                onClick={() => setGoodsOpen(true)}
+                className="inline-flex w-full items-center justify-center gap-1.5 rounded-lg border border-slate-300 px-2 py-2 text-[11px] font-bold text-slate-800 dark:border-slate-600 dark:text-slate-100"
+              >
+                <PackageSearch className="h-4 w-4" />
+                Lleva un bien (TV, electrodoméstico, herramienta…)
+              </button>
+            ) : (
+              <p className="text-[11px] text-slate-500">Sin bienes declarados.</p>
+            )
+          ) : (
+            <>
+              <div className="flex items-start gap-2">
+                {item.goodsPhotoUrl ? (
+                  <button
+                    type="button"
+                    onClick={() => onZoom([trunkPhotoSrc(tenantId, item.goodsPhotoUrl as string)], 0)}
+                    className="h-16 w-16 shrink-0 overflow-hidden rounded-lg border border-slate-200 dark:border-slate-700"
+                  >
+                    <img src={trunkPhotoSrc(tenantId, item.goodsPhotoUrl)} alt="Foto del bien" className="h-full w-full object-cover" />
+                  </button>
+                ) : null}
+                <div className="min-w-0 flex-1">
+                  <p className="font-semibold text-slate-800 dark:text-slate-100">{item.goodsDescription || "Bien sin descripción"}</p>
+                  <p
+                    className={`mt-0.5 text-[11px] font-semibold ${
+                      item.goodsAuthorized
+                        ? "text-emerald-700 dark:text-emerald-400"
+                        : item.goodsDenied
+                          ? "text-rose-700 dark:text-rose-300"
+                          : "text-amber-800 dark:text-amber-300"
+                    }`}
+                  >
+                    {item.goodsAuthorized
+                      ? `Autorizó: ${item.goodsAuthorizedByName || "el lote"}`
+                      : item.goodsDenied
+                        ? "El lote rechazó: no puede sacarlo."
+                        : item.goodsCallReady
+                          ? "El lote no contesta. Llamá y confirmá con tu código de guardia."
+                          : "Esperando al lote (avisado a todo el grupo familiar)."}
+                  </p>
+                </div>
+              </div>
+              {canDecide && goodsPending ? (
+                <>
+                  {item.ownerPhone ? (
+                    <a
+                      href={`tel:${item.ownerPhone}`}
+                      className="inline-flex items-center gap-1 text-[11px] font-semibold text-slate-700 underline-offset-2 hover:underline dark:text-slate-200"
+                    >
+                      <Phone className="h-3.5 w-3.5" />
+                      Llamar al lote
+                    </a>
+                  ) : null}
+                  {guardCodeRow}
+                </>
+              ) : null}
+              {canDecide && (item.goodsDenied || goodsPending) ? (
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => void clearGoods()}
+                  className="rounded-lg border border-slate-300 px-2 py-1.5 text-[11px] font-bold text-slate-700 disabled:opacity-50 dark:border-slate-600 dark:text-slate-200"
+                >
+                  Sale sin el bien
+                </button>
+              ) : null}
+            </>
+          )}
+        </div>
+      ) : null}
+
+      {canDecide && item.needsPhoneAuth && !goodsPending ? (
         <div className="space-y-2 rounded-lg border border-amber-300 bg-amber-50 p-2 dark:border-amber-800 dark:bg-amber-950/40">
           <p className="text-[11px] font-semibold text-amber-900 dark:text-amber-200">
             Si el titular autorizó por teléfono, confirmá con tu código de guardia.
           </p>
-          <div className="flex items-end gap-2">
-            <label className="block flex-1 text-[11px] font-semibold text-slate-700 dark:text-slate-300">
-              Código de guardia
-              <input
-                type="password"
-                inputMode="numeric"
-                autoComplete="off"
-                value={guardCode}
-                onChange={(e) => setGuardCode(e.target.value.replace(/\D/g, "").slice(0, 8))}
-                className="mt-0.5 w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
-              />
-            </label>
-            <button
-              type="button"
-              disabled={busy || guardCode.length < 4}
-              onClick={() => void confirmPhone()}
-              className="rounded-lg bg-slate-900 px-3 py-1.5 text-[11px] font-bold text-white disabled:opacity-50 dark:bg-white dark:text-slate-900"
-            >
-              Confirmar
-            </button>
-          </div>
+          {guardCodeRow}
         </div>
       ) : null}
 
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-        {canDecide && !reentry && !item.goodsAlert ? (
-          <button
-            type="button"
-            onClick={() => setGoodsOpen(true)}
-            className="inline-flex items-center gap-1 text-[11px] font-semibold text-blue-700 underline-offset-2 hover:underline dark:text-blue-400"
-          >
-            <PackageSearch className="h-3.5 w-3.5" />
-            Bien no registrado
-          </button>
-        ) : null}
         {canDecide ? (
           <button
             type="button"
@@ -625,8 +711,10 @@ export function ExitFicha({ item, tenantId, canDecide, onClose, onDone, onReload
 
       <Modal open={goodsOpen} onClose={() => setGoodsOpen(false)} size="sm" zClass="z-[70]">
         <div className="space-y-3">
-          <h3 className="text-lg font-bold text-slate-900 dark:text-white">Bien no registrado</h3>
-          <p className="text-xs text-slate-500">Se avisa al lote. La barrera queda retenida hasta que autorice.</p>
+          <h3 className="text-lg font-bold text-slate-900 dark:text-white">Sale con un bien</h3>
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            Se avisa a todo el grupo familiar del lote. La barrera queda retenida hasta que alguien autorice o confirmes con tu código de guardia.
+          </p>
           <label className="block text-[11px] font-semibold text-slate-700 dark:text-slate-300">
             Qué lleva
             <input

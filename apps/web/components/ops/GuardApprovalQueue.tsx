@@ -212,7 +212,10 @@ export type GuardApprovalItem = {
   ownerAuthorizedByName?: string | null;
   goodsAlert?: boolean;
   goodsDescription?: string | null;
+  goodsPhotoUrl?: string | null;
   goodsAuthorized?: boolean;
+  goodsAuthorizedByName?: string | null;
+  goodsDenied?: boolean;
   goodsCallReady?: boolean;
   minorsIn?: number;
   adultsIn?: number;

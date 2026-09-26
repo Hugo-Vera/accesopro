@@ -653,10 +653,10 @@ fun GoodsAlertDialog(
     val shoot = rememberFullCamera(onPhoto = { photo = it }, onError = onError)
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Bien no registrado") },
+        title = { Text("Sale con un bien") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("Se avisa al lote y la barrera queda retenida hasta que autorice.")
+                Text("Se avisa a todo el grupo familiar del lote. La barrera queda retenida hasta que alguien autorice o confirmes con tu código de guardia.")
                 OutlinedTextField(
                     value = description,
                     onValueChange = { description = it.take(300) },

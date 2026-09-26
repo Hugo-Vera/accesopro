@@ -123,10 +123,17 @@ Una sola pantalla, sin pasos. Lo cargado al entrar es **solo lectura** (no hay c
 - **Menores**: «salen X de Y»; si no coincide, «Avisar al lote». Menores de más esperan autorización del lote.
 - **¿Vuelve?**: Salida definitiva (default) o Sale y vuelve.
 - **Sale con el vehículo**: baúl al ingreso + «Coincide con el ingreso» (foto de salida opcional).
-- Links: Bien no registrado (modal), Agregar nota, Llamar al lote. Sin números de emergencia.
+- **¿Sale con algo?** (a pie o en auto): ver abajo.
+- «Ingresó con» dice «A pie» o «Vehículo · patente» según `arrivalMode` (sin patente no se muestra nada de más).
+- Links: Agregar nota, Llamar al lote. Sin números de emergencia.
 - «Aprobar salida y abrir» se deshabilita mostrando el motivo (falta baúl, menores sin avisar, bien sin autorizar).
 
-**Se pasó del horario (overstay):** el barrido no vence pases `in_site` / `awaiting_exit`. Una salida con la ventana vencida es un hold normal con `overstay = true` (aviso ámbar) y se aprueba igual. El **deny duro por QR vencido aplica solo al ingreso**. Al cerrar en definitiva se da de baja la credencial `v_…` del ASI.
+**¿Sale con algo?** Si la visita se lleva un bien (por ejemplo el propietario le regaló o vendió un televisor), el guardia toca «Lleva un bien», describe y saca foto (`POST …/goods`). El aviso `goods` llega a todas las cuentas del lote (titular y familiares). Estados en la misma tarjeta:
+- **Esperando al lote**: «Llamar al lote» y, si autoriza por teléfono o no contesta, el guardia confirma con su **código de guardia** (`POST …/phone-auth`).
+- **Autorizó: nombre** → se aprueba la salida.
+- **El lote rechazó** (`goodsDenied`, sale del aviso en `owner_notices`): el código de guardia ya no lo pisa. El guardia elige «Sale sin el bien» (`POST …/goods/clear`, queda la nota en el historial) o Denegar.
+
+**Se pasó del horario (overstay):** el barrido no vence pases `in_site` / `awaiting_exit`. Una salida con la ventana vencida es un hold normal con `overstay = true` (aviso ámbar) y se aprueba igual, pero **siempre en definitiva**: no se ofrece «Sale y vuelve» y la API rechaza `returns: true`. Para volver hace falta una autorización nueva del lote, como cualquier visita. El **deny duro por QR vencido aplica solo al ingreso**. Al cerrar en definitiva se da de baja la credencial `v_…` del ASI.
 
 ### Sale y vuelve (reingreso rápido)
 
