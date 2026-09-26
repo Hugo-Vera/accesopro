@@ -54,12 +54,11 @@ import {
   findTrunkCheck,
   trunkCheckHasPhoto,
   trunkPhotoKey,
-  isVisitKind,
-  personInsuranceKindFor,
   MINOR_KIND_ERROR,
   MINORS_KIND_ERROR,
 } from "./visitHold.js";
 import { isMinorBirthDate } from "./age.js";
+import { canonicalVisitKind } from "@accesopro/catalog";
 import { parseDniScan } from "./parseDni.js";
 import { readEventPhoto } from "./eventPhotos.js";
 import { getVisitAuthDefaultHours } from "./retention.js";
@@ -844,7 +843,7 @@ visitorsApi.get("/visitors/owner-passes", async (c) => {
       ownerWhatsapp: contact?.ownerWhatsapp ?? null,
       emergencyPhone: contact?.emergencyPhone ?? null,
       arrivalMode: r.arrivalMode,
-      visitKind: r.visitKind,
+      visitKind: canonicalVisitKind(r.visitKind),
       completeness: r.completeness,
       propertyId: r.propertyId,
       mapLat: r.mapLat,
@@ -934,6 +933,8 @@ visitorsApi.post("/visitors/approvals/:id/decide", async (c) => {
       trunkChecked?: boolean;
       exitPeople?: { guest?: boolean; companionIds?: string[]; vehicle?: boolean };
       returns?: boolean;
+      /** «Abrir igual»: pulsa aunque la regla registre sin abrir. */
+      open?: boolean;
     }
   >();
   const decision = body.decision === "denied" ? "denied" : body.decision === "approved" ? "approved" : null;
@@ -962,12 +963,13 @@ visitorsApi.post("/visitors/approvals/:id/decide", async (c) => {
         }
       : null,
     returns: typeof body.returns === "boolean" ? body.returns : undefined,
+    open: body.open === true,
   });
   if (!result.ok) {
     const fresh = (await listPendingApprovals(scoped.site.id)).find((x) => x.id === approvalId);
     return c.json({ error: result.error, missing: result.missing, item: fresh || null }, 400);
   }
-  return c.json({ ok: true, actuatorsFired: result.actuatorsFired || [] });
+  return c.json({ ok: true, actuatorsFired: result.actuatorsFired || [], barrierOpened: result.barrierOpened !== false });
 });
 
 visitorsApi.post("/visitors/announce", async (c) => {
@@ -1330,7 +1332,7 @@ visitorsApi.post("/visitors/checkin", async (c) => {
   if (!body.destination?.propertyId || !body.destination?.authorizedBy) {
     return c.json({ error: "Faltan datos de destino (Lote y Persona que autoriza)" }, 400);
   }
-  const kindRequested = body.destination.visitType === "event" ? "social" : body.destination.visitType || "social";
+  const kindRequested = canonicalVisitKind(body.destination.visitType);
   if (kindRequested !== "social") {
     if (isMinorBirthDate(body.identity.birthDate)) return c.json({ error: MINOR_KIND_ERROR }, 400);
     if ((body.minorsCount ?? 0) > 0) return c.json({ error: MINORS_KIND_ERROR }, 400);
@@ -1406,8 +1408,7 @@ visitorsApi.post("/visitors/checkin", async (c) => {
       ? "vehiculo"
       : "peatonal";
   const isVehicular = arrivalMode === "vehiculo";
-  const visitKindRaw = body.destination.visitType === "event" ? "social" : body.destination.visitType;
-  const visitKind = isVisitKind(visitKindRaw) ? visitKindRaw : "social";
+  const visitKind = kindRequested;
 
   if (isVehicular && body.vehicle?.plate) {
     const plateClean = normalizePlate(body.vehicle.plate);
@@ -1460,7 +1461,7 @@ visitorsApi.post("/visitors/checkin", async (c) => {
     insuranceId: null,
     personInsuranceId: null,
     licenseId: null,
-    visitType: body.destination.visitType || "social",
+    visitType: visitKind,
     status: "awaiting_entry",
     authorizedBy: body.destination.authorizedBy.trim(),
     passToken: token,
@@ -1528,7 +1529,7 @@ visitorsApi.post("/visitors/checkin", async (c) => {
   }
   if (body.personInsurance && (body.personInsurance.reuseId || body.personInsurance.validUntil)) {
     const r = await attachPersonInsuranceToPass(tenantId, passId, {
-      kind: personInsuranceKindFor(visitKind, body.personInsurance.kind),
+      kind: body.personInsurance.kind === "life" ? "life" : body.personInsurance.kind === "art" ? "art" : undefined,
       company: body.personInsurance.company,
       validUntil: dateStr(body.personInsurance.validUntil),
       documentBase64: body.personInsurance.documentBase64,

@@ -31,6 +31,7 @@ import { attendanceApi } from "./attendance.js";
 import { visitorsApi } from "./visitors.js";
 import { censusApi } from "./census.js";
 import { retentionApi, startRetentionPoller } from "./retention.js";
+import { entryRulesApi } from "./entryRules.js";
 import { eventStreamRoutes } from "./eventStream.js";
 import { credentialsApi } from "./credentials.js";
 import {
@@ -392,6 +393,7 @@ app.route("/api", attendanceApi);
 app.route("/api", visitorsApi);
 app.route("/api", censusApi);
 app.route("/api", retentionApi);
+app.route("/api", entryRulesApi);
 app.route("/api", alarmsApi);
 app.route("/api", dniEnrollApi);
 app.route("/api", credentialsApi);

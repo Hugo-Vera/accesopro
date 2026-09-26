@@ -37,7 +37,7 @@ export type FacialEventAlert = {
   scannedByName?: string;
   approvedByName?: string;
   approvedVia?: string;
-  /** «Visita», «Servicio / técnico», «Contratista», «Delivery». */
+  /** «Visita», «Obra / Servicio», «Delivery». */
   visitKindLabel?: string;
   arrivalLabel?: string;
   plate?: string;
@@ -47,6 +47,8 @@ export type FacialEventAlert = {
   openedViaLabel?: string;
   openReason?: "visit" | "manual" | "access_qr";
   actuatorName?: string;
+  /** Aprobado según la regla sin pulsar el relé. */
+  noBarrier?: boolean;
 };
 
 interface Props {

@@ -315,7 +315,11 @@ fun GuardApp(prefs: android.content.SharedPreferences) {
     LaunchedEffect(token, role) {
         knownIds = null
         if (token.isBlank() || isPreview || role == "resident") return@LaunchedEffect
+        var rulesAt = 0L
         while (true) {
+            if (System.currentTimeMillis() - rulesAt > 60_000) {
+                runCatching { api.fetchEntryRules() }.onSuccess { rulesAt = System.currentTimeMillis() }
+            }
             runCatching {
                 val next = api.listApprovals()
                 val ids = next.map { it.id }.toSet()
@@ -480,7 +484,11 @@ fun GuardApp(prefs: android.content.SharedPreferences) {
                     runCatching {
                         items = api.listApprovals()
                         if (outcome.approved) {
-                            notice = "Pasó ${outcome.guestName} · lote ${outcome.lotNumber}"
+                            notice = if (outcome.barrierOpened) {
+                                "Pasó ${outcome.guestName} · lote ${outcome.lotNumber}"
+                            } else {
+                                "Ingreso registrado sin abrir barrera · ${outcome.guestName} · lote ${outcome.lotNumber}"
+                            }
                         } else {
                             selected = items.find { it.id == result.approvalId }
                                 ?: items.find { it.passId == result.passId }
@@ -931,7 +939,7 @@ fun LoginScreen(
                     }
                 }
                 Text(
-                    text = "AccesoPro Guardia",
+                    text = "AccesoPro",
                     style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
                     color = MaterialTheme.colorScheme.onBackground,
                 )

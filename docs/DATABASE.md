@@ -120,6 +120,7 @@ Visita: ingreso en carril 1 (`visit_passes.scanned_in_at`) y egreso en carril 2 
 | `property_family_members` | Grupo familiar del lote (foto / Dahua / vigencia). `user_id` si el titular lo invitó a la app. |
 | `owner_notices` | Avisos al lote (walk-in 120 s, bien, traslado). `decided_by_user_id` = quién autorizó. |
 | `tenant_settings` | Retención comercial (días) y `visit_auth_default_hours` (validez QR si el titular no arma ventana; default 24) |
+| `tenant_entry_rules` | Reglas de ingreso por barrio × `visit_kind` (`social`/`service`/`delivery`) × `arrival_mode` (`peatonal`/`vehiculo`): `items` (JSON de tildes) y `open_barrier`. Sin fila = default de `packages/catalog` `entryRules.ts` |
 | `push_devices` | Tokens FCM (web / Android) por usuario |
 | `property_services` | Jardinero, empleada, horarios, fechas, foto |
 | `dahua_period_slots` | Huella de horario → índice `AccessTimeSchedule` por ASI |

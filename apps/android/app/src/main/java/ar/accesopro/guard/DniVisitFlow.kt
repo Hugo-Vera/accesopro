@@ -31,6 +31,8 @@ data class NewVisitOutcome(
     val lotNumber: String,
     val approved: Boolean,
     val message: String? = null,
+    /** false = la regla registró el ingreso sin pulsar el relé. */
+    val barrierOpened: Boolean = true,
 )
 
 /** "Solicitar siguientes documentos": solo lo que aplica al tipo de ingreso; el DNI no se repite si ya se leyó. */
@@ -38,10 +40,10 @@ data class NewVisitOutcome(
 fun RequiredDocsList(visitKind: String, arrivalMode: String, dniRead: Boolean) {
     val req = docRequirements(visitKind, arrivalMode)
     val docs = buildList {
-        if (!dniRead) add("DNI")
-        if (req.art) add(artLabelFor(visitKind))
+        if (req.dni && !dniRead) add("DNI")
+        if (req.art) add(artLabelFor(req))
         if (req.license) add("Licencia")
-        if (req.vehicle) add("Seguro del vehículo")
+        if (req.insurance) add("Seguro del vehículo")
         if (req.trunk) add("Revisión de baúl")
     }
     Surface(
@@ -120,7 +122,7 @@ fun HistoryCard(history: IdentityHistory?, compact: Boolean = false) {
                     history.lastComment?.let {
                         Text("Nota: $it", style = MaterialTheme.typography.bodySmall, color = ink, maxLines = 3)
                     }
-                    history.art?.let { DocHistoryLine(artLabelFor("service"), it, ink) }
+                    history.art?.let { DocHistoryLine("ART / seguro", it, ink) }
                     history.license?.let { DocHistoryLine("Licencia", it, ink) }
                 }
             }
@@ -187,7 +189,7 @@ fun NewVisitScreen(
             lots.find { it.id == lv.propertyId }?.let { picked = it; lotAuto = true }
         }
         if (!typeTouched) {
-            lv.visitType.takeIf { k -> VISIT_KINDS.any { it.first == k } }?.let { visitKind = it }
+            visitKind = canonicalVisitKind(lv.visitType)
             if (lv.arrivalMode == "vehiculo") {
                 arrivalMode = "vehiculo"
                 if (plate.isBlank()) plate = lv.patente ?: ""
@@ -201,7 +203,7 @@ fun NewVisitScreen(
         if (minor && !minorsAllowed(visitKind)) visitKind = "social"
     }
     val req = docRequirements(visitKind, arrivalMode)
-    val needsDocs = req.art || req.vehicle
+    val needsDocs = req.art || req.insurance || req.license || req.trunk
     val direct = !needsDocs && history?.hasAlerts != true && !minor
 
     BackHandler {
@@ -214,7 +216,7 @@ fun NewVisitScreen(
             parsed.dni.filter { it.isDigit() }.length < 7 -> "Falta el DNI"
             editing -> "Guardá o cancelá la edición de la identidad"
             lot == null -> "Elegí el lote"
-            arrivalMode == "vehiculo" && plate.isBlank() -> "Cargá la patente del vehículo"
+            arrivalMode == "vehiculo" && req.plate && plate.isBlank() -> "Cargá la patente del vehículo"
             requireAuthorizer && authorizedBy.isBlank() -> "Indicá quién autoriza"
             else -> null
         }
@@ -258,6 +260,7 @@ fun NewVisitScreen(
                     lot.lotNumber,
                     approved = decided.isSuccess,
                     message = decided.exceptionOrNull()?.message,
+                    barrierOpened = req.openBarrier,
                 )
             }.onSuccess(onDone)
                 .onFailure { error = it.message }
@@ -303,7 +306,14 @@ fun NewVisitScreen(
                             if (busy) {
                                 CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
                             } else {
-                                Text(if (direct) "Registrar y dejar pasar" else "Registrar y abrir ficha", fontWeight = FontWeight.Bold)
+                                Text(
+                                    when {
+                                        !direct -> "Registrar y abrir ficha"
+                                        req.openBarrier -> "Registrar y dejar pasar"
+                                        else -> "Registrar ingreso"
+                                    },
+                                    fontWeight = FontWeight.Bold,
+                                )
                             }
                         }
                     }

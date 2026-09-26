@@ -24,7 +24,7 @@ import {
 import { nid, normalizePlate, scopedSiteWithModule } from "./scope.js";
 import { makeVisitToken } from "./visitPass.js";
 import { revokeCredentialsForUser, upsertCredential } from "./credentials.js";
-import { ASI_CARD_TYPES, ASI_USER_TYPES } from "@accesopro/catalog";
+import { ASI_CARD_TYPES, ASI_USER_TYPES, canonicalVisitKind } from "@accesopro/catalog";
 import { applyRoleTemplate, userHasCapability } from "./grants.js";
 import { assertFeature, tenantFeatureEnabled } from "./features.js";
 import { isMinorBirthDate } from "./age.js";
@@ -1146,10 +1146,7 @@ residents.post("/me/visit-passes", async (c) => {
   const guestDni = dniDigits || null;
   const { isArrivalMode, replaceCompanions, attachVehicleInsurance } = await import("./visitHold.js");
   const arrivalMode = isArrivalMode(body.arrivalMode) ? body.arrivalMode : body.patente ? "vehiculo" : "peatonal";
-  const visitKind =
-    body.visitKind === "service" || body.visitKind === "contractor" || body.visitKind === "delivery"
-      ? body.visitKind
-      : "social";
+  const visitKind = canonicalVisitKind(body.visitKind);
   const maxUses = Math.max(0, Math.trunc(Number(body.maxUses ?? 0) || 0));
   const defaultHours = await getVisitAuthDefaultHours(scoped.tenantId);
   const { validFrom, validUntil } = resolveVisitPassWindow({

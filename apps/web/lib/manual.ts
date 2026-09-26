@@ -643,14 +643,13 @@ export const MANUAL_CHAPTERS: ManualChapter[] = [
             type: "table",
             headers: ["Tipo", "A pie", "Vehículo"],
             rows: [
-              ["Social / delivery", "DNI. Lote precargado", "+ patente + seguro con foto + licencia (vence + foto) + baúl"],
-              ["Servicio / técnico", "DNI + ART o seguro de vida (vence + constancia)", "Lo anterior + ART"],
-              ["Contratista", "DNI + ART (vence + constancia)", "Lo anterior + ART"],
+              ["Visita / delivery", "DNI. Lote precargado", "+ patente + seguro con foto + licencia (vence + foto) + baúl"],
+              ["Obra / Servicio", "DNI + ART o seguro de vida (vence + constancia)", "Lo anterior + datos del vehículo"],
             ],
           },
           {
             type: "note",
-            text: "Documento vencido: no pasa de ninguna forma. Seguro o licencia vencidos: «Pasar a peatonal» y se toman los datos como ingreso caminando. ART vencida: solo denegar. Ver capítulo «Contratistas, documentos y baúl».",
+            text: "Son los valores por defecto: el admin los cambia en Sistema → Reglas de ingreso (capítulo «Reglas de ingreso»). Documento vencido: no pasa de ninguna forma. Seguro o licencia vencidos: «Pasar a peatonal» y se toman los datos como ingreso caminando. ART vencida: solo denegar. Ver capítulo «Obra / Servicio, documentos y baúl».",
           },
         ],
       },
@@ -684,7 +683,7 @@ export const MANUAL_CHAPTERS: ManualChapter[] = [
             type: "ul",
             items: [
               "Vehículo: foto de tarjeta/póliza → recorte → compañía / póliza / vence. La foto queda en vehicle_insurances",
-              "Contratista: ART o seguro de vida → recorte + vence en person_insurances",
+              "Obra / Servicio: ART o seguro de vida → recorte + vence en person_insurances",
               "Licencia (opcional): misma cámara + vence en driver_licenses",
               "App: saca la foto y la manda al mismo document-scan; no hay otro pipeline",
             ],
@@ -704,7 +703,7 @@ export const MANUAL_CHAPTERS: ManualChapter[] = [
               ["Social: solo DNI y Aprobar", "Relé del carril; fila verde"],
               ["Auto: DNI + patente + seguro + baúl", "Sin baúl no aprueba"],
               ["Seguro vencido → Pedir autorización al titular", "Aviso ~4 h con Autorizar/Denegar; visit_qr sigue informativo"],
-              ["Contratista: DNI + ART + vence", "Sin ART no aprueba"],
+              ["Obra / Servicio: DNI + ART o seguro de vida + vence", "Sin ART no aprueba"],
               ["App: Escanear DNI + foto de constancia", "Mismos campos que la web. versionCode sin bumpear"],
               ["Botón Menor en la ficha", "Modal con cantidad 1 y +/−; no pide nombre ni DNI"],
               ["Salida con distinta cantidad", "Banner: ingresaron X. Marcar diferencia y avisar al lote de donde sale"],
@@ -742,13 +741,13 @@ export const MANUAL_CHAPTERS: ManualChapter[] = [
         blocks: [
           {
             type: "p",
-            text: "La ficha de visita precargada (web y app) avanza como hojas: Identidad, Vehículo si hay auto, ART si es contratista, Acompañantes, Egreso si es salida, y al final Aprobar y abrir. Cada Siguiente guarda. El QR solo identifica; el relé dispara en la última hoja.",
+            text: "La ficha de visita precargada (web y app) avanza como hojas: Identidad, Vehículo si hay auto, ART si es Obra / Servicio, Acompañantes, Egreso si es salida, y al final Aprobar y abrir. Cada Siguiente guarda. El QR solo identifica; el relé dispara en la última hoja.",
           },
           {
             type: "ul",
             items: [
               "Si el titular precargó DNI y nombre, el scan del plástico tiene que coincidir. Si no coinciden o faltan datos, Escanear DNI pisa nombre, número y el resto de campos del PDF417/QR y los guarda.",
-              "Entrada: DNI + seguro/baúl si viene en auto + ART si es contratista. Salida: baúl si hay vehículo; bien no registrado (foto + aviso al lote, barrera retenida); menores solo por cantidad (botón Menor), sin nombre ni DNI.",
+              "Entrada: DNI + seguro/baúl si viene en auto + ART si es Obra / Servicio. Salida: baúl si hay vehículo; bien no registrado (foto + aviso al lote, barrera retenida); menores solo por cantidad (botón Menor), sin nombre ni DNI.",
               "Cámara DNI: un solo recuadro. Lee QR del frente o PDF417 del dorso (más pistola HID). En Acompañantes la misma cámara carga DNI de adultos. Al salir de la página o ocultar la pestaña se apaga el stream.",
               "Carril automático: si el pase nunca entró, es ingreso. Si ya está in_site, es salida. No se elige IN/OUT a mano en web ni en la app.",
               "La lectura queda auditada: Tótem ASI, dashboard web o app de portería, y quién aprobó (sesión logueada o código de guardia en autorización telefónica).",
@@ -928,7 +927,7 @@ export const MANUAL_CHAPTERS: ManualChapter[] = [
   },
   {
     id: "contratistas-documentos",
-    title: "Contratistas, documentos y baúl",
+    title: "Obra / Servicio, documentos y baúl",
     updated: "24/09/2026",
     summary:
       "Una sola regla de documentos para web y app según el tipo de visita y cómo llega. Vencido no pasa. El baúl se revisa con descripción y fotos al ingreso, y a la salida se comparan las dos revisiones.",
@@ -939,15 +938,14 @@ export const MANUAL_CHAPTERS: ManualChapter[] = [
         blocks: [
           {
             type: "p",
-            text: "Antes de cargar papeles, el guardia marca el tipo de visita (Social, Servicio / técnico, Contratista, Delivery) y cómo llega (A pie o Vehículo; un remís o app de viaje cuenta como A pie porque el auto no entra). En la app aparece después de elegir el lote al leer un DNI sin pase; en la ficha es el paso «Tipo de ingreso». Si la persona ya vino, se precarga lo de la última visita.",
+            text: "Antes de cargar papeles, el guardia marca el tipo de visita (Visita, Obra / Servicio, Delivery) y cómo llega (A pie o Vehículo; un remís o app de viaje cuenta como A pie porque el auto no entra). En la app aparece después de elegir el lote al leer un DNI sin pase; en la ficha es el paso «Tipo de ingreso». Si la persona ya vino, se precarga lo de la última visita.",
           },
           {
             type: "table",
             headers: ["Tipo", "A pie", "Vehículo"],
             rows: [
-              ["Social / delivery", "DNI", "+ patente + seguro con foto de la tarjeta + licencia (vence + foto) + baúl"],
-              ["Servicio / técnico", "DNI + ART o seguro de vida (vence + constancia)", "Lo anterior + ART"],
-              ["Contratista", "DNI + ART (vence + constancia)", "Lo anterior + ART"],
+              ["Visita / delivery", "DNI", "+ patente + seguro con foto de la tarjeta + licencia (vence + foto) + baúl"],
+              ["Obra / Servicio", "DNI + ART o seguro de vida (vence + constancia)", "Lo anterior + datos del vehículo"],
             ],
           },
           {
@@ -1017,7 +1015,7 @@ export const MANUAL_CHAPTERS: ManualChapter[] = [
     title: "Salida rápida y sale y vuelve",
     updated: "24/09/2026",
     summary:
-      "La salida es una sola pantalla de solo lectura con los controles que aplican. Quien se pasó del horario sale igual con aviso. Un contratista o acompañante puede salir y volver con un reingreso rápido.",
+      "La salida es una sola pantalla de solo lectura con los controles que aplican. Quien se pasó del horario sale igual con aviso. Alguien de Obra / Servicio o un acompañante puede salir y volver con un reingreso rápido.",
     sections: [
       {
         id: "pantalla-salida",
@@ -1196,8 +1194,8 @@ export const MANUAL_CHAPTERS: ManualChapter[] = [
             type: "ul",
             items: [
               "Nacimiento muestra la edad («23/09/2011 · 15 años»). Si es menor de 18 aparece «(menor de edad)» en rojo y la alerta «Menor de edad · N años»",
-              "Un menor solo puede ingresar como Visita: Servicio, Contratista y Delivery quedan ocultos y no se ofrece Registrar y dejar pasar; va a la ficha",
-              "El contador Menores (chicos que acompañan sin DNI) existe solo para Visita. Servicio técnico, contratista y delivery no ingresan con menores",
+              "Un menor solo puede ingresar como Visita: Obra / Servicio y Delivery quedan ocultos y no se ofrece Registrar y dejar pasar; va a la ficha",
+              "El contador Menores (chicos que acompañan sin DNI) existe solo para Visita. Obra / Servicio y Delivery no ingresan con menores",
               "El servidor aplica la misma regla: si se cambia el tipo a Servicio con un menor, no deja aprobar",
             ],
           },
@@ -1220,6 +1218,92 @@ export const MANUAL_CHAPTERS: ManualChapter[] = [
           {
             type: "note",
             text: "Probar: con el agent apagado, Aprobar y abrir debe dar error y no abrir al volver a prenderlo. Con el agent prendido, abre y la ficha desaparece de la cola.",
+          },
+        ],
+      },
+    ],
+  },
+  {
+    id: "reglas-ingreso",
+    title: "Reglas de ingreso",
+    updated: "26/09/2026",
+    summary:
+      "El admin del barrio decide qué se le pide a cada tipo de visita según cómo llega y si al aprobar se abre la barrera. Web, app y servidor usan la misma regla. Un peatón puede registrarse sin abrir la barrera.",
+    sections: [
+      {
+        id: "donde-reglas",
+        title: "Dónde se configura",
+        blocks: [
+          {
+            type: "p",
+            text: "Sistema → Reglas de ingreso (solo admin, con el módulo Visitas contratado). Hay una fila por tipo y modo: Visita, Obra / Servicio y Delivery, cada uno A pie y Vehículo. «Configurar» abre un modal con tildes agrupadas; Escape cierra sin guardar.",
+          },
+          {
+            type: "table",
+            headers: ["Grupo", "Qué se puede tildar"],
+            rows: [
+              ["Identidad", "DNI"],
+              ["Vehículo (solo en Vehículo)", "Patente · Seguro del auto (+ foto de la tarjeta) · Licencia (+ foto) · Revisión del baúl"],
+              ["Obra / Servicio", "ART (+ acepta seguro de vida) (+ foto de la constancia)"],
+              ["Al aprobar", "Abrir la barrera"],
+            ],
+          },
+          {
+            type: "note",
+            text: "Una tilde hija (foto, seguro de vida) se desactiva si el documento padre no está tildado. «Restaurar valores por defecto» vuelve la fila al catálogo y saca la marca «Personalizada».",
+          },
+        ],
+      },
+      {
+        id: "valores-defecto",
+        title: "Valores por defecto",
+        blocks: [
+          {
+            type: "table",
+            headers: ["Tipo", "A pie", "Vehículo"],
+            rows: [
+              ["Visita", "DNI · registra sin abrir", "DNI + patente + seguro con foto + licencia con foto + baúl · abre"],
+              ["Obra / Servicio", "DNI + ART o seguro de vida con constancia · registra sin abrir", "Lo mismo + datos del vehículo · abre"],
+              ["Delivery", "DNI · registra sin abrir", "Como Visita en vehículo · abre"],
+            ],
+          },
+          {
+            type: "p",
+            text: "Servicio y Contratista se unificaron en Obra / Servicio. Los pases viejos cargados como contratista se leen como Obra / Servicio sin tocar la base.",
+          },
+        ],
+      },
+      {
+        id: "sin-barrera",
+        title: "Registrar sin abrir la barrera",
+        blocks: [
+          {
+            type: "ul",
+            items: [
+              "Si la regla no abre, el botón de la ficha dice «Registrar ingreso» (o «Registrar salida» / «Registrar reingreso»). Se guarda todo igual: documentos, acompañantes, presencia y aviso al lote",
+              "«Abrir igual» registra y además manda el pulso al relé del carril, para el caso excepcional",
+              "La tarjeta del historial dice «sin abrir barrera» y el detalle muestra «Barrera: No se abrió (regla de ingreso)» con quién registró",
+              "La regla aplica al ingreso y a la salida. En la salida el baúl se compara solo si la regla pide revisión del baúl",
+              "La app de portería toma las reglas del servidor (se refrescan cada minuto) y muestra los mismos botones",
+            ],
+          },
+        ],
+      },
+      {
+        id: "probar-reglas",
+        title: "Cómo probar",
+        blocks: [
+          {
+            type: "table",
+            headers: ["Paso", "Resultado"],
+            rows: [
+              ["Visita A pie: DNI y «Registrar ingreso»", "No pulsa el relé; historial «Ingresó sin abrir barrera»"],
+              ["Misma ficha con «Abrir igual»", "Registra y abre"],
+              ["Visita Vehículo", "Pide patente, seguro, licencia y baúl; «Aprobar y abrir»"],
+              ["Destildar Licencia en Visita · Vehículo", "La ficha web y la app dejan de pedir la licencia"],
+              ["Obra / Servicio A pie con seguro de vida", "Se acepta en lugar de ART si la tilde está puesta"],
+              ["Salida A pie", "«Registrar salida» sin pulso; en Vehículo sin tilde de baúl no pide revisarlo"],
+            ],
           },
         ],
       },

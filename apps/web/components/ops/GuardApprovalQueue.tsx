@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { AlertTriangle, Baby, Bell, Check, ChevronDown, FileCheck2, Footprints, Info, Minus, Pencil, Phone, Plus, QrCode, Trash2, X } from "lucide-react";
+import { AlertTriangle, Baby, Bell, Check, ChevronDown, DoorOpen, FileCheck2, Footprints, Info, Minus, Pencil, Phone, Plus, QrCode, Trash2, X } from "lucide-react";
 import { api, apiUrl, withTenant } from "@/lib/api";
 import { useEscapeKey } from "@/hooks/useEscapeKey";
 import { LiveVisitHoldToast, type VisitHoldAlert } from "@/components/ops/LiveVisitHoldToast";
@@ -38,6 +38,7 @@ import {
   requiredDocsFor,
   visitKindLabel,
   type ArrivalModeId,
+  type EntryRule,
   type FichaPage,
   type VisitKindId,
 } from "@/lib/visitDocs";
@@ -100,8 +101,18 @@ function HistoryBox({ history }: { history: IdentityHistory | null }) {
   );
 }
 
-function RequiredDocs({ visitKind, arrivalMode, dniRead }: { visitKind: string; arrivalMode: string; dniRead: boolean }) {
-  const docs = requiredDocsFor(visitKind, arrivalMode, dniRead);
+function RequiredDocs({
+  visitKind,
+  arrivalMode,
+  dniRead,
+  rules,
+}: {
+  visitKind: string;
+  arrivalMode: string;
+  dniRead: boolean;
+  rules: EntryRule[] | null;
+}) {
+  const docs = requiredDocsFor(visitKind, arrivalMode, dniRead, rules);
   return (
     <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-[12px] text-slate-800 dark:border-slate-700 dark:bg-slate-950 dark:text-slate-100">
       {docs.length ? (
@@ -210,6 +221,8 @@ export type GuardApprovalItem = {
   needsArt?: boolean;
   needsLicense?: boolean;
   needsVehicle?: boolean;
+  /** Regla del barrio para el tipo y medio del pase. */
+  rule?: EntryRule | null;
   visitKind?: string;
   missing: string[];
   expiredDocs?: string[];
@@ -355,6 +368,14 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
   const [licReuse, setLicReuse] = useState<string | null>(null);
   const [trunkDraft, setTrunkDraft] = useState<TrunkDraft>({ description: "", add: [], remove: [] });
   const [zoom, setZoom] = useState<{ photos: string[]; index: number } | null>(null);
+  const [entryRules, setEntryRules] = useState<EntryRule[] | null>(null);
+
+  useEffect(() => {
+    if (!enabled || !tenantId) return;
+    api<{ rules: EntryRule[] }>(withTenant("/api/visitors/entry-rules", tenantId))
+      .then((d) => setEntryRules(d.rules || null))
+      .catch(() => undefined);
+  }, [enabled, tenantId]);
 
   const load = useCallback(() => {
     if (!enabled || !tenantId) return;
@@ -445,13 +466,14 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
     current && (current.reason === "expired" || current.reason === "too_early" || current.windowState === "expired" || current.windowState === "too_early"),
   );
   const exitMode = Boolean(current && (current.sentido === "out" || current.reentry));
-  const req = docRequirements(visitKind, arrivalMode);
+  const rules = entryRules ?? (current?.rule ? [current.rule] : null);
+  const req = docRequirements(visitKind, arrivalMode, rules);
   const expiredDocs = !exitMode ? current?.expiredDocs || [] : [];
   const guestAge = current ? current.guestAge ?? ageFrom(current.guestBirthDate) : null;
   const guestMinor = isMinorAge(guestAge);
   const canApprove = canDecide && !passExpired && expiredDocs.length === 0 && !(guestMinor && !minorsAllowed(visitKind));
   const trunkSaved = current?.trunkIn;
-  const artLabel = artLabelFor(visitKind);
+  const artLabel = artLabelFor(req);
   const statusLine = current && !exitMode ? entryStatusLine(current, passExpired) : null;
   useEscapeKey(() => {
     if (zoom) {
@@ -549,9 +571,9 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
     };
     out.visitKind = visitKind;
     out.arrivalMode = arrivalMode;
-    if (req.vehicle) {
+    if (arrivalMode === "vehiculo") {
       out.patente = plate || undefined;
-      if (insReuse || insCompany || insPolicy || insUntil || vehDoc) {
+      if (req.insurance && (insReuse || insCompany || insPolicy || insUntil || vehDoc)) {
         out.insurance = {
           plate,
           company: insCompany,
@@ -561,7 +583,7 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
           reuseId: insReuse || undefined,
         };
       }
-      if (licReuse || licNumber || licUntil || licDoc) {
+      if (req.license && (licReuse || licNumber || licUntil || licDoc)) {
         out.driverLicense = {
           licenseNumber: licNumber,
           validUntil: licUntil,
@@ -572,7 +594,7 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
     }
     if (req.art && (artReuse || artUntil || artDoc)) {
       out.personInsurance = {
-        kind: personInsuranceKindFor(visitKind),
+        kind: personInsuranceKindFor(req),
         company: artCompany,
         validUntil: artUntil,
         documentBase64: artDoc?.base64 || undefined,
@@ -612,7 +634,7 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
     setTrunkDraft((d) => ({ description: d.description, add: [], remove: [] }));
   }
 
-  async function decide(decision: "approved" | "denied") {
+  async function decide(decision: "approved" | "denied", open = false) {
     if (!current || !canDecide) return;
     if (decision === "approved" && passExpired) {
       setError("El pase está vencido. Solo se puede denegar.");
@@ -628,7 +650,7 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
       if (decision === "approved") await saveTrunkIfDirty();
       await api(withTenant(`/api/visitors/approvals/${current.id}/decide`, tenantId), {
         method: "POST",
-        body: JSON.stringify({ decision, comment, trunkChecked, ...fichaPayload() }),
+        body: JSON.stringify({ decision, comment, trunkChecked, open, ...fichaPayload() }),
       });
       setOpenId(null);
       setPreview(null);
@@ -1068,7 +1090,11 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
 
               <HistoryBox history={history} />
 
-              <RequiredDocs visitKind={visitKind} arrivalMode={arrivalMode} dniRead={dniMatch !== "idle" || (Boolean(current.guestDni) && !current.missing.includes("dni"))}
+              <RequiredDocs
+                visitKind={visitKind}
+                arrivalMode={arrivalMode}
+                rules={rules}
+                dniRead={dniMatch !== "idle" || (Boolean(current.guestDni) && !current.missing.includes("dni"))}
               />
 
               {expiredDocs.length ? (
@@ -1138,11 +1164,14 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
               {req.vehicle ? (
                 <div id="ficha-vehicle" className="scroll-mt-2 space-y-3">
                   <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Vehículo</p>
-                  <label className="block">
-                    Patente
-                    <input value={plate} onChange={(e) => setPlate(e.target.value.toUpperCase())} className={`${INPUT_CLS} uppercase`} />
-                  </label>
+                  {req.plate ? (
+                    <label className="block">
+                      Patente
+                      <input value={plate} onChange={(e) => setPlate(e.target.value.toUpperCase())} className={`${INPUT_CLS} uppercase`} />
+                    </label>
+                  ) : null}
 
+                  {req.insurance ? (
                   <div className="space-y-2 rounded-lg border border-slate-200 p-2 dark:border-slate-700">
                     <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Seguro del auto</p>
                     {current.insurance?.validUntil ? (
@@ -1193,7 +1222,9 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
                       />
                     ) : null}
                   </div>
+                  ) : null}
 
+                  {req.license ? (
                   <div className="space-y-2 rounded-lg border border-slate-200 p-2 dark:border-slate-700">
                     <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Licencia de conducir</p>
                     {current.license?.validUntil ? (
@@ -1248,17 +1279,20 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
                       />
                     ) : null}
                   </div>
+                  ) : null}
 
-                  <TrunkEditor
-                    tenantId={tenantId}
-                    saved={current.trunkIn}
-                    draft={trunkDraft}
-                    onChange={setTrunkDraft}
-                    onZoom={(photos, index) => setZoom({ photos, index })}
-                    onError={setError}
-                    disabled={!canDecide}
-                    title="Revisión del baúl al ingreso"
-                  />
+                  {req.trunk ? (
+                    <TrunkEditor
+                      tenantId={tenantId}
+                      saved={current.trunkIn}
+                      draft={trunkDraft}
+                      onChange={setTrunkDraft}
+                      onZoom={(photos, index) => setZoom({ photos, index })}
+                      onError={setError}
+                      disabled={!canDecide}
+                      title="Revisión del baúl al ingreso"
+                    />
+                  ) : null}
                 </div>
               ) : null}
 
@@ -1551,6 +1585,18 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
                     <X className="h-4 w-4" />
                     Denegar
                   </button>
+                  {!req.openBarrier ? (
+                    <button
+                      type="button"
+                      disabled={busy || !canApprove}
+                      onClick={() => void decide("approved", true)}
+                      title="Registra el ingreso y pulsa el relé"
+                      className="inline-flex items-center justify-center gap-1 rounded-xl border border-emerald-600 px-3 py-2 text-xs font-bold text-emerald-700 disabled:opacity-50 dark:text-emerald-300"
+                    >
+                      <DoorOpen className="h-4 w-4" />
+                      Abrir igual
+                    </button>
+                  ) : null}
                   <button
                     type="button"
                     disabled={busy || !canApprove}
@@ -1558,9 +1604,14 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
                     className="inline-flex flex-1 items-center justify-center gap-1 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white disabled:opacity-50"
                   >
                     <Check className="h-4 w-4" />
-                    Aprobar y abrir
+                    {req.openBarrier ? "Aprobar y abrir" : "Registrar ingreso"}
                   </button>
                 </div>
+                {!req.openBarrier ? (
+                  <p className="mt-1.5 text-[11px] text-slate-500 dark:text-slate-400">
+                    La regla de {visitKindLabel(visitKind)} · {arrivalModeLabel(arrivalMode)} registra sin abrir la barrera.
+                  </p>
+                ) : null}
               </div>
             ) : error ? (
               <p className="px-5 pb-4 text-[11px] text-rose-600 dark:text-rose-400">{error}</p>

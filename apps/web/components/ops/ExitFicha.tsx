@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { AlertTriangle, Baby, Camera, Check, LogIn, LogOut, Minus, PackageSearch, Phone, Plus, X } from "lucide-react";
+import { AlertTriangle, Baby, Camera, Check, DoorOpen, LogIn, LogOut, Minus, PackageSearch, Phone, Plus, X } from "lucide-react";
 import { api, withTenant } from "@/lib/api";
 import { Modal } from "@/components/ui/Modal";
 import {
@@ -87,8 +87,10 @@ export function ExitFicha({ item, tenantId, canDecide, onClose, onDone, onReload
     (item.companions || []).filter((c) => c.presence === "out_temp").length;
   const minorsInside = item.minorsInCount ?? 0;
   const minorsDefault = reentry ? item.minorsOutTemp ?? 0 : item.minorsCount ?? minorsInside;
-  const needsVehicle = Boolean(item.needsVehicle ?? item.needsTrunk);
-  const arrivedByCar = item.arrivalMode === "vehiculo" || needsVehicle;
+  const needsVehicle = item.arrivalMode === "vehiculo";
+  const arrivedByCar = needsVehicle;
+  const checksTrunk = item.rule ? item.rule.items.baul : Boolean(item.needsTrunk);
+  const opensBarrier = item.rule ? item.rule.openBarrier : true;
 
   const [guest, setGuest] = useState(guestHere);
   const [compIds, setCompIds] = useState<string[]>(compsHere.map((c) => c.id as string));
@@ -143,8 +145,8 @@ export function ExitFicha({ item, tenantId, canDecide, onClose, onDone, onReload
   if (!canDecide) blockReason = "Esperando que acerque el QR";
   else if (!selectedCount) blockReason = reentry ? "Marcá quién vuelve" : "Marcá quién sale";
   else if (reentryExpired.length) blockReason = "Documento vencido";
-  else if (!reentry && vehicle && !trunkOk && !trunkDraftDirty(trunkDraft, roundTrunk)) blockReason = "Falta revisar el baúl";
-  else if (reentry && vehicle && !reentryTrunkReady) blockReason = "Falta revisar el baúl";
+  else if (!reentry && vehicle && checksTrunk && !trunkOk && !trunkDraftDirty(trunkDraft, roundTrunk)) blockReason = "Falta revisar el baúl";
+  else if (reentry && vehicle && checksTrunk && !reentryTrunkReady) blockReason = "Falta revisar el baúl";
   else if (!reentry && item.goodsAlert && item.goodsDenied) blockReason = "El lote rechazó el bien: sale sin él o denegá";
   else if (!reentry && item.goodsAlert && !item.goodsAuthorized) blockReason = "Esperando que el lote autorice el bien";
   else if (minorsMismatch && !item.minorsMismatchNotified) blockReason = "Avisá al lote la diferencia de menores";
@@ -260,12 +262,12 @@ export function ExitFicha({ item, tenantId, canDecide, onClose, onDone, onReload
     }
   }
 
-  async function decide(decision: "approved" | "denied") {
+  async function decide(decision: "approved" | "denied", open = false) {
     if (!canDecide) return;
     setBusy(true);
     setError(null);
     try {
-      if (decision === "approved" && (vehicle || trunkEdit)) await saveTrunk();
+      if (decision === "approved" && ((vehicle && checksTrunk) || trunkEdit)) await saveTrunk();
       await api(withTenant(`/api/visitors/approvals/${item.id}/decide`, tenantId), {
         method: "POST",
         body: JSON.stringify({
@@ -275,6 +277,7 @@ export function ExitFicha({ item, tenantId, canDecide, onClose, onDone, onReload
           minorsCount: minors,
           exitPeople: { guest, companionIds: compIds, vehicle },
           returns: !reentry && !item.overstay && returns,
+          open,
         }),
       });
       onDone();
@@ -501,7 +504,7 @@ export function ExitFicha({ item, tenantId, canDecide, onClose, onDone, onReload
             {reentry ? "Vuelve con el vehículo" : "Sale con el vehículo"}
             {item.patente ? <span className="font-normal text-slate-500">· {item.patente}</span> : null}
           </label>
-          {vehicle && !reentry ? (
+          {vehicle && !reentry && checksTrunk ? (
             <>
               <TrunkSavedCard tenantId={tenantId} check={item.trunkIn} title="Baúl al ingreso" onZoom={onZoom} />
               <label className="flex items-center gap-2 text-[11px] font-semibold text-slate-800 dark:text-slate-100">
@@ -691,6 +694,17 @@ export function ExitFicha({ item, tenantId, canDecide, onClose, onDone, onReload
               <X className="h-4 w-4" />
               Denegar
             </button>
+            {!opensBarrier ? (
+              <button
+                type="button"
+                disabled={busy || Boolean(blockReason)}
+                onClick={() => void decide("approved", true)}
+                className="inline-flex items-center justify-center gap-1 rounded-xl border border-emerald-600 px-3 py-2 text-xs font-bold text-emerald-700 disabled:opacity-50 dark:text-emerald-300"
+              >
+                <DoorOpen className="h-4 w-4" />
+                Abrir igual
+              </button>
+            ) : null}
             <button
               type="button"
               disabled={busy || Boolean(blockReason)}
@@ -698,7 +712,13 @@ export function ExitFicha({ item, tenantId, canDecide, onClose, onDone, onReload
               className="inline-flex flex-1 items-center justify-center gap-1 rounded-xl bg-emerald-600 px-3 py-2 text-xs font-bold text-white disabled:opacity-50"
             >
               <Check className="h-4 w-4" />
-              {reentry ? "Aprobar reingreso y abrir" : "Aprobar salida y abrir"}
+              {opensBarrier
+                ? reentry
+                  ? "Aprobar reingreso y abrir"
+                  : "Aprobar salida y abrir"
+                : reentry
+                  ? "Registrar reingreso"
+                  : "Registrar salida"}
             </button>
           </div>
           {blockReason ? <p className="text-right text-[11px] font-semibold text-rose-700 dark:text-rose-300">{blockReason}</p> : null}

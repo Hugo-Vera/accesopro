@@ -82,6 +82,8 @@ data class ApprovalItem(
     val goodsAuthorizedByName: String? = null,
     /** El lote rechazó el bien: no se lo lleva (o se deniega la salida). */
     val goodsDenied: Boolean = false,
+    /** Regla del barrio para el tipo y medio del pase (qué se pide y si abre la barrera). */
+    val rule: EntryRule? = null,
 )
 
 /** Documento vinculado o en archivo (ART, seguro del auto, licencia). validUntil = AAAA-MM-DD. */
@@ -319,6 +321,32 @@ class GuardApi(
         Unit
     }
 
+    /** Reglas de ingreso del barrio; quedan en [EntryRules] para armar la ficha. */
+    suspend fun fetchEntryRules(): List<EntryRule> = withContext(Dispatchers.IO) {
+        val arr = get("/api/visitors/entry-rules").optJSONArray("rules") ?: JSONArray()
+        val rules = (0 until arr.length()).mapNotNull { parseRule(arr.optJSONObject(it)) }
+        if (rules.isNotEmpty()) EntryRules.rules = rules
+        rules
+    }
+
+    private fun parseRule(o: JSONObject?): EntryRule? {
+        if (o == null) return null
+        val items = o.optJSONObject("items") ?: JSONObject()
+        val map = buildMap {
+            val keys = items.keys()
+            while (keys.hasNext()) {
+                val k = keys.next()
+                put(k, items.optBoolean(k, false))
+            }
+        }
+        return EntryRule(
+            visitKind = canonicalVisitKind(o.optString("visitKind")),
+            arrivalMode = canonicalArrivalMode(o.optString("arrivalMode")),
+            items = map,
+            openBarrier = o.optBoolean("openBarrier", false),
+        )
+    }
+
     suspend fun listApprovals(): List<ApprovalItem> = withContext(Dispatchers.IO) {
         val json = get("/api/visitors/approvals")
         val arr = json.optJSONArray("items") ?: JSONArray()
@@ -382,11 +410,14 @@ class GuardApi(
         exitPeople: ExitPeople? = null,
         returns: Boolean? = null,
         minorsCount: Int? = null,
+        /** «Abrir igual»: pulsa el relé aunque la regla registre sin abrir. */
+        open: Boolean = false,
     ) = withContext(Dispatchers.IO) {
         val body = JSONObject()
             .put("decision", decision)
             .put("comment", comment)
             .put("trunkChecked", trunkChecked)
+        if (open) body.put("open", true)
         if (guestDni.isNotBlank()) body.put("guestDni", guestDni)
         exitPeople?.let { p ->
             body.put(
@@ -636,6 +667,7 @@ class GuardApi(
             goodsPhotoUrl = o.optStringOrNull("goodsPhotoUrl"),
             goodsAuthorizedByName = o.optStringOrNull("goodsAuthorizedByName"),
             goodsDenied = o.optBoolean("goodsDenied"),
+            rule = parseRule(o.optJSONObject("rule")),
         )
     }
 

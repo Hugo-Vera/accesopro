@@ -127,7 +127,7 @@ Pensado para ~150 ingresos por hora en hora pico: 2–3 toques por persona.
 - **Constancias en la app**: ML Kit Document Scanner (recorte y perspectiva de Google Play Services); si el equipo no lo tiene, cae al escáner propio `DocScan.kt`.
 - **Fechas**: instantes (pase, último ingreso) en `America/Argentina/Buenos_Aires`; vencimientos de documentos son días de calendario sin corrimiento de zona.
 - La Ñ del PDF417 se lee en Latin-1 (app) y `parseDni.ts` repara el mojibake (`Ã‘` → Ñ).
-- **Edad y menores**: Nacimiento muestra la edad (`ageFrom` en `visitDocs.ts` / `FichaParts.kt`; la API manda `guestBirthDate` y `guestAge` en cada aprobación). Invitado **menor de 18**: alerta roja, solo puede ingresar como **Visita** (`social`), sin «Registrar y dejar pasar». El contador **Menores** (acompañantes sin DNI) existe solo para `social`: servicio, contratista y delivery no ingresan con menores. El servidor lo aplica en check-in, anuncio, cambio de tipo, contador y `decide` (`MINOR_KIND_ERROR` / `MINORS_KIND_ERROR` en `visitHold.ts`); el reingreso no se re-evalúa.
+- **Edad y menores**: Nacimiento muestra la edad (`ageFrom` en `visitDocs.ts` / `FichaParts.kt`; la API manda `guestBirthDate` y `guestAge` en cada aprobación). Invitado **menor de 18**: alerta roja, solo puede ingresar como **Visita** (`social`), sin «Registrar y dejar pasar». El contador **Menores** (acompañantes sin DNI) existe solo para `social`: Obra / Servicio y delivery no ingresan con menores. El servidor lo aplica en check-in, anuncio, cambio de tipo, contador y `decide` (`MINOR_KIND_ERROR` / `MINORS_KIND_ERROR` en `visitHold.ts`); el reingreso no se re-evalúa.
 - **Apertura sin colgarse**: `GET /agent/commands?lane=fast` entrega solo `open` / `dahua_open` al hilo `_open_commands_worker` del agent (0,2 s); `lane=slow` el resto (enrolamientos). Lo entregado pasa a `running`. `waitOpenCommand` (`actuatorExec.ts`): si vence y el comando sigue `pending` lo marca `cancelled` y devuelve «No se abrió: el agent no respondió. Reintentá.» (la barrera no abre después con la ficha pendiente); si ya está `running` lo da por enviado y la aprobación se cierra. El enrolamiento del pase en el check-in corre en segundo plano.
 - **Quién abrió** (`openContext.ts`): cada pulso pedido por AccesoPro guarda 30 s, por ASI, el contexto (visita: nombre, DNI, lote, tipo, medio, patente, quién autorizó; guardia y origen `app` | `web`, por `X-AccesoPro-Client: guard-app` o Bearer sin cookie). Cuando el ASI reporta el relé como Method 4, `POST /agent/events` lo usa: si ya hay tarjeta (QR en el lector, Mi QR) le pega foto y guardia; si no (visita por DNI, apertura manual) la fila nueva sale con esos datos en vez de «Apertura remota». El historial y el detalle de portería muestran DNI, Destino, Tipo, Patente, Autorizó, Aprobó/Abrió (guardia · App de portería | Dashboard) y Relé.
 
@@ -160,15 +160,20 @@ El contratista que va a buscar material o un acompañante que sale un rato: en l
 
 Cada salida o reingreso manda al lote un aviso informativo `visit_info` («X salió, vuelve» / «X volvió a ingresar»), sin botones. `guard_approvals` guarda `exit_people` (JSON `{guest, companionIds, vehicle}`), `returns` y `reentry`; la revisión de baúl lleva `round` para no pisar la de otra vuelta.
 
-### Documentos por tipo de visita (regla única)
+### Documentos por tipo de visita (reglas de ingreso)
 
-Fuente: `docRequirements(visitKind, arrivalMode)` en `apps/api/src/visitHold.ts`. Espejo en `apps/web/lib/visitDocs.ts` y `apps/android/.../FichaParts.kt`. No duplicar la regla en otro lado.
+Tipos: **Visita** (`social`), **Obra / Servicio** (`service`; los pases viejos `contractor` se leen como `service`, sin reescribir la base) y **Delivery**. Medios: A pie y Vehículo.
+
+Fuente: `packages/catalog/src/entryRules.ts` (ítems, defaults, `normalizeEntryRule`, `entryRuleSections`). El admin la cambia por barrio en **Sistema → Reglas de ingreso** (`/dashboard/reglas-ingreso`, capability `core.config`); lo guardado va a `tenant_entry_rules` y pisa el default. API: `apps/api/src/entryRules.ts` (`GET/PUT /api/tenants/:id/entry-rules[/:kind/:mode]`, portería `GET /api/visitors/entry-rules`). Faltantes del server: `visitFieldGaps` en `apps/api/src/visitRequirements.ts`. Web (`apps/web/lib/visitDocs.ts`) y app (`FichaParts.kt`) arman `docRequirements` desde la regla; la ficha trae `rule`. No duplicar la regla en otro lado.
+
+Defaults:
 
 | Tipo | A pie (incluye remís / app de viaje) | Vehículo |
 |---|---|---|
-| Social / delivery | DNI | + patente + seguro con foto de la tarjeta + licencia (vence + foto) + baúl |
-| Servicio / técnico | DNI + ART o seguro de vida (vence + constancia) | lo anterior + ART |
-| Contratista | DNI + ART (vence + constancia) | lo anterior + ART |
+| Visita / delivery | DNI · registra sin abrir | + patente + seguro con foto de la tarjeta + licencia (vence + foto) + baúl · abre |
+| Obra / Servicio | DNI + ART o seguro de vida (vence + constancia) · registra sin abrir | lo anterior + datos del vehículo · abre |
+
+**Registrar sin abrir la barrera** (`openBarrier = false`): `decideGuardApproval` registra todo (documentos, presencia, aviso al lote) pero no llama a `openForVisit`. El evento `visit_scan` lleva `barrierOpened: false`; la tarjeta del carril se parchea con `noBarrier: true` o se crea una `qr_access` nueva con los datos de la visita («sin abrir barrera»). El botón dice «Registrar ingreso / salida / reingreso»; «Abrir igual» manda `open: true` y pulsa el relé. Aplica al ingreso y a la salida; en la salida el baúl se compara solo si la regla tiene `baul`, y la presencia del vehículo sale de `arrivalMode`.
 
 - El guardia elige **tipo** y **cómo llega** en el chip de la cabecera de la ficha o en **Nueva visita** de la app. Cambiar a un medio sin vehículo borra patente, seguro, licencia y la revisión del baúl de ingreso.
 - **Vencido no pasa**, sin excepción del titular ni autorización verbal. Seguro o licencia vencidos: **Pasar a peatonal** (`POST /api/visitors/approvals/:id/pedestrian`) y se sigue como ingreso caminando. ART vencida: solo denegar. `POST …/expired-exception` responde 410.

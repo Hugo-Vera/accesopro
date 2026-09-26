@@ -147,10 +147,10 @@ private fun EntryFicha(
     var guestName by remember(item.id) { mutableStateOf(item.guestName) }
     var dniMatch by remember { mutableStateOf("") }
     var editIdentity by remember(item.id) { mutableStateOf(false) }
-    var visitKind by remember(item.id) { mutableStateOf(item.visitKind.ifBlank { "social" }) }
-    var arrivalMode by remember(item.id) { mutableStateOf(if (item.arrivalMode == "vehiculo") "vehiculo" else "peatonal") }
+    var visitKind by remember(item.id) { mutableStateOf(canonicalVisitKind(item.visitKind)) }
+    var arrivalMode by remember(item.id) { mutableStateOf(canonicalArrivalMode(item.arrivalMode)) }
     var typeSheet by remember { mutableStateOf(false) }
-    val req = docRequirements(visitKind, arrivalMode)
+    val req = docRequirements(visitKind, arrivalMode, item.rule)
 
     var plate by remember(item.id) { mutableStateOf(item.patente ?: "") }
     var company by remember(item.id) { mutableStateOf("") }
@@ -193,7 +193,7 @@ private fun EntryFicha(
     var docScan by remember { mutableStateOf<String?>(null) }
     var docKind by remember { mutableStateOf("veh") }
     val enabled = !busy && !saving
-    val artLabel = artLabelFor(visitKind)
+    val artLabel = artLabelFor(req)
 
     LaunchedEffect(dni) {
         val clean = dni.filter { it.isDigit() }
@@ -215,14 +215,14 @@ private fun EntryFicha(
             guestName = guestName,
             visitKind = visitKind,
             arrivalMode = arrivalMode,
-            plate = if (req.vehicle) plate else "",
-            insuranceReuseId = if (req.vehicle) insReuse else null,
-            company = if (req.vehicle) company else "",
-            policy = if (req.vehicle) policy else "",
-            until = if (req.vehicle) until else "",
-            cardPhoto = if (req.vehicle) vehPhoto else null,
+            plate = if (arrivalMode == "vehiculo") plate else "",
+            insuranceReuseId = if (req.insurance) insReuse else null,
+            company = if (req.insurance) company else "",
+            policy = if (req.insurance) policy else "",
+            until = if (req.insurance) until else "",
+            cardPhoto = if (req.insurance) vehPhoto else null,
             artReuseId = if (req.art) artReuse else null,
-            artKind = if (visitKind == "service") "life" else "art",
+            artKind = if (req.artLife) "life" else "art",
             artUntil = if (req.art) artUntil else "",
             artCompany = if (req.art) artCompany else "",
             artPhoto = if (req.art) artPhoto else null,
@@ -273,14 +273,14 @@ private fun EntryFicha(
         }
     }
 
-    fun decide(decision: String) {
+    fun decide(decision: String, open: Boolean = false) {
         val a = api ?: return
         scope.launch {
             saving = true
             localError = null
             runCatching {
                 if (decision == "approved") persist()
-                a.decide(item.id, decision, comment, trunk, if (decision == "approved") dni else "")
+                a.decide(item.id, decision, comment, trunk, if (decision == "approved") dni else "", open = open)
             }.onSuccess { onDecided() }
                 .onFailure { showApiError(it) }
             saving = false
@@ -502,9 +502,19 @@ private fun EntryFicha(
                             } else {
                                 Icon(Icons.Default.CheckCircle, contentDescription = null)
                                 Spacer(Modifier.width(6.dp))
-                                Text("Aprobar y abrir", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold))
+                                Text(
+                                    if (req.openBarrier) "Aprobar y abrir" else "Registrar ingreso",
+                                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                                )
                             }
                         }
+                    }
+                    if (!req.openBarrier) {
+                        TextButton(
+                            onClick = { decide("approved", open = true) },
+                            enabled = enabled && item.expiredDocs.isEmpty(),
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text("Abrir igual (registra y pulsa la barrera)") }
                     }
                 }
             }
@@ -682,7 +692,7 @@ private fun EntryFicha(
             if (req.vehicle) {
                 FichaCard(Modifier.onGloballyPositioned { sectionY["vehicle"] = it.positionInParent().y.toInt() }) {
                     SectionTitle("VEHÍCULO")
-                    OutlinedTextField(
+                    if (req.plate) OutlinedTextField(
                         value = plate,
                         onValueChange = { plate = it.uppercase().filter { ch -> ch.isLetterOrDigit() }.take(10) },
                         label = { Text("Patente") },
@@ -690,12 +700,13 @@ private fun EntryFicha(
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp),
                     )
+                    if (req.insurance) {
                     SectionTitle("SEGURO DEL AUTO")
                     val linkedIns = item.insurance
                     val fileIns = item.onFile.insurance
                     if (linkedIns != null && !insForm) {
                         DocLinkedRow("Seguro", linkedIns, onReplace = { insForm = true }, enabled = enabled)
-                        if (!linkedIns.hasDocument) {
+                        if (!linkedIns.hasDocument && req.insurancePhoto) {
                             DocPhotoButton("tarjeta del seguro", vehPhoto, false, enabled, { shoot("veh") }) { vehPhoto = null }
                         }
                     } else if (fileIns != null && !insForm) {
@@ -727,15 +738,19 @@ private fun EntryFicha(
                             )
                         }
                         DateField("Vence el seguro", until, { until = it }, enabled)
-                        DocPhotoButton("tarjeta del seguro", vehPhoto, false, enabled, { shoot("veh") }) { vehPhoto = null }
+                        if (req.insurancePhoto) {
+                            DocPhotoButton("tarjeta del seguro", vehPhoto, false, enabled, { shoot("veh") }) { vehPhoto = null }
+                        }
+                    }
                     }
 
+                    if (req.license) {
                     SectionTitle("LICENCIA DE CONDUCIR")
                     val linkedLic = item.license
                     val fileLic = item.onFile.license
                     if (linkedLic != null && !licForm) {
                         DocLinkedRow("Licencia", linkedLic, onReplace = { licForm = true }, enabled = enabled)
-                        if (!linkedLic.hasDocument) {
+                        if (!linkedLic.hasDocument && req.licensePhoto) {
                             DocPhotoButton("licencia", licPhoto, false, enabled, { shoot("lic") }) { licPhoto = null }
                         }
                     } else if (fileLic != null && !licForm) {
@@ -761,11 +776,16 @@ private fun EntryFicha(
                             shape = RoundedCornerShape(12.dp),
                         )
                         DateField("Vence la licencia", licUntil, { licUntil = it }, enabled)
-                        DocPhotoButton("licencia", licPhoto, false, enabled, { shoot("lic") }) { licPhoto = null }
+                        if (req.licensePhoto) {
+                            DocPhotoButton("licencia", licPhoto, false, enabled, { shoot("lic") }) { licPhoto = null }
+                        }
                     }
-                    HorizontalDivider()
-                    SectionTitle("BAÚL")
-                    TrunkEditor(api, item.trunkIn, trunkInDraft, "Qué lleva en el baúl", enabled) { localError = it }
+                    }
+                    if (req.trunk) {
+                        HorizontalDivider()
+                        SectionTitle("BAÚL")
+                        TrunkEditor(api, item.trunkIn, trunkInDraft, "Qué lleva en el baúl", enabled) { localError = it }
+                    }
                 }
             }
 
@@ -776,7 +796,7 @@ private fun EntryFicha(
                     val fileArt = item.onFile.art
                     if (linkedArt != null && !artForm) {
                         DocLinkedRow(artLabel, linkedArt, onReplace = { artForm = true }, enabled = enabled)
-                        if (!linkedArt.hasDocument) {
+                        if (!linkedArt.hasDocument && req.artPhoto) {
                             DocPhotoButton("constancia", artPhoto, false, enabled, { shoot("art") }) { artPhoto = null }
                         }
                     } else if (fileArt != null && !artForm) {
@@ -792,13 +812,15 @@ private fun EntryFicha(
                         OutlinedTextField(
                             value = artCompany,
                             onValueChange = { artCompany = it },
-                            label = { Text(if (visitKind == "service") "Compañía (ART o seguro)" else "Compañía ART") },
+                            label = { Text(if (req.artLife) "Compañía (ART o seguro)" else "Compañía ART") },
                             singleLine = true,
                             modifier = Modifier.fillMaxWidth(),
                             shape = RoundedCornerShape(12.dp),
                         )
                         DateField("Vence", artUntil, { artUntil = it }, enabled)
-                        DocPhotoButton("constancia", artPhoto, false, enabled, { shoot("art") }) { artPhoto = null }
+                        if (req.artPhoto) {
+                            DocPhotoButton("constancia", artPhoto, false, enabled, { shoot("art") }) { artPhoto = null }
+                        }
                     }
                 }
             }

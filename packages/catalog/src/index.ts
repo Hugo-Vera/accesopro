@@ -1087,3 +1087,27 @@ export {
   type OpsNavTile,
 } from "./nav";
 
+export {
+  VISIT_KIND_CATALOG,
+  ARRIVAL_MODE_CATALOG,
+  ENTRY_RULE_ITEMS,
+  ENTRY_RULE_GROUP_LABEL,
+  DEFAULT_ENTRY_RULES,
+  canonicalVisitKind,
+  canonicalArrivalMode,
+  isKnownVisitKind,
+  visitKindText,
+  arrivalModeText,
+  defaultEntryRule,
+  normalizeEntryRule,
+  resolveEntryRule,
+  entryRuleSections,
+  entryRuleSummary,
+  type VisitKindKey,
+  type ArrivalModeKey,
+  type EntryRuleItemKey,
+  type EntryRuleGroup,
+  type EntryRuleItems,
+  type EntryRule,
+} from "./entryRules";
+

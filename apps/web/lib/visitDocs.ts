@@ -1,53 +1,64 @@
-/** Espejo de docRequirements() de la API (apps/api/src/visitHold.ts). */
-export type DocReq = { art: boolean; vehicle: boolean; license: boolean; trunk: boolean };
+import {
+  ARRIVAL_MODE_CATALOG,
+  VISIT_KIND_CATALOG,
+  arrivalModeText,
+  canonicalArrivalMode,
+  canonicalVisitKind,
+  entryRuleSections,
+  resolveEntryRule,
+  visitKindText,
+  type ArrivalModeKey,
+  type EntryRule,
+  type VisitKindKey,
+} from "@accesopro/catalog";
 
-export function docRequirements(visitKind: string | null | undefined, arrivalMode: string | null | undefined): DocReq {
-  const vehicle = arrivalMode === "vehiculo";
-  return {
-    art: visitKind === "contractor" || visitKind === "service",
-    vehicle,
-    license: vehicle,
-    trunk: vehicle,
-  };
+export type { EntryRule };
+
+/** Qué pide la ficha: sale de la regla del barrio (Sistema → Reglas de ingreso). */
+export type DocReq = ReturnType<typeof entryRuleSections> & { openBarrier: boolean };
+
+export function requirementsFromRule(rule: EntryRule): DocReq {
+  return { ...entryRuleSections(rule), openBarrier: rule.openBarrier };
 }
 
-export const VISIT_KINDS = [
-  { id: "social", label: "Social" },
-  { id: "service", label: "Servicio / técnico" },
-  { id: "contractor", label: "Contratista" },
-  { id: "delivery", label: "Delivery" },
-] as const;
+/** Sin reglas cargadas usa los valores por defecto del catálogo. */
+export function docRequirements(
+  visitKind: string | null | undefined,
+  arrivalMode: string | null | undefined,
+  rules?: EntryRule[] | null,
+): DocReq {
+  return requirementsFromRule(resolveEntryRule(rules, visitKind, arrivalMode));
+}
 
-export const ARRIVAL_MODES = [
-  { id: "peatonal", label: "A pie" },
-  { id: "vehiculo", label: "Vehículo" },
-] as const;
+export const VISIT_KINDS = VISIT_KIND_CATALOG.map((k) => ({ id: k.key, label: k.label }));
 
-export type VisitKindId = (typeof VISIT_KINDS)[number]["id"];
-export type ArrivalModeId = (typeof ARRIVAL_MODES)[number]["id"];
+export const ARRIVAL_MODES = ARRIVAL_MODE_CATALOG.map((m) => ({ id: m.key, label: m.label }));
+
+export type VisitKindId = VisitKindKey;
+export type ArrivalModeId = ArrivalModeKey;
 
 export function normalizeVisitKind(v: string | null | undefined): VisitKindId {
-  return (VISIT_KINDS.find((x) => x.id === v)?.id ?? "social") as VisitKindId;
+  return canonicalVisitKind(v);
 }
 
 export function normalizeArrivalMode(v: string | null | undefined): ArrivalModeId {
-  return (ARRIVAL_MODES.find((x) => x.id === v)?.id ?? "peatonal") as ArrivalModeId;
+  return canonicalArrivalMode(v);
 }
 
 export function visitKindLabel(v: string | null | undefined) {
-  return VISIT_KINDS.find((x) => x.id === v)?.label ?? "Social";
+  return visitKindText(v);
 }
 
 export function arrivalModeLabel(v: string | null | undefined) {
-  return ARRIVAL_MODES.find((x) => x.id === v)?.label ?? "A pie";
+  return arrivalModeText(v);
 }
 
-export function artLabelFor(visitKind: string | null | undefined) {
-  return visitKind === "service" ? "ART o seguro de vida" : "ART";
+export function artLabelFor(req: Pick<DocReq, "artLife">) {
+  return req.artLife ? "ART o seguro de vida" : "ART";
 }
 
-export function personInsuranceKindFor(visitKind: string | null | undefined): "art" | "life" {
-  return visitKind === "service" ? "life" : "art";
+export function personInsuranceKindFor(req: Pick<DocReq, "artLife">): "art" | "life" {
+  return req.artLife ? "life" : "art";
 }
 
 export type FichaPage = "identity" | "type" | "vehicle" | "art" | "companions" | "exit" | "summary";
@@ -153,21 +164,27 @@ export function isMinorAge(age: number | null | undefined) {
   return age != null && age < 18;
 }
 
-/** Servicio, contratista y delivery no ingresan con menores (ni siendo menores). */
+/** Obra / servicio y delivery no ingresan con menores (ni siendo menores). */
 export function minorsAllowed(visitKind: string | null | undefined) {
-  return !visitKind || visitKind === "social";
+  return canonicalVisitKind(visitKind) === "social";
 }
 
 export const MINOR_KIND_TEXT = "Menor de edad: solo puede ingresar como visita";
 
 /** "Solicitar siguientes documentos": solo lo que aplica; el DNI no se repite si ya se leyó. */
-export function requiredDocsFor(visitKind: string | null | undefined, arrivalMode: string | null | undefined, dniRead: boolean) {
-  const req = docRequirements(visitKind, arrivalMode);
+export function requiredDocsFor(
+  visitKind: string | null | undefined,
+  arrivalMode: string | null | undefined,
+  dniRead: boolean,
+  rules?: EntryRule[] | null,
+) {
+  const req = docRequirements(visitKind, arrivalMode, rules);
   const docs: string[] = [];
-  if (!dniRead) docs.push("DNI");
-  if (req.art) docs.push(artLabelFor(visitKind));
+  if (req.dni && !dniRead) docs.push("DNI");
+  if (req.art) docs.push(artLabelFor(req));
+  if (req.plate) docs.push("Patente");
   if (req.license) docs.push("Licencia");
-  if (req.vehicle) docs.push("Seguro del vehículo");
+  if (req.insurance) docs.push("Seguro del vehículo");
   if (req.trunk) docs.push("Revisión de baúl");
   return docs;
 }

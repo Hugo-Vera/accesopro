@@ -467,7 +467,7 @@ export const visitPasses = sqliteTable("visit_passes", {
   status: text("status").notNull().default("preauthorized"),
   /** peatonal | plataforma | vehiculo */
   arrivalMode: text("arrival_mode").notNull().default("peatonal"),
-  /** social | service | contractor | delivery */
+  /** social | service | delivery (`contractor` legado = service: canonicalVisitKind) */
   visitKind: text("visit_kind").notNull().default("social"),
   /** basic | full */
   completeness: text("completeness").notNull().default("basic"),
@@ -818,6 +818,27 @@ export const tenantSettings = sqliteTable("tenant_settings", {
   visitAuthDefaultHours: integer("visit_auth_default_hours").notNull().default(24),
   updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
 });
+
+/** Regla de ingreso por tipo × medio (Sistema → Reglas de ingreso). Sin fila = valores por defecto del catálogo. */
+export const tenantEntryRules = sqliteTable(
+  "tenant_entry_rules",
+  {
+    tenantId: text("tenant_id")
+      .notNull()
+      .references(() => tenants.id),
+    /** social | service | delivery */
+    visitKind: text("visit_kind").notNull(),
+    /** peatonal | vehiculo */
+    arrivalMode: text("arrival_mode").notNull(),
+    /** JSON { dni: true, patente: false, … } (EntryRuleItemKey → boolean). */
+    items: text("items").notNull(),
+    openBarrier: integer("open_barrier", { mode: "boolean" }).notNull().default(false),
+    updatedAt: integer("updated_at", { mode: "timestamp_ms" }).notNull(),
+  },
+  (t) => ({
+    pk: primaryKey({ columns: [t.tenantId, t.visitKind, t.arrivalMode] }),
+  }),
+);
 
 /** Tokens FCM (web / Android) por usuario del lote. */
 export const pushDevices = sqliteTable(

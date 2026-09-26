@@ -2028,8 +2028,7 @@ export function OwnerPortal() {
                     <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300">Categoría</label>
                     <select name="visitKind" className="mt-1 w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs dark:border-slate-700 dark:bg-slate-800 dark:text-slate-100">
                       <option value="social">Social / familiar</option>
-                      <option value="service">Servicio / técnico</option>
-                      <option value="contractor">Obra / contratista</option>
+                      <option value="service">Obra / servicio</option>
                       <option value="delivery">Delivery / paquete</option>
                     </select>
                   </div>

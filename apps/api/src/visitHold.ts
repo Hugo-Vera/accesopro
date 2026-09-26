@@ -19,8 +19,9 @@ import {
   visitTrunkChecks,
   sites,
 } from "./db/schema.js";
+import { canonicalVisitKind, entryRuleSections, isKnownVisitKind, type VisitKindKey } from "@accesopro/catalog";
 import { fireActuator } from "./actuatorExec.js";
-import { openViaLabel, type OpenContext, type OpenVia } from "./openContext.js";
+import { openContextPayload, openViaLabel, type OpenContext, type OpenVia } from "./openContext.js";
 import { actuatorsForDahuaDevice, actuatorsForSentido, laneCodeOf } from "./accessPoints.js";
 import { broadcastRealtimeEvent } from "./eventStream.js";
 import { nid, normalizePlate } from "./scope.js";
@@ -34,9 +35,24 @@ import { processDocumentImage } from "./documentScan.js";
 import { notifyStaff } from "./pushNotify.js";
 import { saveVisitorDoc } from "./visitorDocs.js";
 import { expireVisitPassOnSite, releaseVisitCredential } from "./accessQr.js";
+import {
+  canSwitchToPedestrian,
+  expiredKeyLabel,
+  linkedVehicleInsurance,
+  missingVisitFields,
+  ruleForPass,
+  trunkCheckOf,
+  trunkPhotoIdsOf,
+  visitFieldGaps,
+  type VisitFieldGaps,
+} from "./visitRequirements.js";
+
+export { canSwitchToPedestrian, missingVisitFields, trunkCheckOf, visitFieldGaps };
+
+type TrunkCheckRow = typeof visitTrunkChecks.$inferSelect;
 
 export type ArrivalMode = "peatonal" | "plataforma" | "vehiculo";
-export type VisitKind = "social" | "service" | "contractor" | "delivery";
+export type VisitKind = VisitKindKey;
 
 const OPEN_STATUSES = new Set(["preauthorized", "active", "awaiting_entry", "in_site", "awaiting_exit", "temp_out"]);
 
@@ -324,110 +340,9 @@ function isPast(v: Date | number | null | undefined, now = Date.now()) {
   return t > 0 && t < now;
 }
 
-export function isVisitKind(v: unknown): v is VisitKind {
-  return v === "social" || v === "service" || v === "contractor" || v === "delivery";
-}
-
-/** Única fuente de qué documentación pide cada tipo de ingreso y medio (API, web y app espejan esto). */
-export function docRequirements(visitKind: string | null | undefined, arrivalMode: string | null | undefined) {
-  const vehicle = needsVehicleDocs(arrivalMode);
-  return {
-    art: visitKind === "contractor" || visitKind === "service",
-    vehicle,
-    license: vehicle,
-    trunk: vehicle,
-  };
-}
-
-export type VisitFieldGaps = { missing: string[]; expired: string[] };
-
-type TrunkCheckRow = typeof visitTrunkChecks.$inferSelect;
-
-function trunkPhotoIdsOf(row: TrunkCheckRow | null | undefined): string[] {
-  if (!row?.photoIds) return [];
-  try {
-    const v = JSON.parse(row.photoIds) as unknown;
-    return Array.isArray(v) ? v.map(String).filter(Boolean) : [];
-  } catch {
-    return [];
-  }
-}
-
-export async function trunkCheckOf(passId: string, sentido: "in" | "out") {
-  return (
-    (await db
-      .select()
-      .from(visitTrunkChecks)
-      .where(and(eq(visitTrunkChecks.passId, passId), eq(visitTrunkChecks.sentido, sentido)))
-      .orderBy(desc(visitTrunkChecks.updatedAt))
-      .get()) ?? null
-  );
-}
-
-async function linkedVehicleInsurance(pass: typeof visitPasses.$inferSelect) {
-  if (pass.insuranceId) {
-    return (await db.select().from(vehicleInsurances).where(eq(vehicleInsurances.id, pass.insuranceId)).get()) ?? null;
-  }
-  return null;
-}
-
-/** En la salida no se re-exigen documentos: solo baúl (tilde), bienes y menores en decide. */
-export async function visitFieldGaps(passId: string, sentido: "in" | "out" = "in"): Promise<VisitFieldGaps> {
-  const pass = await db.select().from(visitPasses).where(eq(visitPasses.id, passId)).get();
-  if (!pass) return { missing: ["pase"], expired: [] };
-  const missing: string[] = [];
-  const expired: string[] = [];
-  if (sentido === "out") return { missing, expired };
-  const req = docRequirements(pass.visitKind, pass.arrivalMode);
-  if (!String(pass.guestDni || "").replace(/\D/g, "")) missing.push("dni");
-  if (req.vehicle) {
-    if (!String(pass.patente || "").trim()) missing.push("patente");
-    const ins = await linkedVehicleInsurance(pass);
-    if (!ins?.company || !ins.policyNumber || !ins.validUntil) missing.push("seguro_vehiculo");
-    else {
-      if (!ins.cardPhotoUrl) missing.push("seguro_foto");
-      if (isPast(ins.validUntil)) expired.push("seguro_vehiculo");
-    }
-  }
-  if (req.license) {
-    const lic = pass.licenseId
-      ? await db.select().from(driverLicenses).where(eq(driverLicenses.id, pass.licenseId)).get()
-      : null;
-    if (!lic?.validUntil) missing.push("licencia");
-    else {
-      if (!lic.photoUrl) missing.push("licencia_foto");
-      if (isPast(lic.validUntil)) expired.push("licencia");
-    }
-  }
-  if (req.art) {
-    const pi = pass.personInsuranceId
-      ? await db.select().from(personInsurances).where(eq(personInsurances.id, pass.personInsuranceId)).get()
-      : null;
-    if (!pi?.validUntil) missing.push("art");
-    else {
-      if (!pi.documentPath) missing.push("art_constancia");
-      if (isPast(pi.validUntil)) expired.push("art");
-    }
-  }
-  if (req.trunk) {
-    const trunk = await trunkCheckOf(pass.id, "in");
-    if (!trunk || (!String(trunk.description || "").trim() && !trunkPhotoIdsOf(trunk).length)) missing.push("baul");
-  }
-  return { missing, expired };
-}
-
-function expiredKeyLabel(k: string) {
-  return k === "licencia" ? "licencia_vencida" : `${k}_vencido`;
-}
-
-export async function missingVisitFields(passId: string, sentido: "in" | "out" = "in"): Promise<string[]> {
-  const gaps = await visitFieldGaps(passId, sentido);
-  return [...gaps.missing, ...gaps.expired.map(expiredKeyLabel)];
-}
-
-/** Seguro o licencia vencidos se resuelven dejando el auto afuera; la ART vencida no tiene salida. */
-export function canSwitchToPedestrian(expired: string[]) {
-  return expired.length > 0 && !expired.includes("art") && expired.every((k) => k === "seguro_vehiculo" || k === "licencia");
+/** Tipo pedido por el cliente, ya canónico (`contractor` → `service`). null si no vino o no se conoce. */
+export function toVisitKind(v: unknown): VisitKind | null {
+  return isKnownVisitKind(v) ? canonicalVisitKind(v) : null;
 }
 
 export async function ownerContactForProperty(propertyId: string) {
@@ -797,7 +712,9 @@ async function patchVisitLaneEvent(input: {
   visitKind?: string | null;
   scanChannel?: string | null;
   scanChannelLabel?: string | null;
-}) {
+  /** Aprobado según la regla sin pulsar el relé. */
+  noBarrier?: boolean;
+}): Promise<boolean> {
   const guard = await db.select().from(users).where(eq(users.id, input.decidedByUserId)).get();
   const rows = await db
     .select()
@@ -820,7 +737,7 @@ async function patchVisitLaneEvent(input: {
     target = { row, payload: p };
     break;
   }
-  if (!target) return;
+  if (!target) return false;
   const approved = input.visitStatus === "approved";
   const payload: Record<string, unknown> = {
     ...target.payload,
@@ -844,6 +761,7 @@ async function patchVisitLaneEvent(input: {
     visitKind: input.visitKind ?? target.payload.visitKind ?? null,
     scanChannel: input.scanChannel ?? target.payload.scanChannel ?? null,
     scanChannelLabel: input.scanChannelLabel ?? target.payload.scanChannelLabel ?? null,
+    ...(input.noBarrier ? { noBarrier: true, barrierOpened: false } : {}),
   };
   await db.update(events).set({ payload: JSON.stringify(payload) }).where(eq(events.id, target.row.id));
   const createdAt =
@@ -857,6 +775,46 @@ async function patchVisitLaneEvent(input: {
     type: target.row.type,
     payload,
     createdAt,
+  });
+  return true;
+}
+
+/** Sin pulso no hay evento Method 4 del ASI: la tarjeta del carril se crea acá con los datos de la visita. */
+async function insertNoBarrierCard(input: {
+  siteId: string;
+  tenantId: string;
+  sentido: "in" | "out";
+  ctx: OpenContext;
+  qrHint?: string | null;
+  scanChannelLabel?: string | null;
+  at: Date;
+}) {
+  const id = nid();
+  const payload: Record<string, unknown> = {
+    ...openContextPayload(input.ctx, input.at.getTime()),
+    remoteOpen: false,
+    noBarrier: true,
+    barrierOpened: false,
+    qrHint: input.qrHint ?? null,
+    scanChannelLabel: input.scanChannelLabel ?? null,
+    sentido: input.sentido,
+  };
+  await db.insert(events).values({
+    id,
+    siteId: input.siteId,
+    type: "qr_access",
+    sentido: input.sentido,
+    laneCode: laneCodeOf(input.sentido),
+    payload: JSON.stringify(payload),
+    createdAt: input.at,
+  });
+  broadcastRealtimeEvent({
+    id,
+    siteId: input.siteId,
+    tenantId: input.tenantId,
+    type: "qr_access",
+    payload,
+    createdAt: input.at.getTime(),
   });
 }
 
@@ -895,7 +853,11 @@ export async function decideGuardApproval(input: {
   returns?: boolean;
   /** Desde dónde aprobó el guardia (app o dashboard). */
   openedVia?: OpenVia;
-}): Promise<{ ok: true; actuatorsFired?: string[] } | { ok: false; error: string; missing?: string[] }> {
+  /** «Abrir igual»: pulsa el relé aunque la regla diga que no abre. */
+  open?: boolean;
+}): Promise<
+  { ok: true; actuatorsFired?: string[]; barrierOpened?: boolean } | { ok: false; error: string; missing?: string[] }
+> {
   const row = await db
     .select()
     .from(guardApprovals)
@@ -994,18 +956,19 @@ export async function decideGuardApproval(input: {
   }
 
   const pr = await passPresence(pass);
-  const req = docRequirements(pass.visitKind, pass.arrivalMode);
+  const rule = await ruleForPass(pass);
+  const vehicleMode = needsVehicleDocs(pass.arrivalMode);
   const crossing: Presence = isOut ? "in" : "out_temp";
   const defaults: ExitPeople = {
     guest: pr.guest === crossing,
     companionIds: pr.companions.filter((c) => c.presence === crossing).map((c) => c.id),
-    vehicle: req.vehicle && pr.guest === crossing,
+    vehicle: vehicleMode && pr.guest === crossing,
   };
   const asked = input.exitPeople ?? parseExitPeople(row.exitPeople) ?? defaults;
   const people: ExitPeople = {
     guest: asked.guest && pr.guest === crossing,
     companionIds: asked.companionIds.filter((id) => pr.companions.some((c) => c.id === id && c.presence === crossing)),
-    vehicle: req.vehicle && asked.vehicle,
+    vehicle: vehicleMode && asked.vehicle,
   };
   const overstayNow = isOut && passWindowState(pass) === "expired";
   if (overstayNow && input.returns === true) {
@@ -1028,7 +991,7 @@ export async function decideGuardApproval(input: {
         missing: expiredNow.map(expiredKeyLabel),
       };
     }
-    if (people.vehicle) {
+    if (people.vehicle && rule.items.baul) {
       const t = await trunkCheckOf(pass.id, "in");
       const ok = t && t.approvalId === row.id && (String(t.description || "").trim() || trunkPhotoIdsOf(t).length);
       if (!ok) return { ok: false, error: "Revisá el baúl antes de abrir el reingreso", missing: ["baul"] };
@@ -1061,7 +1024,7 @@ export async function decideGuardApproval(input: {
   }
   if (gaps.missing.length) return { ok: false, error: "Faltan datos obligatorios", missing: gaps.missing };
   const trunkTicked = Boolean(input.trunkChecked || row.trunkChecked);
-  if (isOut && people.vehicle && !trunkTicked) {
+  if (isOut && people.vehicle && rule.items.baul && !trunkTicked) {
     return { ok: false, error: "Hay que revisar el baúl antes de abrir la salida", missing: ["baul"] };
   }
 
@@ -1104,7 +1067,7 @@ export async function decideGuardApproval(input: {
   const record = pass.visitRecordId
     ? await db.select().from(visitRecords).where(eq(visitRecords.id, pass.visitRecordId)).get()
     : null;
-  const pulse = await openForVisit(input.site, row.sentido as "in" | "out", row.deviceId, {
+  const openCtx: OpenContext = {
     reason: "visit",
     openedByUserId: input.guardUserId,
     openedByName: approvedByName,
@@ -1114,14 +1077,19 @@ export async function decideGuardApproval(input: {
     guestName: pass.guestName,
     guestDni: pass.guestDni,
     lotNumber: property?.lotNumber ?? null,
-    visitKind: pass.visitKind,
+    visitKind: canonicalVisitKind(pass.visitKind),
     arrivalMode: pass.arrivalMode,
     plate: pass.patente,
     authorizedBy: record?.authorizedBy || null,
     sentido: row.sentido as "in" | "out",
     reentry: isReentry,
-  });
-  if (!pulse.fired.length) {
+  };
+  // La regla decide si aprobar pulsa el relé; a pie por defecto se registra sin abrir.
+  const barrier = rule.openBarrier || input.open === true;
+  const pulse = barrier
+    ? await openForVisit(input.site, row.sentido as "in" | "out", row.deviceId, openCtx)
+    : { fired: [] as string[], error: undefined };
+  if (barrier && !pulse.fired.length) {
     return { ok: false, error: pulse.error || "No se pudo pulsar el relé. Revisá el agent y el cableado." };
   }
 
@@ -1225,13 +1193,14 @@ export async function decideGuardApproval(input: {
       qrHint,
       lotNumber: property?.lotNumber,
       actuatorsFired: pulse.fired,
+      barrierOpened: barrier,
       accessKind: "visita",
       guardApproved: true,
       approvedByName,
       approvedVia: "login",
       openedVia: input.openedVia ?? null,
       openedViaLabel: openViaLabel(input.openedVia),
-      visitKind: pass.visitKind,
+      visitKind: canonicalVisitKind(pass.visitKind),
       scanChannel: row.scanChannel,
       scanChannelLabel: channelLabel,
       reentry: isReentry,
@@ -1240,7 +1209,7 @@ export async function decideGuardApproval(input: {
     }),
     createdAt: now,
   });
-  await patchVisitLaneEvent({
+  const patched = await patchVisitLaneEvent({
     siteId: input.site.id,
     tenantId: input.site.tenantId,
     passId: pass.id,
@@ -1254,10 +1223,22 @@ export async function decideGuardApproval(input: {
     decidedByUserId: input.guardUserId,
     approvedVia: "login",
     openedVia: input.openedVia ?? null,
-    visitKind: pass.visitKind,
+    visitKind: canonicalVisitKind(pass.visitKind),
     scanChannel: row.scanChannel,
     scanChannelLabel: channelLabel,
+    noBarrier: !barrier,
   });
+  if (!barrier && !patched) {
+    await insertNoBarrierCard({
+      siteId: input.site.id,
+      tenantId: input.site.tenantId,
+      sentido: row.sentido as "in" | "out",
+      ctx: openCtx,
+      qrHint,
+      scanChannelLabel: channelLabel,
+      at: now,
+    });
+  }
   broadcastRealtimeEvent({
     id: nid(),
     siteId: input.site.id,
@@ -1286,11 +1267,11 @@ export async function decideGuardApproval(input: {
       .update(ownerNotices)
       .set({
         payload: JSON.stringify(extra),
-        message: `${qrNotice.message} Abrió ${approvedByName || "portería"} (${channelLabel}).`,
+        message: `${qrNotice.message} ${barrier ? "Abrió" : "Registró el ingreso"} ${approvedByName || "portería"} (${channelLabel}).`,
       })
       .where(eq(ownerNotices.id, qrNotice.id));
   }
-  return { ok: true, actuatorsFired: pulse.fired };
+  return { ok: true, actuatorsFired: pulse.fired, barrierOpened: barrier };
 }
 
 export async function serializePassFicha(
@@ -1315,7 +1296,8 @@ export async function serializePassFicha(
   const missing = gaps.missing;
   const windowState = passWindowState(pass);
   const trunkNowRow = row ? await trunkCheckOf(pass.id, sentidoNow) : null;
-  const req = docRequirements(pass.visitKind, pass.arrivalMode);
+  const rule = await ruleForPass(pass);
+  const req = entryRuleSections(rule);
   const now = Date.now();
   let insurance: {
     id: string;
@@ -1411,7 +1393,7 @@ export async function serializePassFicha(
     dwellLabel: dwellLabel(pass.scannedInAt),
     patente: pass.patente,
     arrivalMode: pass.arrivalMode,
-    visitKind: pass.visitKind,
+    visitKind: canonicalVisitKind(pass.visitKind),
     completeness: pass.completeness,
     passStatus: pass.status,
     validFrom: pass.validFrom,
@@ -1430,6 +1412,7 @@ export async function serializePassFicha(
     needsArt: req.art,
     needsLicense: req.license,
     needsVehicle: req.vehicle,
+    rule,
     missing,
     expiredDocs: gaps.expired,
     canSwitchToPedestrian: sentidoNow === "in" && canSwitchToPedestrian(gaps.expired),
@@ -1556,7 +1539,7 @@ async function saveDocPhoto(siteId: string, key: string, base64?: string | null)
 }
 
 export const MINOR_KIND_ERROR = "Menor de edad: solo puede ingresar como visita";
-export const MINORS_KIND_ERROR = "Servicio, contratista y delivery no ingresan con menores";
+export const MINORS_KIND_ERROR = "Obra / servicio y delivery no ingresan con menores";
 
 /** Nacimiento del invitado: ficha de identidad del registro o, si no hay, la del padrón por DNI. */
 async function guestBirthDateOf(pass: { siteId: string; guestDni: string | null }, personId?: string | null) {
@@ -1807,10 +1790,9 @@ async function ensurePersonForPass(tenantId: string, pass: typeof visitPasses.$i
   return db.select().from(visitorIdentities).where(eq(visitorIdentities.id, id)).get();
 }
 
-/** ART para contratista, seguro de vida para servicio/técnico (se acepta cualquiera de los dos). */
-export function personInsuranceKindFor(visitKind: string | null | undefined, requested?: string | null): "art" | "life" {
-  if (requested === "art" || requested === "life") return requested;
-  return visitKind === "service" ? "life" : "art";
+/** «life» solo si la regla del barrio acepta seguro de vida en lugar de ART. */
+export function personInsuranceKindFor(allowLife: boolean, requested?: string | null): "art" | "life" {
+  return requested === "life" && allowLife ? "life" : "art";
 }
 
 export async function attachPersonInsuranceToPass(
@@ -1888,7 +1870,7 @@ export async function attachPersonInsuranceToPass(
     id,
     tenantId,
     personId: person.id,
-    kind: personInsuranceKindFor(pass.visitKind, input.kind),
+    kind: personInsuranceKindFor((await ruleForPass(pass)).items.art_vida, input.kind),
     company,
     policyNumber: null,
     validUntil: validUntilDate,
@@ -1961,9 +1943,10 @@ export async function applyPassKindAndMode(
   const pass = await db.select().from(visitPasses).where(eq(visitPasses.id, passId)).get();
   if (!pass) return null;
   const patch: Partial<typeof visitPasses.$inferInsert> = {};
-  if (isVisitKind(input.visitKind) && input.visitKind !== pass.visitKind) {
-    if (input.visitKind !== "social" && (await passGuestIsMinor(pass))) return MINOR_KIND_ERROR;
-    patch.visitKind = input.visitKind;
+  const kind = toVisitKind(input.visitKind);
+  if (kind && kind !== canonicalVisitKind(pass.visitKind)) {
+    if (kind !== "social" && (await passGuestIsMinor(pass))) return MINOR_KIND_ERROR;
+    patch.visitKind = kind;
   }
   if (isArrivalMode(input.arrivalMode) && input.arrivalMode !== pass.arrivalMode) {
     patch.arrivalMode = input.arrivalMode;
@@ -2172,7 +2155,8 @@ export async function announceWalkIn(input: {
   arrivalMode?: string;
   patente?: string;
 }): Promise<{ ok: true; passId: string; approvalId: string } | { ok: false; error: string }> {
-  if (isVisitKind(input.visitKind) && input.visitKind !== "social") {
+  const requestedKind = toVisitKind(input.visitKind);
+  if (requestedKind && requestedKind !== "social") {
     const birth = input.guestBirthDate || (await personByDni(input.site.tenantId, input.guestDni))?.birthDate;
     if (isMinorBirthDate(birth)) return { ok: false, error: MINOR_KIND_ERROR };
   }
@@ -2188,7 +2172,7 @@ export async function announceWalkIn(input: {
   const guestName = (input.guestName || "Visita espontánea").trim();
   const defaultHours = await getVisitAuthDefaultHours(input.site.tenantId);
   const arrivalMode: ArrivalMode = isArrivalMode(input.arrivalMode) ? input.arrivalMode : "peatonal";
-  const visitKind: VisitKind = isVisitKind(input.visitKind) ? input.visitKind : "social";
+  const visitKind: VisitKind = requestedKind ?? "social";
   const plate = arrivalMode === "vehiculo" ? normalizePlate(input.patente || "") || null : null;
   await db.insert(visitPasses).values({
     id: passId,

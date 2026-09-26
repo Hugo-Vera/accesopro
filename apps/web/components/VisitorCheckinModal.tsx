@@ -18,7 +18,11 @@ import {
   isoDay,
   minorsAllowed,
   personInsuranceKindFor,
+  VISIT_KINDS,
+  type EntryRule,
+  type VisitKindId,
 } from "@/lib/visitDocs";
+import { entryRuleSummary, resolveEntryRule } from "@accesopro/catalog";
 import {
   Footprints,
   IdCard,
@@ -47,44 +51,25 @@ import {
   Download,
 } from "lucide-react";
 
-type VisitKind = "social" | "service" | "contractor" | "delivery";
+type VisitKind = VisitKindId;
 
-const VISIT_PRACTICE: Record<
-  VisitKind,
-  { title: string; items: { text: string; ask: boolean }[] }
-> = {
-  social: {
-    title: "Visita social / familiar",
-    items: [
-      { text: "DNI del visitante", ask: true },
-      { text: "Quién autoriza en el lote", ask: true },
-      { text: "Si entra en auto: patente, seguro con foto, licencia con foto y baúl", ask: false },
-    ],
-  },
-  service: {
-    title: "Servicio / técnico",
-    items: [
-      { text: "DNI y quién autoriza", ask: true },
-      { text: "ART o seguro de vida vigente con constancia", ask: true },
-      { text: "Si entra en auto: patente, seguro con foto, licencia con foto y baúl", ask: false },
-    ],
-  },
-  contractor: {
-    title: "Obra / contratista",
-    items: [
-      { text: "DNI y quién autoriza", ask: true },
-      { text: "ART vigente con constancia", ask: true },
-      { text: "Si entra en auto: patente, seguro con foto, licencia con foto y baúl", ask: false },
-    ],
-  },
-  delivery: {
-    title: "Delivery / paquete",
-    items: [
-      { text: "DNI y destinatario que autoriza", ask: true },
-      { text: "Si el auto entra al predio: patente, seguro con foto, licencia con foto y baúl", ask: false },
-    ],
-  },
+const VISIT_PRACTICE_TITLE: Record<VisitKind, string> = {
+  social: "Visita social / familiar",
+  service: "Obra / Servicio",
+  delivery: "Delivery / paquete",
 };
+
+/** Lo que pide la regla del barrio para ese tipo: a pie (se pide) y en vehículo (si entra en auto). */
+function practiceItems(rules: EntryRule[] | null, kind: VisitKind): { text: string; ask: boolean }[] {
+  const walk = docRequirements(kind, "peatonal", rules);
+  const car = resolveEntryRule(rules, kind, "vehiculo");
+  const items: { text: string; ask: boolean }[] = [];
+  items.push({ text: walk.dni ? "DNI y quién autoriza en el lote" : "Quién autoriza en el lote", ask: true });
+  if (walk.art) items.push({ text: `${artLabelFor(walk)} vigente${walk.artPhoto ? " con constancia" : ""}`, ask: true });
+  const carOnly = entryRuleSummary(car).filter((t) => t !== "DNI" && !t.startsWith("ART"));
+  if (carOnly.length) items.push({ text: `Si entra en auto: ${carOnly.join(", ").toLowerCase()}`, ask: false });
+  return items;
+}
 
 export const ARGENTINA_INSURANCE_COMPANIES = [
   "Federación Patronal",
@@ -205,9 +190,10 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
     licOnFileRaw && licOnFileRaw.validUntil === licenseValidUntil && licOnFileRaw.number === (licenseNumber.trim() || dniNumber.trim())
       ? licOnFileRaw
       : null;
-  const req = docRequirements(visitType, arrivalMode);
+  const [entryRules, setEntryRules] = useState<EntryRule[] | null>(null);
+  const req = docRequirements(visitType, arrivalMode, entryRules);
   const needsArt = req.art;
-  const artLabel = artLabelFor(visitType);
+  const artLabel = artLabelFor(req);
   const guestAge = ageFrom(birthDate);
   const guestMinor = isMinorAge(guestAge);
   useEffect(() => {
@@ -237,6 +223,9 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
       .catch((err) => {
         setError(err instanceof Error ? err.message : "No se pudieron cargar los lotes");
       });
+    api<{ rules: EntryRule[] }>(withTenant("/api/visitors/entry-rules", tenantId))
+      .then((d) => setEntryRules(d.rules || null))
+      .catch(() => setEntryRules(null));
   }, [isOpen, tenantId]);
 
   useEffect(() => {
@@ -408,7 +397,9 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
     }
     if (step === 2) {
       if (needsArt) {
-        return Boolean(propertyId && authorizedBy.trim() && lifeValidUntil && lifeDoc && !lifeExpired);
+        return Boolean(
+          propertyId && authorizedBy.trim() && lifeValidUntil && (!req.artPhoto || lifeDoc) && !lifeExpired,
+        );
       }
       return Boolean(propertyId && authorizedBy.trim());
     }
@@ -417,22 +408,24 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
     }
     if (step === 4) {
       if (!isVehicular) return true;
+      if (req.plate && plate.trim().length < 6) return false;
+      if (!req.insurance) return true;
       const comp = insuranceCompany === "Otra Compañía" ? customInsuranceCompany.trim() : insuranceCompany;
-      return plate.trim().length >= 6 && comp && policyNumber.trim() && insuranceValidUntil && insPhotoOk && !insExpired;
+      return Boolean(comp && policyNumber.trim() && insuranceValidUntil && (!req.insurancePhoto || insPhotoOk) && !insExpired);
     }
     if (step === 5) {
-      if (!isVehicular) return true;
-      return Boolean(licenseValidUntil && licPhotoOk && !licExpired);
+      if (!isVehicular || !req.license) return true;
+      return Boolean(licenseValidUntil && (!req.licensePhoto || licPhotoOk) && !licExpired);
     }
     return true;
   };
 
   const stepBlocker = () => {
     if (step === 2 && needsArt && lifeExpired) return `${artLabel} vencida: no puede ingresar.`;
-    if (step === 4 && isVehicular && insExpired) return "Seguro del auto vencido: no puede entrar con el vehículo.";
-    if (step === 4 && isVehicular && !insPhotoOk) return "Falta la foto de la tarjeta del seguro.";
-    if (step === 5 && isVehicular && licExpired) return "Licencia vencida: no puede entrar manejando.";
-    if (step === 5 && isVehicular && !licPhotoOk) return "Falta la foto de la licencia.";
+    if (step === 4 && isVehicular && req.insurance && insExpired) return "Seguro del auto vencido: no puede entrar con el vehículo.";
+    if (step === 4 && isVehicular && req.insurancePhoto && !insPhotoOk) return "Falta la foto de la tarjeta del seguro.";
+    if (step === 5 && isVehicular && req.license && licExpired) return "Licencia vencida: no puede entrar manejando.";
+    if (step === 5 && isVehicular && req.licensePhoto && !licPhotoOk) return "Falta la foto de la licencia.";
     return null;
   };
 
@@ -518,15 +511,15 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
         : undefined,
       accessMethod: "qr" as const,
       personInsurance:
-        lifeValidUntil && lifeDoc && (lifeDoc.base64 || lifeDoc.reuseId)
+        lifeValidUntil && (lifeDoc?.base64 || lifeDoc?.reuseId || (needsArt && !req.artPhoto))
           ? {
-              reuseId: lifeDoc.base64 ? undefined : lifeDoc.reuseId,
-              kind: personInsuranceKindFor(visitType),
+              reuseId: lifeDoc?.base64 ? undefined : lifeDoc?.reuseId,
+              kind: personInsuranceKindFor(req),
               company: lifeCompany.trim() || undefined,
               validUntil: lifeValidUntil,
-              documentBase64: lifeDoc.base64 || undefined,
-              documentMime: lifeDoc.mime,
-              source: lifeDoc.source,
+              documentBase64: lifeDoc?.base64 || undefined,
+              documentMime: lifeDoc?.mime,
+              source: lifeDoc?.source,
             }
           : undefined,
     };
@@ -824,21 +817,16 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   Categoría de Visita
                 </label>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                  {[
-                    { key: "social", label: "Social / Familiar" },
-                    { key: "service", label: "Servicio / Técnico" },
-                    { key: "contractor", label: "Obra / Contratista" },
-                    { key: "delivery", label: "Delivery / Paquete" },
-                  ]
-                    .filter((t) => !guestMinor || minorsAllowed(t.key))
+                <div className="grid grid-cols-3 gap-2">
+                  {VISIT_KINDS
+                    .filter((t) => !guestMinor || minorsAllowed(t.id))
                     .map((t) => (
                     <button
-                      key={t.key}
+                      key={t.id}
                       type="button"
-                      onClick={() => setVisitType(t.key as VisitKind)}
+                      onClick={() => setVisitType(t.id)}
                       className={`py-2 px-3 rounded-xl border text-xs font-bold transition-all ${
-                        visitType === t.key
+                        visitType === t.id
                           ? "border-blue-600 bg-blue-50 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300 dark:border-blue-700"
                           : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 dark:border-slate-800 dark:bg-slate-950 dark:text-slate-400"
                       }`}
@@ -852,10 +840,10 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
               <div className="rounded-xl border border-slate-200 bg-slate-50/80 p-3 dark:border-slate-700 dark:bg-slate-800/40">
                 <div className="mb-2 flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-300">
                   <ClipboardList className="h-3.5 w-3.5" />
-                  Buena práctica · {VISIT_PRACTICE[visitType].title}
+                  Regla de ingreso · {VISIT_PRACTICE_TITLE[visitType]}
                 </div>
                 <ul className="space-y-1">
-                  {VISIT_PRACTICE[visitType].items.map((item) => (
+                  {practiceItems(entryRules, visitType).map((item) => (
                     <li key={item.text} className="flex items-start gap-2 text-[11px] text-slate-600 dark:text-slate-300">
                       <span
                         className={`mt-0.5 inline-block h-1.5 w-1.5 shrink-0 rounded-full ${
@@ -1389,7 +1377,7 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
                     <p className="text-[11px] text-slate-500">Autoriza: {authorizedBy}</p>
                   </div>
                   <span className="px-2 py-0.5 rounded-md font-bold text-[11px] bg-blue-100 text-blue-800 dark:bg-blue-900/60 dark:text-blue-300">
-                    {visitType.toUpperCase()}
+                    {VISIT_PRACTICE_TITLE[visitType]}
                   </span>
                 </div>
 

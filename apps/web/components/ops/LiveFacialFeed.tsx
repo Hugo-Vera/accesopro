@@ -66,8 +66,9 @@ function eventFacts(alert: FacialEventAlert): [string, string][] {
   if (opener && (alert.approved || alert.visitStatus === "approved")) {
     const via =
       alert.openedViaLabel || (alert.approvedVia === "guard_code" ? "Código de guardia" : undefined);
-    out.push([isVisit ? "Aprobó" : "Abrió", [opener, via].filter(Boolean).join(" · ")]);
+    out.push([alert.noBarrier ? "Registró" : isVisit ? "Aprobó" : "Abrió", [opener, via].filter(Boolean).join(" · ")]);
   }
+  if (alert.noBarrier) out.push(["Barrera", "No se abrió (regla de ingreso)"]);
   if (alert.qrHint) out.push(["QR", alert.qrHint]);
   if (alert.scanChannelLabel) {
     out.push(["Lectura", [alert.scanChannelLabel, alert.scannedByName].filter(Boolean).join(" · ")]);
@@ -78,6 +79,16 @@ function eventFacts(alert: FacialEventAlert): [string, string][] {
 
 /** Línea corta del historial. */
 function rowSubtitle(alert: FacialEventAlert, compact?: boolean) {
+  if (alert.kind === "visit" && alert.noBarrier && alert.visitStatus === "approved") {
+    const who = alert.openedByName || alert.approvedByName;
+    return [
+      `${alert.lane === "out" ? "Salió" : "Ingresó"} sin abrir barrera`,
+      who ? `registró ${who}` : null,
+      alert.lotNumber ? `Lote ${alert.lotNumber}` : null,
+    ]
+      .filter(Boolean)
+      .join(" · ");
+  }
   if (alert.kind === "visit") {
     return (
       [

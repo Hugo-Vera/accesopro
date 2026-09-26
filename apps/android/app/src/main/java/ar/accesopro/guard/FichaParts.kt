@@ -61,23 +61,100 @@ import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
 
-/** Espejo de docRequirements() de la API (apps/api/src/visitHold.ts). */
-data class DocReq(val art: Boolean, val vehicle: Boolean, val license: Boolean, val trunk: Boolean)
+/** Regla de ingreso del barrio (Sistema → Reglas de ingreso). Espejo de packages/catalog/src/entryRules.ts. */
+data class EntryRule(
+    val visitKind: String,
+    val arrivalMode: String,
+    val items: Map<String, Boolean>,
+    val openBarrier: Boolean,
+) {
+    fun has(key: String) = items[key] == true
+}
 
-fun docRequirements(visitKind: String?, arrivalMode: String?): DocReq {
-    val vehicle = arrivalMode == "vehiculo"
-    return DocReq(
-        art = visitKind == "contractor" || visitKind == "service",
-        vehicle = vehicle,
-        license = vehicle,
-        trunk = vehicle,
+/** `contractor` quedó de antes: es el mismo tipo que `service` (Obra / Servicio). */
+fun canonicalVisitKind(k: String?) = when (k?.trim()) {
+    "service", "contractor" -> "service"
+    "delivery" -> "delivery"
+    else -> "social"
+}
+
+fun canonicalArrivalMode(m: String?) = if (m == "vehiculo") "vehiculo" else "peatonal"
+
+fun defaultEntryRule(kind: String?, mode: String?): EntryRule {
+    val k = canonicalVisitKind(kind)
+    val m = canonicalArrivalMode(mode)
+    val vehicle = m == "vehiculo"
+    val service = k == "service"
+    return EntryRule(
+        visitKind = k,
+        arrivalMode = m,
+        items = mapOf(
+            "dni" to true,
+            "patente" to vehicle,
+            "seguro" to vehicle,
+            "seguro_foto" to vehicle,
+            "licencia" to vehicle,
+            "licencia_foto" to vehicle,
+            "baul" to vehicle,
+            "art" to service,
+            "art_vida" to service,
+            "art_constancia" to service,
+        ),
+        openBarrier = vehicle,
     )
 }
 
+/** Reglas que bajó la app de la API; sin red quedan los valores por defecto. */
+object EntryRules {
+    @Volatile var rules: List<EntryRule> = emptyList()
+
+    fun resolve(kind: String?, mode: String?): EntryRule {
+        val k = canonicalVisitKind(kind)
+        val m = canonicalArrivalMode(mode)
+        return rules.firstOrNull { it.visitKind == k && it.arrivalMode == m } ?: defaultEntryRule(k, m)
+    }
+}
+
+data class DocReq(
+    val dni: Boolean,
+    val vehicle: Boolean,
+    val plate: Boolean,
+    val insurance: Boolean,
+    val insurancePhoto: Boolean,
+    val license: Boolean,
+    val licensePhoto: Boolean,
+    val trunk: Boolean,
+    val art: Boolean,
+    val artLife: Boolean,
+    val artPhoto: Boolean,
+    val openBarrier: Boolean,
+)
+
+fun requirementsFromRule(r: EntryRule) = DocReq(
+    dni = r.has("dni"),
+    vehicle = r.has("patente") || r.has("seguro") || r.has("licencia") || r.has("baul"),
+    plate = r.has("patente"),
+    insurance = r.has("seguro"),
+    insurancePhoto = r.has("seguro_foto"),
+    license = r.has("licencia"),
+    licensePhoto = r.has("licencia_foto"),
+    trunk = r.has("baul"),
+    art = r.has("art"),
+    artLife = r.has("art_vida"),
+    artPhoto = r.has("art_constancia"),
+    openBarrier = r.openBarrier,
+)
+
+fun docRequirements(visitKind: String?, arrivalMode: String?, rule: EntryRule? = null): DocReq {
+    val r = rule?.takeIf {
+        it.visitKind == canonicalVisitKind(visitKind) && it.arrivalMode == canonicalArrivalMode(arrivalMode)
+    } ?: EntryRules.resolve(visitKind, arrivalMode)
+    return requirementsFromRule(r)
+}
+
 val VISIT_KINDS = listOf(
-    "social" to "Social",
-    "service" to "Servicio / técnico",
-    "contractor" to "Contratista",
+    "social" to "Visita",
+    "service" to "Obra / Servicio",
     "delivery" to "Delivery",
 )
 
@@ -86,10 +163,10 @@ val ARRIVAL_MODES = listOf(
     "vehiculo" to "Vehículo",
 )
 
-fun visitKindLabel(k: String?) = VISIT_KINDS.firstOrNull { it.first == k }?.second ?: "Social"
-fun arrivalModeLabel(m: String?) = ARRIVAL_MODES.firstOrNull { it.first == m }?.second ?: "A pie"
+fun visitKindLabel(k: String?) = VISIT_KINDS.firstOrNull { it.first == canonicalVisitKind(k) }?.second ?: "Visita"
+fun arrivalModeLabel(m: String?) = ARRIVAL_MODES.firstOrNull { it.first == canonicalArrivalMode(m) }?.second ?: "A pie"
 
-fun artLabelFor(visitKind: String?) = if (visitKind == "service") "ART o seguro de vida" else "ART"
+fun artLabelFor(req: DocReq) = if (req.artLife) "ART o seguro de vida" else "ART"
 
 /** Etiqueta legible y página de la ficha para cada faltante/vencido de la API. */
 fun missingInfo(key: String, sentido: String = "in"): Pair<String, String> = when (key) {
@@ -170,8 +247,8 @@ fun ageFrom(birth: String?): Int? {
 
 fun isMinorAge(age: Int?) = age != null && age < 18
 
-/** Servicio, contratista y delivery no ingresan con menores (ni siendo menores). */
-fun minorsAllowed(visitKind: String?) = visitKind.isNullOrBlank() || visitKind == "social"
+/** Obra / servicio y delivery no ingresan con menores (ni siendo menores). */
+fun minorsAllowed(visitKind: String?) = canonicalVisitKind(visitKind) == "social"
 
 const val MINOR_KIND_TEXT = "Menor de edad: solo puede ingresar como visita"
 

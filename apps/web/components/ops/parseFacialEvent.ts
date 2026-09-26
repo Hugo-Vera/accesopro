@@ -117,12 +117,14 @@ export function parseFacialEvent(
       (!isApproved && qrString ? "QR no autorizado" : "") ||
       (isApproved ? "No identificado" : "Rostro no reconocido");
   const opened = hhmm(p.approvedAt);
+  const noBarrier = p.noBarrier === true;
   const visitBase = hasQr ? "QR visita" : visitKindText || "Visita";
+  const approvedWord = noBarrier ? "sin abrir barrera" : "abierto";
   const method = isVisit
     ? visitStatus === "approved"
       ? opened
-        ? `${visitBase} · abierto ${opened}`
-        : `${visitBase} · abierto`
+        ? `${visitBase} · ${approvedWord} ${opened}`
+        : `${visitBase} · ${approvedWord}`
       : visitStatus === "denied"
         ? `${visitBase} · denegado`
         : `${visitBase} · espera aprobación`
@@ -190,6 +192,7 @@ export function parseFacialEvent(
     openedViaLabel,
     openReason,
     actuatorName: str(p.actuatorName),
+    noBarrier: noBarrier || undefined,
   };
 }
 

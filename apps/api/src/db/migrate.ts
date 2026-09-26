@@ -810,6 +810,17 @@ async function backfillAccessPointsFromLegacy() {
     )
   `);
   await addColumn("tenant_settings", "visit_auth_default_hours", "INTEGER NOT NULL DEFAULT 24");
+  await db.run(sql`
+    CREATE TABLE IF NOT EXISTS tenant_entry_rules (
+      tenant_id TEXT NOT NULL REFERENCES tenants(id),
+      visit_kind TEXT NOT NULL,
+      arrival_mode TEXT NOT NULL,
+      items TEXT NOT NULL,
+      open_barrier INTEGER NOT NULL DEFAULT 0,
+      updated_at INTEGER NOT NULL,
+      PRIMARY KEY (tenant_id, visit_kind, arrival_mode)
+    )
+  `);
   await addColumn("users", "guard_code", "TEXT");
   await addColumn("sites", "hub_token", "TEXT");
   await db.run(sql`

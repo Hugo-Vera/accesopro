@@ -110,7 +110,9 @@ fun ExitFicha(
     val tempOutNow = (if (item.guestPresence == "out_temp") 1 else 0) + item.companions.count { it.presence == "out_temp" }
     val minorsInside = item.minorsInCount
     val minorsDefault = if (reentry) item.minorsOutTemp else item.minorsCount
-    val needsVehicle = item.needsVehicle || item.needsTrunk
+    val needsVehicle = item.arrivalMode == "vehiculo" || item.needsVehicle || item.needsTrunk
+    val checksTrunk = item.rule?.has("baul") ?: item.needsTrunk
+    val opensBarrier = item.rule?.openBarrier ?: true
     val roundTrunk = if (item.trunkThisRound) (if (reentry) item.trunkIn else item.trunkOut) else null
 
     var guest by remember(key) { mutableStateOf(guestHere) }
@@ -143,8 +145,8 @@ fun ExitFicha(
         !reentry && selected == 0 -> "Marcá quién sale"
         reentry && selected == 0 -> "Marcá quién vuelve"
         reentryExpired.isNotEmpty() -> "Documento vencido"
-        !reentry && vehicle && !trunkOk && !trunkDraft.dirty() -> "Falta revisar el baúl"
-        reentry && vehicle && !reentryTrunkReady -> "Falta revisar el baúl"
+        !reentry && vehicle && checksTrunk && !trunkOk && !trunkDraft.dirty() -> "Falta revisar el baúl"
+        reentry && vehicle && checksTrunk && !reentryTrunkReady -> "Falta revisar el baúl"
         !reentry && item.goodsAlert && item.goodsDenied -> "El lote rechazó el bien: sale sin él o denegá"
         !reentry && item.goodsAlert && !item.goodsAuthorized -> "Esperando que el lote autorice el bien"
         minorsMismatch && !item.minorsMismatchNotified -> "Avisá al lote la diferencia de menores"
@@ -178,7 +180,7 @@ fun ExitFicha(
         }
     }
 
-    fun decide(decision: String) {
+    fun decide(decision: String, open: Boolean = false) {
         val a = api ?: return
         scope.launch {
             saving = true
@@ -197,6 +199,7 @@ fun ExitFicha(
                     exitPeople = ExitPeople(guest, compIds, vehicle),
                     returns = !reentry && !item.overstay && returns,
                     minorsCount = minors,
+                    open = open,
                 )
             }.onSuccess { onDecided() }
                 .onFailure { showError(it) }
@@ -317,9 +320,24 @@ fun ExitFicha(
                             } else {
                                 Icon(Icons.Default.CheckCircle, contentDescription = null)
                                 Spacer(Modifier.width(6.dp))
-                                Text(if (reentry) "Aprobar reingreso y abrir" else "Aprobar salida y abrir", style = MaterialTheme.typography.labelLarge)
+                                Text(
+                                    when {
+                                        opensBarrier && reentry -> "Aprobar reingreso y abrir"
+                                        opensBarrier -> "Aprobar salida y abrir"
+                                        reentry -> "Registrar reingreso"
+                                        else -> "Registrar salida"
+                                    },
+                                    style = MaterialTheme.typography.labelLarge,
+                                )
                             }
                         }
+                    }
+                    if (!opensBarrier) {
+                        TextButton(
+                            onClick = { decide("approved", open = true) },
+                            enabled = enabled && blockReason == null,
+                            modifier = Modifier.fillMaxWidth(),
+                        ) { Text("Abrir igual (registra y pulsa la barrera)") }
                     }
                     if (blockReason != null) {
                         Text(
@@ -493,7 +511,7 @@ fun ExitFicha(
                             fontWeight = FontWeight.Bold,
                         )
                     }
-                    if (vehicle && !reentry) {
+                    if (vehicle && checksTrunk && !reentry) {
                         item.trunkIn?.let { TrunkSavedCard(api, "Baúl al ingreso", it, highlight = true) }
                         CheckRow(trunkOk, enabled, { trunkOk = it }) {
                             Text("Coincide con el ingreso", fontWeight = FontWeight.Bold)
@@ -504,7 +522,7 @@ fun ExitFicha(
                             TextButton(onClick = { trunkEdit = true }, enabled = enabled) { Text("Agregar foto del baúl (opcional)") }
                         }
                     }
-                    if (vehicle && reentry) {
+                    if (vehicle && checksTrunk && reentry) {
                         TrunkEditor(api, roundTrunk, trunkDraft, "Baúl al volver a entrar", enabled) { localError = it }
                     }
                 }
