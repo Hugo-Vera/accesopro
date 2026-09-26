@@ -2,10 +2,11 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { Compass, Crosshair, FileUp, Hand, Home, Layers, Pentagon, RotateCcw, Search, Trash2, Undo2, X } from "lucide-react";
+import { Compass, Crosshair, FileUp, Hand, Home, Layers, Pentagon, RectangleHorizontal, RotateCcw, Search, Trash2, Undo2, X } from "lucide-react";
 import "leaflet/dist/leaflet.css";
 import { api, withTenant } from "@/lib/api";
-import { attachMapBearing, normalizeBearing, type BearingMap } from "@/lib/leafletBearing";
+import { normalizeBearing } from "@/lib/leafletBearing";
+import { loadLeaflet, SMOOTH_ZOOM_OPTIONS } from "@/lib/leafletLoader";
 import {
   lotNumberFromName,
   overlayBounds,
@@ -13,7 +14,7 @@ import {
   readKmlFile,
   type OverlayLayer,
 } from "@/lib/kml";
-import { defaultPlanMapStyle, fitPlanContent, makePlanTiles, persistPlanMapStyle, PLAN_HOUSE_HTML, planLotLabelHtml, lotHouseLatLng, lotLabelLatLng, type PlanMapStyle } from "@/lib/planMap";
+import { defaultPlanMapStyle, fitPlanContent, makePlanTiles, persistPlanMapStyle, PLAN_HOUSE_HTML, planLotLabelHtml, lotHouseLatLng, lotLabelLatLng, validPoint, type PlanMapStyle } from "@/lib/planMap";
 import { useDash } from "@/components/DashboardProvider";
 import { useEscapeKey } from "@/hooks/useEscapeKey";
 
@@ -35,7 +36,7 @@ type PlanView = {
   saved?: boolean;
 };
 
-type Tool = "move" | "lot" | "house";
+type Tool = "move" | "lot" | "rect" | "house";
 
 type Modal =
   | { kind: "lot"; points: { lat: number; lng: number }[]; lot?: Lot }
@@ -52,7 +53,7 @@ function ringFromGeo(raw: string | null): { lat: number; lng: number }[] {
     if (!Array.isArray(ring)) return [];
     return ring
       .map((pt) => ({ lng: Number(pt[0]), lat: Number(pt[1]) }))
-      .filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng));
+      .filter((p) => validPoint(p.lat, p.lng));
   } catch {
     return [];
   }
@@ -78,7 +79,7 @@ function lotPoint(lot: Lot): { lat: number; lng: number } | null {
   if (lot.mapLat && lot.mapLng) {
     const lat = Number(lot.mapLat);
     const lng = Number(lot.mapLng);
-    if (Number.isFinite(lat) && Number.isFinite(lng)) return { lat, lng };
+    if (validPoint(lat, lng)) return { lat, lng };
   }
   const ring = ringFromGeo(lot.lotPolygon);
   if (ring.length >= 3) return centroid(ring);
@@ -123,7 +124,7 @@ export function SitePlanMap() {
   const layersRef = useRef<import("leaflet").LayerGroup | null>(null);
   const draftRef = useRef<import("leaflet").LayerGroup | null>(null);
   const overlaysRef = useRef<import("leaflet").LayerGroup | null>(null);
-  const tilesRef = useRef<import("leaflet").TileLayer | null>(null);
+  const tilesRef = useRef<import("leaflet").Layer | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
   const LRef = useRef<typeof import("leaflet") | null>(null);
 
@@ -155,6 +156,7 @@ export function SitePlanMap() {
   lotsRef.current = lots;
   const draftPtsRef = useRef(draft);
   draftPtsRef.current = draft;
+  const suppressClickUntilRef = useRef(0);
 
   const canDraw = canEdit && can("ops.plano");
 
@@ -175,18 +177,25 @@ export function SitePlanMap() {
   useEffect(() => {
     let dead = false;
     (async () => {
-      const L = await import("leaflet");
+      const L = await loadLeaflet();
       if (dead || !hostRef.current || mapRef.current) return;
       LRef.current = L;
       const loaded = await load().catch(() => null);
+      if (dead || !hostRef.current || mapRef.current) return;
       const view = loaded?.view ?? { mapLat: "-34.6037", mapLng: "-58.3816", mapZoom: 16, mapBearing: 0, saved: false };
-      const map = L.map(hostRef.current, { zoomControl: true, attributionControl: true }).setView(
-        [Number(view.mapLat), Number(view.mapLng)],
-        Number(view.mapZoom || 16),
-      );
       const startBearing = normalizeBearing(Number(view.mapBearing) || 0);
-      attachMapBearing(L, map, startBearing);
+      const map = L.map(hostRef.current, {
+        zoomControl: true,
+        attributionControl: true,
+        rotate: true,
+        bearing: startBearing,
+        rotateControl: false,
+        touchRotate: true,
+        shiftKeyRotate: true,
+        ...SMOOTH_ZOOM_OPTIONS,
+      }).setView([Number(view.mapLat), Number(view.mapLng)], Number(view.mapZoom || 16));
       setBearing(startBearing);
+      map.on("rotate", () => setBearing(normalizeBearing(map.getBearing())));
       if (focusKey) flyToLots(map, L, loaded?.lots ?? [], focusKey);
       else if (!view.saved) {
         if (!fitPlanContent(map, L, loaded?.lots ?? [], loaded?.overlays ?? [], { padding: 48, maxZoom: 18 })) {
@@ -334,7 +343,6 @@ export function SitePlanMap() {
     if (!map || !L) return;
     tilesRef.current?.remove();
     tilesRef.current = makePlanTiles(L, mapStyle).addTo(map);
-    tilesRef.current.bringToBack();
   }, [mapStyle]);
 
   const paintDraft = useCallback(
@@ -345,18 +353,36 @@ export function SitePlanMap() {
       group.clearLayers();
       if (!points.length) return;
       const latlngs = points.map((p) => [p.lat, p.lng] as [number, number]);
-      L.polyline(latlngs, { color: "#0369a7", weight: 2, dashArray: "6 4" }).addTo(group);
+      const shape =
+        latlngs.length >= 3
+          ? L.polygon(latlngs, { color: "#0369a7", weight: 2, dashArray: "6 4", fillColor: "#38bdf8", fillOpacity: 0.2 })
+          : L.polyline(latlngs, { color: "#0369a7", weight: 2, dashArray: "6 4" });
+      shape.addTo(group);
       points.forEach((p, idx) => {
         const first = idx === 0;
-        const marker = L.circleMarker([p.lat, p.lng], {
-          radius: first ? 8 : 4,
-          color: first ? "#0f766e" : "#0369a7",
-          fillColor: first ? "#14b8a6" : "#0369a7",
-          fillOpacity: 1,
-          weight: first ? 2 : 1,
+        const marker = L.marker([p.lat, p.lng], {
+          draggable: true,
+          autoPan: true,
+          icon: L.divIcon({
+            className: first ? "ops-plan-vertex ops-plan-vertex--first" : "ops-plan-vertex",
+            iconSize: first ? [16, 16] : [12, 12],
+            iconAnchor: first ? [8, 8] : [6, 6],
+          }),
+        });
+        marker.bindTooltip(first ? "Clic para cerrar · arrastrá para ajustar" : "Arrastrá para ajustar", {
+          direction: "top",
+        });
+        marker.on("drag", () => {
+          const next = latlngs.slice();
+          const ll = marker.getLatLng();
+          next[idx] = [ll.lat, ll.lng];
+          shape.setLatLngs(next);
+        });
+        marker.on("dragend", () => {
+          const ll = marker.getLatLng();
+          setDraft((prev) => prev.map((q, i) => (i === idx ? { lat: ll.lat, lng: ll.lng } : q)));
         });
         if (first) {
-          marker.bindTooltip("Clic para cerrar el lote", { direction: "top" });
           marker.on("click", (ev: import("leaflet").LeafletMouseEvent) => {
             L.DomEvent.stopPropagation(ev);
             const pts = draftPtsRef.current;
@@ -377,7 +403,7 @@ export function SitePlanMap() {
     const map = mapRef.current;
     if (!map) return;
     const onClick = (e: { latlng: { lat: number; lng: number } }) => {
-      if (!canDraw) return;
+      if (!canDraw || Date.now() < suppressClickUntilRef.current) return;
       if (tool === "lot") {
         const pts = draftPtsRef.current;
         const first = pts[0];
@@ -406,6 +432,74 @@ export function SitePlanMap() {
       map.off("dblclick", onDbl);
     };
   }, [canDraw, tool, draft.length]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    const L = LRef.current;
+    if (!map || !L || tool !== "rect" || !canDraw) return;
+    map.dragging.disable();
+    map.boxZoom.disable();
+    let start: import("leaflet").Point | null = null;
+    let preview: import("leaflet").Polygon | null = null;
+
+    const corners = (a: import("leaflet").Point, b: import("leaflet").Point, square: boolean) => {
+      let dx = b.x - a.x;
+      let dy = b.y - a.y;
+      if (square) {
+        const side = Math.max(Math.abs(dx), Math.abs(dy));
+        dx = Math.sign(dx || 1) * side;
+        dy = Math.sign(dy || 1) * side;
+      }
+      // Esquinas en pantalla: con el plano girado, el lote queda alineado a la vista.
+      return [
+        L.point(a.x, a.y),
+        L.point(a.x + dx, a.y),
+        L.point(a.x + dx, a.y + dy),
+        L.point(a.x, a.y + dy),
+      ].map((p) => map.containerPointToLatLng(p));
+    };
+
+    const onDown = (e: import("leaflet").LeafletMouseEvent) => {
+      if ((e.originalEvent as MouseEvent).button !== 0) return;
+      start = e.containerPoint;
+      preview?.remove();
+      preview = null;
+      setDraft([]);
+    };
+    const onMove = (e: import("leaflet").LeafletMouseEvent) => {
+      if (!start) return;
+      const ll = corners(start, e.containerPoint, (e.originalEvent as MouseEvent).shiftKey);
+      if (!preview) {
+        preview = L.polygon(ll, { color: "#0369a7", weight: 2, dashArray: "6 4", fillColor: "#38bdf8", fillOpacity: 0.2 }).addTo(map);
+      } else {
+        preview.setLatLngs(ll);
+      }
+    };
+    const onUp = (e: import("leaflet").LeafletMouseEvent) => {
+      if (!start) return;
+      const a = start;
+      start = null;
+      preview?.remove();
+      preview = null;
+      if (a.distanceTo(e.containerPoint) < 10) return;
+      suppressClickUntilRef.current = Date.now() + 400;
+      const ll = corners(a, e.containerPoint, (e.originalEvent as MouseEvent).shiftKey);
+      setDraft(ll.map((p) => ({ lat: p.lat, lng: p.lng })));
+      setTool("lot");
+    };
+
+    map.on("mousedown", onDown);
+    map.on("mousemove", onMove);
+    map.on("mouseup", onUp);
+    return () => {
+      map.off("mousedown", onDown);
+      map.off("mousemove", onMove);
+      map.off("mouseup", onUp);
+      preview?.remove();
+      map.dragging.enable();
+      map.boxZoom.enable();
+    };
+  }, [tool, canDraw]);
 
   function closeModal() {
     setConfirmDelete(false);
@@ -482,10 +576,10 @@ export function SitePlanMap() {
   }, Boolean(kmlOpen) || Boolean(modal) || tool !== "move" || draft.length > 0);
 
   async function saveView() {
-    const map = mapRef.current as BearingMap | null;
+    const map = mapRef.current;
     if (!map || !tenantId) return;
-    const c = map.getCenter();
-    const mapBearing = map.getBearing?.() ?? bearing;
+    const c = map.wrapLatLng(map.getCenter());
+    const mapBearing = normalizeBearing(map.getBearing?.() ?? bearing);
     await api(withTenant("/api/plan/view", tenantId), {
       method: "PATCH",
       body: JSON.stringify({
@@ -501,7 +595,7 @@ export function SitePlanMap() {
   function applyBearing(next: number) {
     const n = normalizeBearing(next);
     setBearing(n);
-    (mapRef.current as BearingMap | null)?.setBearing(n);
+    mapRef.current?.setBearing(n);
   }
 
   function changeMapStyle(next: PlanMapStyle) {
@@ -752,8 +846,9 @@ export function SitePlanMap() {
         ? "Clic para cada vértice. Deshacer saca el último punto."
         : "Clic en el primer punto (verde) o «Cerrar lote». Deshacer saca el último.";
     }
+    if (tool === "rect") return "Arrastrá sobre el mapa para marcar el lote. Con Shift sale un cuadrado. Después podés mover cada esquina.";
     if (tool === "house") return "Clic en el mapa (o sobre un lote) para ubicar la casa.";
-    return "Arrastrá el mapa. Giro alinea el predio; Guardar vista deja centro, zoom y giro.";
+    return "Arrastrá el mapa. Shift + rueda o la barra de giro alinean el predio; Guardar vista deja centro, zoom y giro.";
   }, [canDraw, tool, draft.length]);
 
   return (
@@ -781,6 +876,19 @@ export function SitePlanMap() {
           >
             <Pentagon className="h-4 w-4" />
             Lote
+          </button>
+          <button
+            type="button"
+            className={`ops-plan-tool ${tool === "rect" ? "ops-plan-tool--on" : ""}`}
+            onClick={() => {
+              setDraft([]);
+              setTool("rect");
+            }}
+            disabled={!canDraw}
+            title="Marcar lote arrastrando un rectángulo"
+          >
+            <RectangleHorizontal className="h-4 w-4" />
+            Rectángulo
           </button>
           <button
             type="button"
@@ -957,8 +1065,7 @@ export function SitePlanMap() {
       ) : null}
 
       <div
-        className={`ops-plan-map-wrap relative min-h-[420px] flex-1 overflow-hidden rounded-xl border border-slate-200 dark:border-slate-700${tool === "lot" || tool === "house" ? " ops-plan-map-wrap--draw" : ""}${showLotDetail ? "" : " ops-plan-map-wrap--far"}`}
-        style={{ ["--plan-bearing" as string]: `${bearing}deg` }}
+        className={`ops-plan-map-wrap relative min-h-[420px] flex-1 overflow-hidden rounded-xl border border-slate-200 dark:border-slate-700${tool === "lot" || tool === "rect" || tool === "house" ? " ops-plan-map-wrap--draw" : ""}${showLotDetail ? "" : " ops-plan-map-wrap--far"}`}
       >
         <div ref={hostRef} className="ops-plan-map h-full min-h-[420px] w-full" />
       </div>

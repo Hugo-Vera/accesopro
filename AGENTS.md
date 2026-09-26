@@ -73,7 +73,7 @@ Actuador = relé con **nombre libre** (Barrera entrada, Portón cochera, Puerta 
 
 Las reglas (cara, QR, ALPR, botón) resuelven el **punto** por el dispositivo que disparó el evento y abren solo los actuadores cableados ahí. No mezclar sectores ni módulos en una sola tabla.
 
-Plano del predio = core (`/dashboard/plano`). Mapa OSM o Google (calles / satélite / híbrido; `NEXT_PUBLIC_MAP_PROVIDER=osm|google`, opcional `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY`). El admin busca el barrio, dibuja lotes, importa KML/KMZ, gira el plano y guarda la vista (centro, zoom y giro). Se guarda en `properties` (`lot_polygon`, `map_lat`/`map_lng`) y la vista en `sites`. Pánico y fuego aparecen cuando el módulo está tildado.
+Plano del predio = core (`/dashboard/plano`). Mapa OSM o Google (calles / satélite / híbrido; `NEXT_PUBLIC_MAP_PROVIDER=osm|google`). Los tiles Google salen del endpoint público `mt*.google.com` (sin API key ni facturación; no oficial, puede bloquearse); `NEXT_PUBLIC_GOOGLE_MAPS_API_KEY` ya no se usa. Híbrido = satélite + calles/nombres sin comercios. Giro con `leaflet-rotate` (`apps/web/lib/leafletLoader.ts`, Shift + rueda o barra) y zoom fraccionado (paso 0,25). El admin busca el barrio, dibuja lotes (polígono punto a punto o **Rectángulo** arrastrando, Shift = cuadrado, esquinas editables), importa KML/KMZ, gira el plano y guarda la vista (centro, zoom y giro). La API rechaza coordenadas fuera de rango (`apps/api/src/geo.ts`) y el mapa ignora las viejas inválidas. Se guarda en `properties` (`lot_polygon`, `map_lat`/`map_lng`) y la vista en `sites`. Pánico y fuego aparecen cuando el módulo está tildado.
 
 ## Stack
 

@@ -471,12 +471,12 @@ export function LiveFacialFeed({
                 key={e.id}
                 type="button"
                 onClick={() => setSelected({ alert, createdAt: e.createdAt })}
-                className={`ops-hist-row flex w-full items-stretch overflow-hidden rounded-lg border text-left shadow-sm transition hover:brightness-[0.98] dark:hover:brightness-110 ${rowTone}`}
+                className={`ops-hist-row flex w-full min-w-0 items-stretch overflow-hidden rounded-lg border text-left shadow-sm transition hover:brightness-[0.98] dark:hover:brightness-110 ${rowTone}`}
               >
                 <FeedThumb
                   alert={alert}
                   tenantId={tenantId}
-                  className={`self-stretch border-r-2 ${compact ? "w-[96px] min-h-[128px]" : "w-[88px] min-h-[116px]"}`}
+                  className={`shrink-0 self-stretch border-r-2 ${compact ? "w-[76px] min-h-[100px]" : "w-[88px] min-h-[116px]"}`}
                 />
                 <div
                   className={`flex min-w-0 flex-1 flex-col justify-center gap-1 ${
@@ -497,7 +497,7 @@ export function LiveFacialFeed({
                   >
                     {rowSubtitle(alert, compact)}
                   </p>
-                  <div className="flex min-w-0 items-center justify-between gap-2">
+                  <div className="flex min-w-0 flex-wrap items-center justify-between gap-x-2 gap-y-1">
                     <time
                       dateTime={new Date(e.createdAt).toISOString()}
                       className="ops-hist-time shrink-0 font-mono tabular-nums text-slate-500 dark:text-slate-400"

@@ -5,7 +5,7 @@ import Link from "next/link";
 import { Crosshair } from "lucide-react";
 import "leaflet/dist/leaflet.css";
 import { api, withTenant } from "@/lib/api";
-import { attachMapBearing } from "@/lib/leafletBearing";
+import { loadLeaflet, SMOOTH_ZOOM_OPTIONS } from "@/lib/leafletLoader";
 import {
   defaultPlanMapStyle,
   fitPlanContent,
@@ -16,6 +16,7 @@ import {
   persistPlanMapStyle,
   PLAN_HOUSE_HTML,
   planLotLabelHtml,
+  validPoint,
   type PlanMapStyle,
 } from "@/lib/planMap";
 import { useDash } from "@/components/DashboardProvider";
@@ -35,7 +36,7 @@ type AuthPin = {
 function pinLatLng(p: AuthPin): [number, number] | null {
   const lat = Number(p.mapLat);
   const lng = Number(p.mapLng);
-  if (Number.isFinite(lat) && Number.isFinite(lng)) return [lat, lng];
+  if (validPoint(lat, lng)) return [lat, lng];
   if (!p.lotPolygon) return null;
   try {
     const g = JSON.parse(p.lotPolygon) as { coordinates?: number[][][] };
@@ -74,7 +75,7 @@ export function OpsPlanMap() {
   const hostRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<import("leaflet").Map | null>(null);
   const LRef = useRef<typeof import("leaflet") | null>(null);
-  const tilesRef = useRef<import("leaflet").TileLayer | null>(null);
+  const tilesRef = useRef<import("leaflet").Layer | null>(null);
   const lotsRef = useRef<Lot[]>([]);
   const overlaysRef = useRef<OverlayLayer[]>([]);
   const pinsLayerRef = useRef<import("leaflet").LayerGroup | null>(null);
@@ -82,7 +83,6 @@ export function OpsPlanMap() {
   const [msg, setMsg] = useState<string | null>(null);
   const [mapStyle, setMapStyle] = useState<PlanMapStyle>(defaultPlanMapStyle);
   const [mapReady, setMapReady] = useState(false);
-  const [bearing, setBearing] = useState(0);
 
   const recenter = useCallback(() => {
     const map = mapRef.current;
@@ -102,7 +102,7 @@ export function OpsPlanMap() {
     const timers: number[] = [];
     (async () => {
       if (!tenantId || !hostRef.current) return;
-      const L = await import("leaflet");
+      const L = await loadLeaflet();
       if (dead || !hostRef.current) return;
       LRef.current = L;
       const d = await api<{
@@ -127,10 +127,13 @@ export function OpsPlanMap() {
       map = L.map(hostRef.current, {
         zoomControl: false,
         attributionControl: false,
+        rotate: true,
+        bearing: Number(d.view?.mapBearing) || 0,
+        rotateControl: false,
+        touchRotate: false,
+        shiftKeyRotate: false,
+        ...SMOOTH_ZOOM_OPTIONS,
       });
-      const startBearing = Number(d.view?.mapBearing) || 0;
-      attachMapBearing(L, map, startBearing);
-      setBearing(startBearing);
       L.control.zoom({ position: "bottomright" }).addTo(map);
       if (dead) {
         map.remove();
@@ -286,7 +289,6 @@ export function OpsPlanMap() {
     if (!map || !L) return;
     tilesRef.current?.remove();
     tilesRef.current = makePlanTiles(L, mapStyle).addTo(map);
-    tilesRef.current.bringToBack();
   }, [mapStyle, mapReady]);
 
   useEffect(() => {
@@ -352,7 +354,7 @@ export function OpsPlanMap() {
         </Link>
       </header>
       {msg ? <p className="px-2 pb-2 text-[11px] text-rose-600">{msg}</p> : null}
-      <div className="ops-predio-map-wrap" style={{ ["--plan-bearing" as string]: `${bearing}deg` }}>
+      <div className="ops-predio-map-wrap">
         <div className="ops-predio-map-tools" role="toolbar" aria-label="Capa y encuadre del plano">
           <button
             type="button"

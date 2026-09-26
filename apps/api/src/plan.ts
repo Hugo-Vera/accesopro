@@ -13,6 +13,7 @@ import {
   visitPasses,
   visitRecords,
 } from "./db/schema.js";
+import { parseLotLatLng, validLatLng } from "./geo.js";
 import { denyUnlessCapability, userHasCapability } from "./grants.js";
 import { nid, scopedSite } from "./scope.js";
 
@@ -26,6 +27,16 @@ const DEFAULT_VIEW = { mapLat: "-34.6037", mapLng: "-58.3816", mapZoom: 16, mapB
 function clampBearing(n: number) {
   if (!Number.isFinite(n)) return 0;
   return ((Math.round(n) % 360) + 360) % 360;
+}
+
+function wrapLng(n: number) {
+  if (!Number.isFinite(n)) return NaN;
+  return ((((n + 180) % 360) + 360) % 360) - 180;
+}
+
+/** Vistas viejas guardadas tras arrastrar sin wrap (lng fuera de ±180) mandaban el plano a la Antártida. */
+function validView(lat: string | null | undefined, lng: string | null | undefined) {
+  return validLatLng(lat, lng) && Math.abs(Number(lat)) <= 85;
 }
 
 function canEditRole(user: AuthUser) {
@@ -132,14 +143,15 @@ planApi.get("/plan", async (c) => {
   const user = c.get("user");
   const canEdit = canEditRole(user) || (await userHasCapability(user, "core.config"));
   const rows = await db.select().from(properties).where(eq(properties.siteId, scoped.site.id));
+  const viewOk = validView(scoped.site.mapLat, scoped.site.mapLng);
   return c.json({
     canEdit,
     view: {
-      mapLat: scoped.site.mapLat || DEFAULT_VIEW.mapLat,
-      mapLng: scoped.site.mapLng || DEFAULT_VIEW.mapLng,
-      mapZoom: scoped.site.mapZoom || DEFAULT_VIEW.mapZoom,
+      mapLat: viewOk ? scoped.site.mapLat : DEFAULT_VIEW.mapLat,
+      mapLng: viewOk ? scoped.site.mapLng : DEFAULT_VIEW.mapLng,
+      mapZoom: viewOk ? scoped.site.mapZoom || DEFAULT_VIEW.mapZoom : DEFAULT_VIEW.mapZoom,
       mapBearing: clampBearing(Number(scoped.site.mapBearing ?? 0)),
-      saved: Boolean(scoped.site.mapViewSaved),
+      saved: viewOk && Boolean(scoped.site.mapViewSaved),
     },
     overlays: readOverlays(scoped.site.mapOverlays),
     lots: rows.map((r) => ({
@@ -164,18 +176,20 @@ planApi.patch("/plan/view", async (c) => {
     return c.json({ error: "Solo administración puede guardar la vista del plano" }, 403);
   }
   const body = await c.req.json<{ mapLat?: string; mapLng?: string; mapZoom?: number; mapBearing?: number }>();
-  const mapLat = String(body.mapLat ?? "").trim();
-  const mapLng = String(body.mapLng ?? "").trim();
+  const lat = Number(String(body.mapLat ?? "").trim() || NaN);
+  const lng = wrapLng(Number(String(body.mapLng ?? "").trim() || NaN));
   const mapZoom = Number(body.mapZoom);
-  if (!mapLat || !mapLng || !Number.isFinite(Number(mapLat)) || !Number.isFinite(Number(mapLng))) {
+  if (!Number.isFinite(lat) || !Number.isFinite(lng) || Math.abs(lat) > 85) {
     return c.json({ error: "Coordenadas inválidas" }, 400);
   }
+  const mapLat = lat.toFixed(7);
+  const mapLng = lng.toFixed(7);
   await db
     .update(sites)
     .set({
       mapLat,
       mapLng,
-      mapZoom: Number.isFinite(mapZoom) ? Math.max(3, Math.min(20, Math.round(mapZoom))) : scoped.site.mapZoom,
+      mapZoom: Number.isFinite(mapZoom) ? Math.max(3, Math.min(21, Math.round(mapZoom * 4) / 4)) : scoped.site.mapZoom,
       mapBearing: clampBearing(Number(body.mapBearing ?? 0)),
       mapViewSaved: true,
     })
@@ -236,6 +250,8 @@ planApi.post("/plan/lots", async (c) => {
   if (existing.some((r) => r.lotNumber.toLowerCase() === lotNumber.toLowerCase())) {
     return c.json({ error: `Ya existe el lote ${lotNumber}` }, 409);
   }
+  const point = parseLotLatLng(body.mapLat, body.mapLng);
+  if ("error" in point) return c.json({ error: point.error }, 400);
   const id = nid();
   await db.insert(properties).values({
     id,
@@ -244,8 +260,8 @@ planApi.post("/plan/lots", async (c) => {
     lotNumber,
     label,
     address: body.address?.trim() || null,
-    mapLat: body.mapLat?.toString().trim() || null,
-    mapLng: body.mapLng?.toString().trim() || null,
+    mapLat: point.mapLat,
+    mapLng: point.mapLng,
     lotPolygon: parsePolygon(body.lotPolygon),
     createdAt: new Date(),
   });
@@ -268,14 +284,19 @@ planApi.patch("/plan/lots/:id", async (c) => {
     .get();
   if (!row) return c.json({ error: "Lote no encontrado" }, 404);
   const body = await c.req.json<Record<string, unknown>>();
+  const point =
+    body.mapLat !== undefined || body.mapLng !== undefined
+      ? parseLotLatLng(body.mapLat ?? row.mapLat, body.mapLng ?? row.mapLng)
+      : { mapLat: row.mapLat, mapLng: row.mapLng };
+  if ("error" in point) return c.json({ error: point.error }, 400);
   await db
     .update(properties)
     .set({
       lotNumber: body.lotNumber !== undefined ? String(body.lotNumber).trim() || row.lotNumber : row.lotNumber,
       label: body.label !== undefined ? String(body.label).trim() || row.label : row.label,
       address: body.address !== undefined ? String(body.address || "").trim() || null : row.address,
-      mapLat: body.mapLat !== undefined ? String(body.mapLat || "").trim() || null : row.mapLat,
-      mapLng: body.mapLng !== undefined ? String(body.mapLng || "").trim() || null : row.mapLng,
+      mapLat: point.mapLat,
+      mapLng: point.mapLng,
       lotPolygon: body.lotPolygon !== undefined ? parsePolygon(body.lotPolygon) : row.lotPolygon,
     })
     .where(eq(properties.id, row.id));
@@ -382,14 +403,15 @@ planApi.post("/plan/lots/import", async (c) => {
     if (!lotNumber) lotNumber = nextLotNumber([...used]);
     used.add(lotNumber.toLowerCase());
     const label = String(item.label ?? "").trim() || `Lote ${lotNumber}`;
+    const point = parseLotLatLng(item.mapLat, item.mapLng);
     await db.insert(properties).values({
       id: nid(),
       tenantId: scoped.tenantId,
       siteId: scoped.site.id,
       lotNumber,
       label,
-      mapLat: item.mapLat?.toString().trim() || null,
-      mapLng: item.mapLng?.toString().trim() || null,
+      mapLat: "error" in point ? null : point.mapLat,
+      mapLng: "error" in point ? null : point.mapLng,
       lotPolygon: polygon,
       createdAt: new Date(),
     });

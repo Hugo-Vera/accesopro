@@ -6,10 +6,6 @@ export type PlanMapStyle = "osm" | "roadmap" | "satellite" | "hybrid";
 
 const STYLE_KEY = "accesopro.planMapStyle";
 
-export function googleMapsApiKey() {
-  return (process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY ?? "").trim();
-}
-
 export function googleMapType(): GoogleMapType {
   const raw = (process.env.NEXT_PUBLIC_GOOGLE_MAPS_TYPE ?? "hybrid").toLowerCase();
   if (raw === "roadmap" || raw === "satellite" || raw === "hybrid") return raw;
@@ -45,25 +41,42 @@ export function persistPlanMapStyle(style: PlanMapStyle) {
   }
 }
 
+/** Sin comercios ni transporte: en el plano del barrio solo ensucian. */
+const GOOGLE_NO_POI = "&apistyle=s.t%3A2%7Cp.v%3Aoff%2Cs.t%3A4%7Cp.v%3Aoff";
+
+function googleTiles(L: typeof import("leaflet"), lyrs: string, extra: string, zIndex: number, opacity = 1) {
+  return L.tileLayer(`https://{s}.google.com/vt/lyrs=${lyrs}&hl=es-AR&x={x}&y={y}&z={z}${extra}`, {
+    maxZoom: 21,
+    maxNativeZoom: 21,
+    subdomains: ["mt0", "mt1", "mt2", "mt3"],
+    attribution: '&copy; <a href="https://www.google.com/maps">Google</a>',
+    zIndex,
+    opacity,
+  });
+}
+
+/** Capa base del plano. Híbrido = satélite + calles y nombres sin comercios (no el lyrs=y de Google). */
 export function makePlanTiles(
   L: typeof import("leaflet"),
   style: PlanMapStyle | PlanMapBase,
-): import("leaflet").TileLayer {
+): import("leaflet").Layer {
   const resolved: PlanMapStyle = style === "google" ? googleMapType() : style;
   if (resolved === "osm") {
     return L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      maxZoom: 19,
+      maxZoom: 21,
+      maxNativeZoom: 19,
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
+      zIndex: 1,
     });
   }
-  const lyrs = resolved === "roadmap" ? "m" : resolved === "satellite" ? "s" : "y";
-  const key = googleMapsApiKey();
-  const keyQ = key ? `&key=${encodeURIComponent(key)}` : "";
-  return L.tileLayer(`https://{s}.google.com/vt/lyrs=${lyrs}&hl=es-AR&x={x}&y={y}&z={z}${keyQ}`, {
-    maxZoom: 21,
-    subdomains: ["mt0", "mt1", "mt2", "mt3"],
-    attribution: '&copy; <a href="https://www.google.com/maps">Google</a>',
-  });
+  if (resolved === "roadmap") return googleTiles(L, "m", GOOGLE_NO_POI, 1);
+  if (resolved === "satellite") return googleTiles(L, "s", "", 1);
+  return L.layerGroup([googleTiles(L, "s", "", 1), googleTiles(L, "h", GOOGLE_NO_POI, 2, 0.95)]);
+}
+
+/** Coordenadas cargadas a mano fuera de rango mandan el encuadre a la otra punta del mundo. */
+export function validPoint(lat: number, lng: number) {
+  return Number.isFinite(lat) && Number.isFinite(lng) && Math.abs(lat) <= 85 && Math.abs(lng) <= 180;
 }
 
 function ringFromGeo(raw: string | null | undefined): { lat: number; lng: number }[] {
@@ -74,7 +87,7 @@ function ringFromGeo(raw: string | null | undefined): { lat: number; lng: number
     if (!Array.isArray(ring)) return [];
     return ring
       .map((pt) => ({ lng: Number(pt[0]), lat: Number(pt[1]) }))
-      .filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng));
+      .filter((p) => validPoint(p.lat, p.lng));
   } catch {
     return [];
   }
@@ -111,7 +124,7 @@ export function lotHouseLatLng(lot: {
   if (lot.mapLat && lot.mapLng) {
     const lat = Number(lot.mapLat);
     const lng = Number(lot.mapLng);
-    if (Number.isFinite(lat) && Number.isFinite(lng)) return [lat, lng];
+    if (validPoint(lat, lng)) return [lat, lng];
   }
   return null;
 }
@@ -141,7 +154,7 @@ export function planContentPoints(
     if (lot.mapLat && lot.mapLng) {
       const lat = Number(lot.mapLat);
       const lng = Number(lot.mapLng);
-      if (Number.isFinite(lat) && Number.isFinite(lng)) pts.push({ lat, lng });
+      if (validPoint(lat, lng)) pts.push({ lat, lng });
     }
   }
   return pts;

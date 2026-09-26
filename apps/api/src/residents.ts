@@ -26,6 +26,7 @@ import { makeVisitToken } from "./visitPass.js";
 import { revokeCredentialsForUser, upsertCredential } from "./credentials.js";
 import { ASI_CARD_TYPES, ASI_USER_TYPES, canonicalVisitKind } from "@accesopro/catalog";
 import { applyRoleTemplate, userHasCapability } from "./grants.js";
+import { parseLotLatLng } from "./geo.js";
 import { assertFeature, tenantFeatureEnabled } from "./features.js";
 import { isMinorBirthDate } from "./age.js";
 import { decideOwnerNotice, listOwnerNoticesForProperty } from "./ownerNotices.js";
@@ -198,6 +199,8 @@ residents.post("/properties", async (c) => {
   const lotNumber = String(body.lotNumber ?? "").trim();
   const label = String(body.label ?? "").trim();
   if (!lotNumber || !label) return c.json({ error: "Faltan lote y nombre" }, 400);
+  const point = parseLotLatLng(body.mapLat, body.mapLng);
+  if ("error" in point) return c.json({ error: point.error }, 400);
   const id = nid();
   await db.insert(properties).values({
     id,
@@ -206,8 +209,8 @@ residents.post("/properties", async (c) => {
     lotNumber,
     label,
     address: body.address?.trim() || null,
-    mapLat: body.mapLat?.trim() || null,
-    mapLng: body.mapLng?.trim() || null,
+    mapLat: point.mapLat,
+    mapLng: point.mapLng,
     lotPolygon: body.lotPolygon?.trim() || null,
     notes: body.notes?.trim() || null,
     createdAt: new Date(),
@@ -226,14 +229,19 @@ residents.patch("/properties/:id", async (c) => {
     .where(and(eq(properties.id, c.req.param("id")), eq(properties.tenantId, scoped.tenantId)))
     .get();
   if (!row) return c.json({ error: "Propiedad no encontrada" }, 404);
+  const point =
+    body.mapLat !== undefined || body.mapLng !== undefined
+      ? parseLotLatLng(body.mapLat ?? row.mapLat, body.mapLng ?? row.mapLng)
+      : { mapLat: row.mapLat, mapLng: row.mapLng };
+  if ("error" in point) return c.json({ error: point.error }, 400);
   await db
     .update(properties)
     .set({
       lotNumber: body.lotNumber ? String(body.lotNumber).trim() : row.lotNumber,
       label: body.label ? String(body.label).trim() : row.label,
       address: body.address !== undefined ? String(body.address || "").trim() || null : row.address,
-      mapLat: body.mapLat !== undefined ? String(body.mapLat || "").trim() || null : row.mapLat,
-      mapLng: body.mapLng !== undefined ? String(body.mapLng || "").trim() || null : row.mapLng,
+      mapLat: point.mapLat,
+      mapLng: point.mapLng,
       lotPolygon: body.lotPolygon !== undefined ? String(body.lotPolygon || "").trim() || null : row.lotPolygon,
       notes: body.notes !== undefined ? String(body.notes || "").trim() || null : row.notes,
     })

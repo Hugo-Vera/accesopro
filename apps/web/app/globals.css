@@ -798,6 +798,7 @@
   flex-direction: column;
   gap: 0.35rem;
   min-height: 0;
+  min-width: 0;
   overflow: hidden;
   border: 1px solid #e2e8f0;
   border-radius: 8px;
@@ -849,11 +850,13 @@
 }
 
 /* Live + historial en fila dentro del sentido */
+/* minmax(0, …): con 1fr la columna toma el ancho del texto sin cortar y las tarjetas se salen del carril */
 .ops-lane-main {
   display: grid;
-  grid-template-columns: 1fr;
+  grid-template-columns: minmax(0, 1fr);
   gap: 0.35rem;
   min-height: 0;
+  min-width: 0;
   flex: 1 1 0;
 }
 
@@ -867,7 +870,7 @@
 @media (min-width: 720px) {
   .ops-lane-main--feed-only,
   .ops-out-cols-main--feed-only {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 
@@ -883,6 +886,7 @@
 
 .ops-lane-feed {
   min-height: 0;
+  min-width: 0;
   height: 100%;
   display: flex;
   flex-direction: column;
@@ -891,6 +895,7 @@
 .ops-lane-feed > .ops-subpanel {
   flex: 1;
   min-height: 0;
+  min-width: 0;
 }
 
 .ops-menu--compact .ops-menu-grid {
@@ -1916,8 +1921,6 @@
   place-items: center;
   width: 100%;
   height: 100%;
-  transform: rotate(calc(-1 * var(--plan-bearing, 0deg)));
-  transform-origin: center center;
 }
 .ops-plan-lot-label {
   display: flex;
@@ -1943,8 +1946,20 @@
   line-height: 1;
   color: #0c4a6e;
   box-shadow: 0 1px 2px rgba(15, 23, 42, 0.18);
-  transform: rotate(calc(-1 * var(--plan-bearing, 0deg)));
-  transform-origin: center center;
+}
+.ops-plan-vertex {
+  border-radius: 999px;
+  background: #0369a7;
+  border: 2px solid #fff;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+  cursor: grab;
+}
+.ops-plan-vertex--first {
+  background: #14b8a6;
+  border-color: #0f766e;
+}
+.ops-plan-map-wrap--draw .ops-plan-vertex {
+  cursor: grab;
 }
 .ops-plan-lot-label--on span {
   border-color: #0284c7;
