@@ -25,6 +25,7 @@ import { ASI_CARD_TYPES, ASI_USER_TYPES } from "@accesopro/catalog";
 import { processDocumentImage } from "./documentScan.js";
 import { mimeOfPath, readVisitorDoc, saveVisitorDoc } from "./visitorDocs.js";
 import { upsertCredential } from "./credentials.js";
+import { openViaOf } from "./openContext.js";
 import { makeVisitToken, parseVisitQrPayload } from "./visitPass.js";
 import {
   attachVehicleInsurance,
@@ -949,6 +950,7 @@ visitorsApi.post("/visitors/approvals/:id/decide", async (c) => {
     site: scoped.site,
     approvalId,
     guardUserId: c.get("user").id,
+    openedVia: openViaOf(c),
     decision,
     comment: body.comment,
     trunkChecked: Boolean(body.trunkChecked),

@@ -894,6 +894,7 @@ class GuardApi(
             readTimeout = timeout
             setRequestProperty("Accept", "application/json")
             setRequestProperty("Content-Type", "application/json")
+            setRequestProperty("X-AccesoPro-Client", "guard-app")
             if (auth && token.isNotBlank()) setRequestProperty("Authorization", "Bearer $token")
             if (body != null) {
                 doOutput = true

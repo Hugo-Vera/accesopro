@@ -2,6 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { db } from "./db/client.js";
 import { actuators, commands } from "./db/schema.js";
 import { agentOnline, nid } from "./scope.js";
+import { rememberOpen, type OpenContext } from "./openContext.js";
 export async function enqueue(siteId: string, action: string, payload: unknown) {
   const id = nid();
   await db.insert(commands).values({
@@ -84,6 +85,7 @@ export async function fireActuator(
   site: { id: string; lastSeenAt: Date | number | null },
   id: string,
   action: "open" | "close",
+  ctx?: OpenContext,
 ) {
   const actuator = await db
     .select()
@@ -110,6 +112,9 @@ export async function fireActuator(
     if (actuator.driver === "dahua") {
       if (!agentOnline(site.lastSeenAt)) {
         return { ok: false, error: "El agent del sitio no está en línea. Arrancalo en la LAN." };
+      }
+      if (ctx && actuator.dahuaDeviceId) {
+        rememberOpen(site.id, actuator.dahuaDeviceId, { ...ctx, actuatorName: actuator.name });
       }
       const cmd = await enqueue(site.id, "open", {
         actuatorId: actuator.id,

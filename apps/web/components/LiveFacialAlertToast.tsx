@@ -37,6 +37,16 @@ export type FacialEventAlert = {
   scannedByName?: string;
   approvedByName?: string;
   approvedVia?: string;
+  /** «Visita», «Servicio / técnico», «Contratista», «Delivery». */
+  visitKindLabel?: string;
+  arrivalLabel?: string;
+  plate?: string;
+  authorizedBy?: string;
+  /** Guardia que pidió el pulso y desde dónde (App de portería / Dashboard). */
+  openedByName?: string;
+  openedViaLabel?: string;
+  openReason?: "visit" | "manual" | "access_qr";
+  actuatorName?: string;
 };
 
 interface Props {
@@ -286,6 +296,13 @@ export function LiveFacialAlertToast({ alert, onDismiss, onOpenRelay }: Props) {
               <div style={{ marginTop: 10, fontSize: 17, fontWeight: 800, lineHeight: 1.15, wordBreak: "break-word" }}>
                 {shown.personName}
               </div>
+              {shown.visitKindLabel || shown.lotNumber ? (
+                <div style={{ marginTop: 4, fontSize: 13, fontWeight: 700, color: isDark ? "#e2e8f0" : "#0f172a" }}>
+                  {[shown.visitKindLabel, shown.lotNumber ? `Lote ${shown.lotNumber}` : null, shown.plate]
+                    .filter(Boolean)
+                    .join(" · ")}
+                </div>
+              ) : null}
               {shown.guestDni || shown.qrHint || shown.scanChannelLabel ? (
                 <div style={{ marginTop: 4, fontSize: 12, color: "#475569", lineHeight: 1.35 }}>
                   {shown.guestDni ? `DNI ${shown.guestDni}` : ""}
@@ -308,7 +325,17 @@ export function LiveFacialAlertToast({ alert, onDismiss, onOpenRelay }: Props) {
                 </div>
               ) : (
                 <div style={{ marginTop: 6, fontSize: 12, fontWeight: 600, color: isDark ? "#6ee7b7" : "#047857" }}>
-                  {shown.isRemote ? "Relé abierto desde portería" : "Identidad validada"}
+                  {shown.openedByName && (shown.isRemote || shown.kind === "visit")
+                    ? `Abrió ${shown.openedByName}${
+                        shown.openedViaLabel
+                          ? /app/i.test(shown.openedViaLabel)
+                            ? " desde la app"
+                            : " desde el dashboard"
+                          : ""
+                      }`
+                    : shown.isRemote
+                      ? "Relé abierto desde portería"
+                      : "Identidad validada"}
                 </div>
               )}
             </div>

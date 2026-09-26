@@ -20,6 +20,7 @@ import {
   sites,
 } from "./db/schema.js";
 import { fireActuator } from "./actuatorExec.js";
+import { openViaLabel, type OpenContext, type OpenVia } from "./openContext.js";
 import { actuatorsForDahuaDevice, actuatorsForSentido, laneCodeOf } from "./accessPoints.js";
 import { broadcastRealtimeEvent } from "./eventStream.js";
 import { nid, normalizePlate } from "./scope.js";
@@ -792,6 +793,8 @@ async function patchVisitLaneEvent(input: {
   decidedAt: Date;
   decidedByUserId: string;
   approvedVia?: string | null;
+  openedVia?: OpenVia | null;
+  visitKind?: string | null;
   scanChannel?: string | null;
   scanChannelLabel?: string | null;
 }) {
@@ -836,6 +839,9 @@ async function patchVisitLaneEvent(input: {
     approvedAt: input.decidedAt.getTime(),
     approvedByName: guard?.name || null,
     approvedVia: input.approvedVia ?? "login",
+    openedVia: input.openedVia ?? target.payload.openedVia ?? null,
+    openedViaLabel: openViaLabel(input.openedVia) ?? target.payload.openedViaLabel ?? null,
+    visitKind: input.visitKind ?? target.payload.visitKind ?? null,
     scanChannel: input.scanChannel ?? target.payload.scanChannel ?? null,
     scanChannelLabel: input.scanChannelLabel ?? target.payload.scanChannelLabel ?? null,
   };
@@ -858,6 +864,7 @@ async function openForVisit(
   site: { id: string; lastSeenAt: Date | number | null },
   sentido: "in" | "out",
   deviceId?: string | null,
+  ctx?: OpenContext,
 ) {
   const fired: string[] = [];
   const errors: string[] = [];
@@ -868,7 +875,7 @@ async function openForVisit(
     return { fired, error: "No hay relé cableado a ese punto o carril" };
   }
   for (const a of targets) {
-    const r = await fireActuator(site, a.id, "open");
+    const r = await fireActuator(site, a.id, "open", ctx);
     if (r.ok) fired.push(a.name);
     else if (r.error) errors.push(`${a.name}: ${r.error}`);
   }
@@ -886,6 +893,8 @@ export async function decideGuardApproval(input: {
   exitPeople?: ExitPeople | null;
   /** Salida con "Sale y vuelve". */
   returns?: boolean;
+  /** Desde dónde aprobó el guardia (app o dashboard). */
+  openedVia?: OpenVia;
 }): Promise<{ ok: true; actuatorsFired?: string[] } | { ok: false; error: string; missing?: string[] }> {
   const row = await db
     .select()
@@ -1090,7 +1099,28 @@ export async function decideGuardApproval(input: {
     }
   }
 
-  const pulse = await openForVisit(input.site, row.sentido as "in" | "out", row.deviceId);
+  const property = await db.select().from(properties).where(eq(properties.id, pass.propertyId)).get();
+  const approvedByName = await userNameOf(input.guardUserId);
+  const record = pass.visitRecordId
+    ? await db.select().from(visitRecords).where(eq(visitRecords.id, pass.visitRecordId)).get()
+    : null;
+  const pulse = await openForVisit(input.site, row.sentido as "in" | "out", row.deviceId, {
+    reason: "visit",
+    openedByUserId: input.guardUserId,
+    openedByName: approvedByName,
+    openedVia: input.openedVia ?? null,
+    passId: pass.id,
+    approvalId: row.id,
+    guestName: pass.guestName,
+    guestDni: pass.guestDni,
+    lotNumber: property?.lotNumber ?? null,
+    visitKind: pass.visitKind,
+    arrivalMode: pass.arrivalMode,
+    plate: pass.patente,
+    authorizedBy: record?.authorizedBy || null,
+    sentido: row.sentido as "in" | "out",
+    reentry: isReentry,
+  });
   if (!pulse.fired.length) {
     return { ok: false, error: pulse.error || "No se pudo pulsar el relé. Revisá el agent y el cableado." };
   }
@@ -1179,8 +1209,6 @@ export async function decideGuardApproval(input: {
     });
   }
 
-  const property = await db.select().from(properties).where(eq(properties.id, pass.propertyId)).get();
-  const approvedByName = await userNameOf(input.guardUserId);
   const channelLabel = scanChannelLabel(row.scanChannel, await deviceNameOf(row.deviceId));
   const qrHint = qrHintOf(pass.token, pass.dahuaCardNo);
   await db.insert(events).values({
@@ -1201,6 +1229,9 @@ export async function decideGuardApproval(input: {
       guardApproved: true,
       approvedByName,
       approvedVia: "login",
+      openedVia: input.openedVia ?? null,
+      openedViaLabel: openViaLabel(input.openedVia),
+      visitKind: pass.visitKind,
       scanChannel: row.scanChannel,
       scanChannelLabel: channelLabel,
       reentry: isReentry,
@@ -1222,6 +1253,8 @@ export async function decideGuardApproval(input: {
     decidedAt: now,
     decidedByUserId: input.guardUserId,
     approvedVia: "login",
+    openedVia: input.openedVia ?? null,
+    visitKind: pass.visitKind,
     scanChannel: row.scanChannel,
     scanChannelLabel: channelLabel,
   });

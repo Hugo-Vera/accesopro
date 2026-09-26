@@ -7,8 +7,10 @@ import {
   personCredentials,
   propertyFamilyMembers,
   ownerProfiles,
+  users,
   visitPasses,
 } from "./db/schema.js";
+import { openViaLabel } from "./openContext.js";
 import {
   deletePersonOnSiteDevicesWait,
   enrollOk,
@@ -349,16 +351,26 @@ export async function openAccessQrFromScan(input: {
   const personName = owner?.fullName || fam?.name || cred.label || cred.dahuaUserId;
   const sentido = input.sentido === "out" ? "out" : "in";
   const targets = (await actuatorsForSentido(input.site.id, sentido)).filter((a) => a.triggerQr);
+  const eventId = nid();
+  const guard = input.guardUserId
+    ? await db.select({ name: users.name }).from(users).where(eq(users.id, input.guardUserId)).get()
+    : null;
   const fired: string[] = [];
   for (const a of targets) {
-    const r = await fireActuator({ id: input.site.id, lastSeenAt: null }, a.id, "open");
+    const r = await fireActuator({ id: input.site.id, lastSeenAt: null }, a.id, "open", {
+      reason: "access_qr",
+      eventId,
+      personName,
+      openedByUserId: input.guardUserId || null,
+      openedByName: guard?.name || null,
+      openedVia: input.scanChannel === "app" ? "app" : "web",
+    });
     if (r.ok) fired.push(a.id);
   }
   if (!fired.length) {
     return { ok: false, error: "No hay actuadores de QR en ese carril. Revisá el cableado." };
   }
   await incrementCredentialUse(cred.id);
-  const eventId = nid();
   const payload = {
     accessKind: "access_qr",
     dahuaUserId: cred.dahuaUserId,
@@ -368,6 +380,9 @@ export async function openAccessQrFromScan(input: {
     approved: true,
     passthroughGranted: true,
     guardUserId: input.guardUserId || null,
+    openedByName: guard?.name || null,
+    openedVia: input.scanChannel === "app" ? "app" : "web",
+    openedViaLabel: openViaLabel(input.scanChannel === "app" ? "app" : "web"),
   };
   await db.insert(events).values({
     id: eventId,

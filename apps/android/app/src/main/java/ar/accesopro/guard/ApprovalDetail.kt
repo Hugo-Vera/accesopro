@@ -18,10 +18,13 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -178,6 +181,9 @@ private fun EntryFicha(
     val guestAge = item.guestAge ?: ageFrom(item.guestBirthDate)
     val guestMinor = isMinorAge(guestAge)
     var companions by remember(item.id) { mutableStateOf(item.companions.map { CompanionItem(it.name, it.dni) }) }
+    var extrasOpen by rememberSaveable(item.id) {
+        mutableStateOf(item.minorsCount > 0 || item.companions.isNotEmpty())
+    }
     var localError by remember { mutableStateOf<String?>(null) }
     var saving by remember { mutableStateOf(false) }
     var history by remember(item.id) { mutableStateOf<IdentityHistory?>(null) }
@@ -197,6 +203,7 @@ private fun EntryFicha(
     }
 
     fun goTo(section: String) {
+        if (section == "summary") extrasOpen = true
         val y = sectionY[section] ?: return
         scope.launch { scroll.animateScrollTo((y - 24).coerceAtLeast(0)) }
     }
@@ -797,45 +804,76 @@ private fun EntryFicha(
             }
 
             FichaCard(Modifier.onGloballyPositioned { sectionY["summary"] = it.positionInParent().y.toInt() }) {
-                if (minorsAllowed(visitKind)) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                val extrasSummary = listOfNotNull(
+                    if (minorsAllowed(visitKind) && minorsCount > 0) "$minorsCount ${if (minorsCount == 1) "menor" else "menores"}" else null,
+                    companions.size.takeIf { it > 0 }?.let { "$it ${if (it == 1) "acompañante" else "acompañantes"}" },
+                    if (comment.isNotBlank()) "con nota" else null,
+                ).joinToString(" · ").ifBlank { "Nada cargado" }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { extrasOpen = !extrasOpen }
+                        .padding(vertical = 2.dp),
+                ) {
                     Column(Modifier.weight(1f)) {
-                        Text("Menores", fontWeight = FontWeight.Bold)
                         Text(
-                            "Solo la cantidad",
+                            if (minorsAllowed(visitKind)) "Menores, acompañantes y notas" else "Acompañantes y notas",
+                            fontWeight = FontWeight.Bold,
+                        )
+                        Text(
+                            extrasSummary,
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    OutlinedButton(onClick = { minorsCount = (minorsCount - 1).coerceAtLeast(0) }, enabled = enabled) { Text("−") }
-                    Text("$minorsCount", style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold))
-                    OutlinedButton(onClick = { minorsCount = (minorsCount + 1).coerceAtMost(20) }, enabled = enabled) { Text("+") }
-                }
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    Text(
-                        if (companions.isEmpty()) "Sin acompañantes"
-                        else companions.joinToString { c -> listOfNotNull(c.name.ifBlank { null }, c.dni).joinToString(" · ") },
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.weight(1f),
+                    Icon(
+                        if (extrasOpen) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                        contentDescription = if (extrasOpen) "Ocultar" else "Agregar",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    FilledTonalButton(
-                        onClick = { scanCompanion = true },
-                        enabled = enabled,
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                        shape = RoundedCornerShape(10.dp),
-                    ) {
-                        Icon(Icons.Default.Person, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(6.dp))
-                        Text("Acompañante")
-                    }
                 }
-                OutlinedTextField(
-                    value = comment,
-                    onValueChange = { comment = it },
-                    label = { Text("Notas de la guardia") },
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
-                )
+                if (extrasOpen) {
+                    if (minorsAllowed(visitKind)) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Menores", fontWeight = FontWeight.Bold)
+                            Text(
+                                "Solo la cantidad",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        OutlinedButton(onClick = { minorsCount = (minorsCount - 1).coerceAtLeast(0) }, enabled = enabled) { Text("−") }
+                        Text("$minorsCount", style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold))
+                        OutlinedButton(onClick = { minorsCount = (minorsCount + 1).coerceAtMost(20) }, enabled = enabled) { Text("+") }
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Text(
+                            if (companions.isEmpty()) "Sin acompañantes"
+                            else companions.joinToString { c -> listOfNotNull(c.name.ifBlank { null }, c.dni).joinToString(" · ") },
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f),
+                        )
+                        FilledTonalButton(
+                            onClick = { scanCompanion = true },
+                            enabled = enabled,
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                            shape = RoundedCornerShape(10.dp),
+                        ) {
+                            Icon(Icons.Default.Person, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Acompañante")
+                        }
+                    }
+                    OutlinedTextField(
+                        value = comment,
+                        onValueChange = { comment = it },
+                        label = { Text("Notas de la guardia") },
+                        modifier = Modifier.fillMaxWidth(),
+                        shape = RoundedCornerShape(12.dp),
+                    )
+                }
             }
 
             if (!item.needsPhoneAuth && (item.ownerPhone != null || item.emergencies.isNotEmpty())) {

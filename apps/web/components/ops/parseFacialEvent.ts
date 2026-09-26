@@ -1,6 +1,7 @@
 import type { FacialEventAlert } from "@/components/LiveFacialAlertToast";
 import { asiMethodKey, asiMethodLabel } from "@accesopro/catalog";
 import { apiUrl } from "@/lib/api";
+import { arrivalModeLabel, visitKindLabel } from "@/lib/visitDocs";
 
 export type EventRow = {
   id: string;
@@ -97,29 +98,43 @@ export function parseFacialEvent(
   const approvedVia = String(p.approvedVia ?? "").trim() || undefined;
   const methodKey = asiMethodKey(p.methodCode ?? p.Method, p.method);
   const isRemote = methodKey === "remote";
+  const openReasonRaw = String(p.openReason ?? "").trim();
+  const openReason =
+    openReasonRaw === "visit" || openReasonRaw === "manual" || openReasonRaw === "access_qr" ? openReasonRaw : undefined;
+  const openedByName = str(p.openedByName);
+  const openedViaLabel = str(p.openedViaLabel);
+  const visitKindRaw = str(p.visitKind);
+  const visitKindText = visitKindRaw ? (visitKindRaw === "social" ? "Visita" : visitKindLabel(visitKindRaw)) : undefined;
+  const hasQr = Boolean(qrHint || qrString);
   const personName = isVisit
     ? cleanPersonName(p.guestName) || cleanPersonName(p.personName) || "Visita"
     : cleanPersonName(p.guestName) ||
       cleanPersonName(p.personName) ||
       cleanPersonName(p.CardName) ||
       cleanPersonName(p.userName) ||
+      (openReason === "manual" ? "Apertura manual" : "") ||
       (isRemote ? "Apertura remota" : "") ||
       (!isApproved && qrString ? "QR no autorizado" : "") ||
       (isApproved ? "No identificado" : "Rostro no reconocido");
   const opened = hhmm(p.approvedAt);
+  const visitBase = hasQr ? "QR visita" : visitKindText || "Visita";
   const method = isVisit
     ? visitStatus === "approved"
       ? opened
-        ? `QR visita · abierto ${opened}`
-        : "QR visita · abierto"
+        ? `${visitBase} · abierto ${opened}`
+        : `${visitBase} · abierto`
       : visitStatus === "denied"
-        ? "QR visita · denegado"
-        : "QR visita · espera aprobación"
-    : isRemote
-      ? "Apertura remota"
-    : !isApproved && qrString
-      ? "Código QR"
-      : asiMethodLabel(p.methodCode ?? p.Method, p.method);
+        ? `${visitBase} · denegado`
+        : `${visitBase} · espera aprobación`
+    : openReason === "manual"
+      ? "Apertura manual"
+      : openReason === "access_qr"
+        ? "Mi QR de acceso"
+        : isRemote
+          ? "Apertura remota"
+          : !isApproved && qrString
+            ? "Código QR"
+            : asiMethodLabel(p.methodCode ?? p.Method, p.method);
   const deviceName = String(p.deviceName || "Lector Facial Dahua");
   const deviceId = String(p.deviceId || "");
   const snapshotUrl = normalizeSnapshotUrl(p.snapshotUrl || p.URL);
@@ -167,7 +182,20 @@ export function parseFacialEvent(
     scannedByName,
     approvedByName,
     approvedVia,
+    visitKindLabel: isVisit ? visitKindText : undefined,
+    arrivalLabel: isVisit && str(p.arrivalMode) ? arrivalModeLabel(str(p.arrivalMode)) : undefined,
+    plate: str(p.plate ?? p.patente),
+    authorizedBy: str(p.authorizedBy),
+    openedByName: openedByName || (isVisit ? approvedByName : undefined),
+    openedViaLabel,
+    openReason,
+    actuatorName: str(p.actuatorName),
   };
+}
+
+function str(raw: unknown): string | undefined {
+  const s = String(raw ?? "").trim();
+  return s && s !== "null" && s !== "undefined" ? s : undefined;
 }
 
 export function eventPhotoUrl(eventId: string, tenantId?: string | null) {

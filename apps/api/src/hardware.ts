@@ -6,6 +6,7 @@ import { requireAuth } from "./auth.js";
 import { db } from "./db/client.js";
 import { accessPointActuators, accessPointCameras, accessPointDevices, actuators, cameras, commands, dahuaDevices, departments, events, plates } from "./db/schema.js";
 import { enqueue, fireActuator, waitCommand, waitOpenCommand } from "./actuatorExec.js";
+import { openViaOf, rememberOpen } from "./openContext.js";
 import { isEnrollableDeviceType } from "./dahuaSite.js";
 import { seedDeviceRoster } from "./rosterReconcile.js";
 import { agentOnline, nid, normalizePlate, scopedSite, scopedSiteWithModule } from "./scope.js";
@@ -471,6 +472,15 @@ hardware.post("/dahua/:id/test", async (c) => {
   };
   const agentAction = map[action];
   if (!agentAction) return c.json({ error: "Acción de prueba desconocida" }, 400);
+  if (action === "open") {
+    const u = c.get("user");
+    rememberOpen(scoped.site.id, id, {
+      reason: "manual",
+      openedByUserId: u.id,
+      openedByName: u.name,
+      openedVia: openViaOf(c),
+    });
+  }
   const cmd = await enqueue(scoped.site.id, agentAction, { deviceId: id, channel });
   const done =
     action === "open" ? await waitOpenCommand(cmd, 25) : await waitCommand(cmd, action === "snapshot" ? 40 : 25);
@@ -1158,7 +1168,15 @@ hardware.post("/actuators/:id/open", async (c) => {
   if (denied) return denied;
   const scoped = await scopedSiteWithModule(c, "actuators");
   if ("error" in scoped) return scoped.error;
-  return c.json(await fireActuator(scoped.site, c.req.param("id"), "open"));
+  const u = c.get("user");
+  return c.json(
+    await fireActuator(scoped.site, c.req.param("id"), "open", {
+      reason: "manual",
+      openedByUserId: u.id,
+      openedByName: u.name,
+      openedVia: openViaOf(c),
+    }),
+  );
 });
 
 hardware.post("/actuators/:id/close", async (c) => {

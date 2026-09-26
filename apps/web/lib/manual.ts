@@ -1213,6 +1213,8 @@ export const MANUAL_CHAPTERS: ManualChapter[] = [
               "Aprobar y abrir manda el pulso por un carril rápido del agent que no espera a los enrolamientos del lector",
               "Si la barrera abre, la ficha sale de la cola en el mismo momento",
               "Si el agent no responde, el pulso se cancela: la barrera no abre más tarde y la ficha sigue pendiente con «No se abrió: el agent no respondió. Reintentá.»",
+              "La tarjeta del historial ya no dice «Apertura remota»: muestra el nombre de la visita, DNI, lote, tipo, patente, quién autorizó y qué guardia abrió desde la app o el dashboard",
+              "Una apertura manual del relé sale como «Apertura manual» con el guardia que la pidió",
             ],
           },
           {

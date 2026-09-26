@@ -5,6 +5,7 @@ import { actuators, cameras, commands, dahuaDevices, events, plates, sites } fro
 import { nid, normalizePlate } from "./scope.js";
 import { actuatorsForDahuaDevice, actuatorsForSentido, resolveDeviceLane } from "./accessPoints.js";
 import { FAST_COMMAND_ACTIONS, enqueue, fireActuator, waitCommand, waitOpenCommand } from "./actuatorExec.js";
+import { openContextPayload, openViaLabel, rememberOpen, takeOpen } from "./openContext.js";
 import { matchesSentido, sentidoOf } from "./engineBridge.js";
 import { broadcastRealtimeEvent } from "./eventStream.js";
 import { copyEventPhoto, looksLikeJpeg, saveEventPhoto } from "./eventPhotos.js";
@@ -165,6 +166,7 @@ agentRoutes.post("/events", async (c) => {
   if (!body.type || !body.payload) return c.json({ error: "Evento incompleto" }, 400);
 
   let openActuatorId: string | null = null;
+  const eventId = nid();
   const payload = { ...body.payload };
   const acts = await db.select().from(actuators).where(eq(actuators.siteId, siteId));
   const eventDate = new Date();
@@ -356,12 +358,18 @@ agentRoutes.post("/events", async (c) => {
           const wired = deviceId ? await actuatorsForDahuaDevice(siteId, deviceId) : [];
           const byLane = await actuatorsForSentido(siteId, sentido);
           const targets = wired.length ? wired : byLane.filter((x) => x.triggerQr);
+          const qrCtx = {
+            reason: "access_qr" as const,
+            eventId,
+            personName: String(payload.personName ?? payload.CardName ?? "") || matchedCred.label || null,
+          };
           if (targets.length) {
             for (const a of targets) {
-              await fireActuator(site, a.id, "open");
+              await fireActuator(site, a.id, "open", qrCtx);
               openActuatorId = a.id;
             }
           } else if (deviceId) {
+            rememberOpen(site.id, deviceId, qrCtx);
             const cmd = await enqueue(site.id, "dahua_open", { deviceId, channel: 1 });
             await waitOpenCommand(cmd);
           }
@@ -400,12 +408,15 @@ agentRoutes.post("/events", async (c) => {
     }
   }
 
-  // Method 4 del pulso post-visita: no crear fila «Apertura remota»; pegar snapshot a la tarjeta del QR.
+  // Method 4 = el pulso que pidió AccesoPro. Si ya hay tarjeta (QR de visita o Mi QR) se le pega la foto;
+  // si no, la fila nueva lleva quién entra, a qué lote y qué guardia abrió desde dónde.
   if (isReaderAccess) {
     const method = String(payload.Method ?? payload.methodCode ?? payload.method ?? "");
     const isRemoteUnlock = method === "4" || method === "remote";
     const deviceId = String(payload.deviceId ?? "").trim();
     if (isRemoteUnlock && deviceId) {
+      const ctx = takeOpen(siteId, deviceId);
+      const ctxBound = Boolean(ctx && (ctx.eventId || ctx.passId || ctx.approvalId));
       const since = Date.now() - 20_000;
       const recent = await db
         .select()
@@ -429,9 +440,20 @@ agentRoutes.post("/events", async (c) => {
           String(prev.accessKind ?? "") === "visita" ||
           Boolean(prev.visitPassId) ||
           Boolean(prev.approvalId);
-        if (!sameDevice || !isVisit) continue;
+        const ctxHit =
+          ctx &&
+          ((ctx.eventId && row.id === ctx.eventId) ||
+            (ctx.passId && (String(prev.visitPassId ?? prev.passId ?? "") === ctx.passId)) ||
+            (ctx.approvalId && String(prev.approvalId ?? "") === ctx.approvalId));
+        if (ctxBound ? !ctxHit : ctx || !sameDevice || !isVisit) continue;
         const snap = String(payload.snapshotUrl ?? payload.URL ?? "").trim();
         if (snap && !String(prev.snapshotUrl ?? "").trim()) prev.snapshotUrl = snap;
+        if (ctx) {
+          prev.openedByName = prev.openedByName || ctx.openedByName || null;
+          prev.openedVia = prev.openedVia || ctx.openedVia || null;
+          prev.openedViaLabel = prev.openedViaLabel || openViaLabel(ctx.openedVia);
+          prev.actuatorName = prev.actuatorName || ctx.actuatorName || null;
+        }
         await db.update(events).set({ payload: JSON.stringify(prev) }).where(eq(events.id, row.id));
         broadcastRealtimeEvent({
           id: row.id,
@@ -443,6 +465,9 @@ agentRoutes.post("/events", async (c) => {
         });
         return c.json({ ok: true, id: row.id, merged: true, openActuatorId: null });
       }
+      // Mi QR: la tarjeta se inserta cuando vuelve la apertura, puede llegar después que este Method 4.
+      if (ctx?.eventId) return c.json({ ok: true, id: ctx.eventId, merged: true, openActuatorId: null });
+      if (ctx) Object.assign(payload, openContextPayload(ctx, eventDate.getTime()));
     }
   }
 
@@ -460,8 +485,6 @@ agentRoutes.post("/events", async (c) => {
       }
     }
   }
-
-  const eventId = nid();
 
   await db.insert(events).values({
     id: eventId,
@@ -496,11 +519,18 @@ agentRoutes.post("/events", async (c) => {
 agentRoutes.post("/events/:id/photo", async (c) => {
   const siteId = c.get("siteId");
   const eventId = c.req.param("id");
-  const row = await db
-    .select()
-    .from(events)
-    .where(and(eq(events.id, eventId), eq(events.siteId, siteId)))
-    .get();
+  const findRow = () =>
+    db
+      .select()
+      .from(events)
+      .where(and(eq(events.id, eventId), eq(events.siteId, siteId)))
+      .get();
+  let row = await findRow();
+  // La foto del pulso de Mi QR puede llegar antes de que se inserte su tarjeta.
+  for (let i = 0; !row && i < 8; i++) {
+    await new Promise((r) => setTimeout(r, 400));
+    row = await findRow();
+  }
   if (!row) return c.json({ error: "Evento no encontrado" }, 404);
 
   const buf = Buffer.from(await c.req.arrayBuffer());

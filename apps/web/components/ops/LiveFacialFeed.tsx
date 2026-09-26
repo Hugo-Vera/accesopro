@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { Fragment, useState } from "react";
 import Link from "next/link";
 import { createPortal } from "react-dom";
 import { ScanFace, X, CheckCircle2, AlertTriangle, QrCode } from "lucide-react";
@@ -40,6 +40,65 @@ function timeLabel(createdAt: string | number | undefined) {
   const hh = String(d.getHours()).padStart(2, "0");
   const min = String(d.getMinutes()).padStart(2, "0");
   return `${dd}/${mm} ${hh}:${min}`;
+}
+
+/** «App de portería» → « desde la app»; «Dashboard» → « desde el dashboard». */
+function viaPhrase(label?: string) {
+  if (!label) return "";
+  if (/app/i.test(label)) return " desde la app";
+  if (/dashboard/i.test(label)) return " desde el dashboard";
+  return ` · ${label}`;
+}
+
+/** Datos para vista rápida: quién, a dónde, cómo llegó y quién abrió desde dónde. */
+function eventFacts(alert: FacialEventAlert): [string, string][] {
+  const isVisit = alert.kind === "visit";
+  const out: [string, string][] = [];
+  if (alert.guestDni) out.push(["DNI", alert.guestDni]);
+  else if (isVisit) out.push(["DNI", "Pendiente"]);
+  if (alert.lotNumber) out.push(["Destino", `Lote ${alert.lotNumber}`]);
+  if (alert.visitKindLabel) {
+    out.push(["Tipo", [alert.visitKindLabel, alert.arrivalLabel].filter(Boolean).join(" · ")]);
+  }
+  if (alert.plate) out.push(["Patente", alert.plate]);
+  if (alert.authorizedBy) out.push(["Autorizó", alert.authorizedBy]);
+  const opener = alert.openedByName || alert.approvedByName;
+  if (opener && (alert.approved || alert.visitStatus === "approved")) {
+    const via =
+      alert.openedViaLabel || (alert.approvedVia === "guard_code" ? "Código de guardia" : undefined);
+    out.push([isVisit ? "Aprobó" : "Abrió", [opener, via].filter(Boolean).join(" · ")]);
+  }
+  if (alert.qrHint) out.push(["QR", alert.qrHint]);
+  if (alert.scanChannelLabel) {
+    out.push(["Lectura", [alert.scanChannelLabel, alert.scannedByName].filter(Boolean).join(" · ")]);
+  }
+  if (alert.actuatorName) out.push(["Relé", alert.actuatorName]);
+  return out;
+}
+
+/** Línea corta del historial. */
+function rowSubtitle(alert: FacialEventAlert, compact?: boolean) {
+  if (alert.kind === "visit") {
+    return (
+      [
+        alert.visitKindLabel,
+        alert.lotNumber ? `Lote ${alert.lotNumber}` : null,
+        alert.guestDni ? `DNI ${alert.guestDni}` : alert.qrHint ? `QR ${alert.qrHint}` : null,
+      ]
+        .filter(Boolean)
+        .join(" · ") || alert.method
+    );
+  }
+  if (alert.isRemote || alert.openReason) {
+    const opener = alert.openedByName;
+    if (opener) return [opener, alert.openedViaLabel].filter(Boolean).join(" · ");
+    return (
+      [alert.guestDni ? `DNI ${alert.guestDni}` : null, alert.qrHint ? `QR ${alert.qrHint}` : null, compact ? null : alert.scanChannelLabel]
+        .filter(Boolean)
+        .join(" · ") || alert.method
+    );
+  }
+  return compact ? alert.method : `${alert.deviceName} · ${alert.method}`;
 }
 
 function FeedThumb({
@@ -107,6 +166,8 @@ function EventDetailModal({
   const badgeFg = tone === "pending" ? "#92400e" : isApproved ? "#065f46" : "#9f1239";
   const badgeLabel =
     tone === "pending" ? "Identificado" : isApproved ? "Acceso Aprobado" : isVisit ? "Visita denegada" : "Acceso Denegado";
+  const opener = alert.openedByName || alert.approvedByName;
+  const facts = eventFacts(alert);
 
   useEscapeKey(onClose, true);
 
@@ -237,26 +298,27 @@ function EventDetailModal({
               >
                 {alert.personName}
               </h2>
-              {isVisit || alert.isRemote || (alert.qrHint && !alert.snapshotUrl) ? (
-                <div style={{ marginTop: 8, fontSize: 15, color: "#334155", lineHeight: 1.4 }}>
-                  {alert.guestDni ? <div>DNI {alert.guestDni}</div> : isVisit ? <div>DNI pendiente</div> : null}
-                  {alert.qrHint ? <div>QR que lo acredita: {alert.qrHint}</div> : null}
-                  {alert.scanChannelLabel ? (
-                    <div style={{ fontSize: 13, color: "#64748b" }}>
-                      {alert.scanChannelLabel}
-                      {alert.scannedByName ? ` · ${alert.scannedByName}` : ""}
-                    </div>
-                  ) : null}
-                  {alert.approvedByName ? (
-                    <div style={{ fontSize: 13, color: "#64748b" }}>
-                      Aprobó {alert.approvedByName}
-                      {alert.approvedVia === "login" ? " (sesión)" : ""}
-                      {alert.approvedVia === "guard_code" ? " (código de guardia)" : ""}
-                    </div>
-                  ) : null}
-                </div>
+              {facts.length ? (
+                <dl
+                  style={{
+                    marginTop: 10,
+                    display: "grid",
+                    gridTemplateColumns: "auto 1fr",
+                    columnGap: 12,
+                    rowGap: 4,
+                    fontSize: 14,
+                    lineHeight: 1.35,
+                  }}
+                >
+                  {facts.map(([k, v]) => (
+                    <Fragment key={k}>
+                      <dt style={{ color: "#64748b", fontWeight: 600 }}>{k}</dt>
+                      <dd style={{ margin: 0, color: "#0f172a", fontWeight: 700, wordBreak: "break-word" }}>{v}</dd>
+                    </Fragment>
+                  ))}
+                </dl>
               ) : null}
-              <div style={{ marginTop: 8, fontSize: 15, color: "#475569", lineHeight: 1.35 }}>
+              <div style={{ marginTop: 8, fontSize: 13, color: "#64748b", lineHeight: 1.35 }}>
                 {alert.deviceName}
                 <span style={{ opacity: 0.55 }}> · </span>
                 {alert.method}
@@ -282,7 +344,11 @@ function EventDetailModal({
                 </div>
               ) : (
                 <div style={{ marginTop: 10, fontSize: 15, fontWeight: 600, color: "#047857" }}>
-                  {alert.isRemote ? "Relé abierto desde portería" : "Identidad validada"}
+                  {alert.isRemote
+                    ? opener
+                      ? `Relé abierto por ${opener}${viaPhrase(alert.openedViaLabel)}`
+                      : "Relé abierto desde portería"
+                    : "Identidad validada"}
                 </div>
               )}
               {alert.doorName ? (
@@ -406,29 +472,13 @@ export function LiveFacialFeed({
                   >
                     {alert.personName}
                   </p>
-                  {alert.kind === "visit" || alert.isRemote ? (
-                    <p
-                      className={`min-w-0 truncate text-slate-600 dark:text-slate-400 ${
-                        compact ? "text-[11.5px]" : "text-[12px]"
-                      }`}
-                    >
-                      {[
-                        alert.guestDni ? `DNI ${alert.guestDni}` : null,
-                        alert.qrHint ? `QR ${alert.qrHint}` : null,
-                        compact ? null : alert.scanChannelLabel,
-                      ]
-                        .filter(Boolean)
-                        .join(" · ") || alert.method}
-                    </p>
-                  ) : (
                   <p
                     className={`min-w-0 truncate text-slate-600 dark:text-slate-400 ${
                       compact ? "text-[11.5px]" : "text-[12px]"
                     }`}
                   >
-                    {compact ? alert.method : `${alert.deviceName} · ${alert.method}`}
+                    {rowSubtitle(alert, compact)}
                   </p>
-                  )}
                   <div className="flex min-w-0 items-center justify-between gap-2">
                     <time
                       dateTime={new Date(e.createdAt).toISOString()}

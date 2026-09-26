@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { AlertTriangle, Baby, Bell, Check, FileCheck2, Footprints, Info, Minus, Pencil, Phone, Plus, QrCode, Trash2, X } from "lucide-react";
+import { AlertTriangle, Baby, Bell, Check, ChevronDown, FileCheck2, Footprints, Info, Minus, Pencil, Phone, Plus, QrCode, Trash2, X } from "lucide-react";
 import { api, apiUrl, withTenant } from "@/lib/api";
 import { useEscapeKey } from "@/hooks/useEscapeKey";
 import { LiveVisitHoldToast, type VisitHoldAlert } from "@/components/ops/LiveVisitHoldToast";
@@ -48,8 +48,9 @@ const INPUT_CLS =
   "mt-0.5 w-full rounded-lg border border-slate-300 bg-white px-2 py-1.5 dark:border-slate-700 dark:bg-slate-950 dark:text-white";
 
 /** La ficha de ingreso es un solo scroll: cada faltante lleva a su sección. */
-function scrollToSection(page: FichaPage) {
+function scrollToSection(page: FichaPage, openSummary?: () => void) {
   const id = page === "vehicle" || page === "art" || page === "identity" ? page : "summary";
+  if (id === "summary") openSummary?.();
   document.getElementById(`ficha-${id}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
@@ -346,6 +347,7 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
   const [licUntil, setLicUntil] = useState("");
   const [licNumber, setLicNumber] = useState("");
   const [minorsDraft, setMinorsDraft] = useState(0);
+  const [extrasOpen, setExtrasOpen] = useState(false);
   const [visitKind, setVisitKind] = useState<VisitKindId>("social");
   const [arrivalMode, setArrivalMode] = useState<ArrivalModeId>("peatonal");
   const [insReuse, setInsReuse] = useState<string | null>(null);
@@ -502,6 +504,7 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
     setGuardCode("");
     setError(null);
     setCompanionsDraft((current.companions || []).map((x) => ({ name: x.name, dni: x.dni || "" })));
+    setExtrasOpen((current.minorsCount ?? 0) > 0 || (current.companions?.length ?? 0) > 0);
     setInsCompany(current.insurance?.company || "");
     setInsPolicy(current.insurance?.policyNumber || "");
     setInsUntil(isoDay(current.insurance?.validUntil));
@@ -588,7 +591,7 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
     if (missing.length && current) {
       const infos = missing.map((k) => missingInfo(k, current.sentido));
       setError(`${msg} ${infos.map((x) => x.label).join(" · ")}`.trim());
-      scrollToSection(infos[0].page);
+      scrollToSection(infos[0].page, () => setExtrasOpen(true));
     } else {
       setError(msg);
     }
@@ -1312,7 +1315,36 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
               ) : null}
 
               <div id="ficha-summary" className="scroll-mt-2 space-y-2 rounded-lg border border-slate-200 p-2 dark:border-slate-700">
-                {minorsAllowed(visitKind) ? (
+                {canDecide ? (
+                  <button
+                    type="button"
+                    aria-expanded={extrasOpen}
+                    onClick={() => setExtrasOpen((v) => !v)}
+                    className="flex w-full items-center justify-between gap-2 text-left"
+                  >
+                    <span>
+                      <span className="block text-[11px] font-bold text-slate-800 dark:text-slate-100">
+                        {minorsAllowed(visitKind) ? "Menores, acompañantes y comentario" : "Acompañantes y comentario"}
+                      </span>
+                      <span className="block text-[10px] text-slate-500">
+                        {[
+                          minorsAllowed(visitKind) && minorsDraft > 0 ? `${minorsDraft} ${minorsDraft === 1 ? "menor" : "menores"}` : null,
+                          companionsDraft.length
+                            ? `${companionsDraft.length} ${companionsDraft.length === 1 ? "acompañante" : "acompañantes"}`
+                            : null,
+                          comment.trim() ? "con comentario" : null,
+                        ]
+                          .filter(Boolean)
+                          .join(" · ") || "Nada cargado"}
+                      </span>
+                    </span>
+                    <ChevronDown
+                      className={`h-4 w-4 shrink-0 text-slate-500 transition-transform ${extrasOpen ? "rotate-180" : ""}`}
+                    />
+                  </button>
+                ) : null}
+
+                {(!canDecide || extrasOpen) && minorsAllowed(visitKind) ? (
                 <div className="flex items-center justify-between gap-2">
                   <div>
                     <p className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-800 dark:text-slate-100">
@@ -1345,7 +1377,7 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
                 </div>
                 ) : null}
 
-                {canDecide ? (
+                {canDecide && extrasOpen ? (
                   <>
                     <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500">Acompañantes</p>
                     {companionsDraft.map((row, i) => (
@@ -1424,7 +1456,7 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
                       />
                     ) : null}
                   </>
-                ) : current.companions.length ? (
+                ) : !canDecide && current.companions.length ? (
                   <p className="text-[11px] text-slate-600 dark:text-slate-400">
                     Acompañantes: {current.companions.map((x) => `${x.name}${x.isMinor ? " (menor)" : ""}${x.dni ? ` (${x.dni})` : ""}`).join(", ")}
                   </p>
@@ -1440,7 +1472,7 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
                   <p className="text-slate-500">Código de guardia: {current.ownerAuthorizedByName}</p>
                 ) : null}
 
-                {canDecide ? (
+                {canDecide && extrasOpen ? (
                   <label className="block">
                     Comentario
                     <textarea value={comment} onChange={(e) => setComment(e.target.value)} rows={2} className={INPUT_CLS} />
@@ -1491,7 +1523,7 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
                         <button
                           key={k}
                           type="button"
-                          onClick={() => scrollToSection(info.page)}
+                          onClick={() => scrollToSection(info.page, () => setExtrasOpen(true))}
                           className="rounded-full bg-rose-50 px-2 py-0.5 text-[11px] font-semibold text-rose-700 dark:bg-rose-950/40 dark:text-rose-300"
                         >
                           {info.label.replace(/^Falta /, "")}
