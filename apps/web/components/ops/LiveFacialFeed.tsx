@@ -6,7 +6,14 @@ import { createPortal } from "react-dom";
 import { ScanFace, X, CheckCircle2, AlertTriangle, QrCode } from "lucide-react";
 import { IconUserCheck } from "@/components/DashboardIcons";
 import { useDash } from "@/components/DashboardProvider";
-import { parseFacialEvent, type EventRow } from "@/components/ops/parseFacialEvent";
+import {
+  accessBadgeLabel,
+  accessStatusLine,
+  parseFacialEvent,
+  residentFacts,
+  residentHeadline,
+  type EventRow,
+} from "@/components/ops/parseFacialEvent";
 import { EventPhoto } from "@/components/ops/EventPhoto";
 import type { FacialEventAlert } from "@/components/LiveFacialAlertToast";
 import { useEscapeKey } from "@/hooks/useEscapeKey";
@@ -42,21 +49,14 @@ function timeLabel(createdAt: string | number | undefined) {
   return `${dd}/${mm} ${hh}:${min}`;
 }
 
-/** «App de portería» → « desde la app»; «Dashboard» → « desde el dashboard». */
-function viaPhrase(label?: string) {
-  if (!label) return "";
-  if (/app/i.test(label)) return " desde la app";
-  if (/dashboard/i.test(label)) return " desde el dashboard";
-  return ` · ${label}`;
-}
-
 /** Datos para vista rápida: quién, a dónde, cómo llegó y quién abrió desde dónde. */
 function eventFacts(alert: FacialEventAlert): [string, string][] {
   const isVisit = alert.kind === "visit";
-  const out: [string, string][] = [];
+  const resident = residentFacts(alert);
+  const out: [string, string][] = [...resident];
   if (alert.guestDni) out.push(["DNI", alert.guestDni]);
   else if (isVisit) out.push(["DNI", "Pendiente"]);
-  if (alert.lotNumber) out.push(["Destino", `Lote ${alert.lotNumber}`]);
+  if (alert.lotNumber && !resident.length) out.push(["Destino", `Lote ${alert.lotNumber}`]);
   if (alert.visitKindLabel) {
     out.push(["Tipo", [alert.visitKindLabel, alert.arrivalLabel].filter(Boolean).join(" · ")]);
   }
@@ -66,14 +66,14 @@ function eventFacts(alert: FacialEventAlert): [string, string][] {
   if (opener && (alert.approved || alert.visitStatus === "approved")) {
     const via =
       alert.openedViaLabel || (alert.approvedVia === "guard_code" ? "Código de guardia" : undefined);
-    out.push([alert.noBarrier ? "Registró" : isVisit ? "Aprobó" : "Abrió", [opener, via].filter(Boolean).join(" · ")]);
+    out.push([alert.noBarrier ? "Registró" : isVisit ? "Aprobó" : "Accionó", [opener, via].filter(Boolean).join(" · ")]);
   }
   if (alert.noBarrier) out.push(["Barrera", "No se abrió (regla de ingreso)"]);
   if (alert.qrHint) out.push(["QR", alert.qrHint]);
   if (alert.scanChannelLabel) {
     out.push(["Lectura", [alert.scanChannelLabel, alert.scannedByName].filter(Boolean).join(" · ")]);
   }
-  if (alert.actuatorName) out.push(["Relé", alert.actuatorName]);
+  if (alert.actuatorName) out.push(["Acceso", alert.actuatorName]);
   return out;
 }
 
@@ -100,9 +100,15 @@ function rowSubtitle(alert: FacialEventAlert, compact?: boolean) {
         .join(" · ") || alert.method
     );
   }
+  const resident = residentHeadline(alert);
+  if (resident) return resident;
   if (alert.isRemote || alert.openReason) {
     const opener = alert.openedByName;
-    if (opener) return [opener, alert.openedViaLabel].filter(Boolean).join(" · ");
+    if (opener) {
+      return [`${alert.lane === "out" ? "Salida accionada" : "Ingreso accionado"} por ${opener}`, alert.openedViaLabel]
+        .filter(Boolean)
+        .join(" · ");
+    }
     return (
       [alert.guestDni ? `DNI ${alert.guestDni}` : null, alert.qrHint ? `QR ${alert.qrHint}` : null, compact ? null : alert.scanChannelLabel]
         .filter(Boolean)
@@ -175,9 +181,7 @@ function EventDetailModal({
   const bg = tone === "pending" ? "#fffbeb" : isApproved ? "#ecfdf5" : "#fff1f2";
   const badgeBg = tone === "pending" ? "#fde68a" : isApproved ? "#a7f3d0" : "#fecdd3";
   const badgeFg = tone === "pending" ? "#92400e" : isApproved ? "#065f46" : "#9f1239";
-  const badgeLabel =
-    tone === "pending" ? "Identificado" : isApproved ? "Acceso Aprobado" : isVisit ? "Visita denegada" : "Acceso Denegado";
-  const opener = alert.openedByName || alert.approvedByName;
+  const badgeLabel = accessBadgeLabel(alert, tone);
   const facts = eventFacts(alert);
 
   useEscapeKey(onClose, true);
@@ -355,11 +359,7 @@ function EventDetailModal({
                 </div>
               ) : (
                 <div style={{ marginTop: 10, fontSize: 15, fontWeight: 600, color: "#047857" }}>
-                  {alert.isRemote
-                    ? opener
-                      ? `Relé abierto por ${opener}${viaPhrase(alert.openedViaLabel)}`
-                      : "Relé abierto desde portería"
-                    : "Identidad validada"}
+                  {accessStatusLine(alert)}
                 </div>
               )}
               {alert.doorName ? (
@@ -457,7 +457,14 @@ export function LiveFacialFeed({
                 : tone === "approved"
                   ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-950/70 dark:text-emerald-300"
                   : "bg-rose-100 text-rose-800 dark:bg-rose-950/70 dark:text-rose-300";
-            const badgeLabel = tone === "pending" ? "Pendiente" : tone === "approved" ? "Aprobado" : "Denegado";
+            const badgeLabel =
+              tone === "pending"
+                ? "Pendiente"
+                : tone === "approved"
+                  ? alert.lane === "out"
+                    ? "Salió"
+                    : "Ingresó"
+                  : "Denegado";
 
             return (
               <button

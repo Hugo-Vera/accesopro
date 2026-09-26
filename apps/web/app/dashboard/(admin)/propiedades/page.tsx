@@ -24,6 +24,7 @@ type Property = {
   address: string | null;
   mapLat: string | null;
   mapLng: string | null;
+  notes?: string | null;
   owners?: OwnerRow[];
 };
 
@@ -56,7 +57,7 @@ export default function PropiedadesPage() {
     }
   }, showPropModal || showOwnerModal || Boolean(inviteResult) || Boolean(confirmDelete));
 
-  const [form, setForm] = useState({ lotNumber: "", label: "", address: "", mapLat: "", mapLng: "" });
+  const [form, setForm] = useState({ lotNumber: "", label: "", address: "", mapLat: "", mapLng: "", notes: "" });
   const [ownerForm, setOwnerForm] = useState({ propertyId: "", email: "", name: "", dni: "", whatsapp: "" });
 
   const canInvite = isAdmin || can("access.owners.invite");
@@ -81,7 +82,7 @@ export default function PropiedadesPage() {
 
   function openNewLot() {
     setEditId(null);
-    setForm({ lotNumber: "", label: "", address: "", mapLat: "", mapLng: "" });
+    setForm({ lotNumber: "", label: "", address: "", mapLat: "", mapLng: "", notes: "" });
     setShowPropModal(true);
   }
 
@@ -93,6 +94,7 @@ export default function PropiedadesPage() {
       address: r.address || "",
       mapLat: r.mapLat || "",
       mapLng: r.mapLng || "",
+      notes: r.notes || "",
     });
     setShowPropModal(true);
   }
@@ -116,7 +118,7 @@ export default function PropiedadesPage() {
         });
         setMsg("Propiedad agregada con exito");
       }
-      setForm({ lotNumber: "", label: "", address: "", mapLat: "", mapLng: "" });
+      setForm({ lotNumber: "", label: "", address: "", mapLat: "", mapLng: "", notes: "" });
       setEditId(null);
       setShowPropModal(false);
       await loadProperties();
@@ -409,6 +411,22 @@ export default function PropiedadesPage() {
                     className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-900 placeholder:text-slate-400 focus:border-blue-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800/80 dark:text-white"
                   />
                 </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                  Nota para portería
+                </label>
+                <textarea
+                  rows={2}
+                  maxLength={240}
+                  value={form.notes}
+                  onChange={(e) => setForm({ ...form, notes: e.target.value })}
+                  className="w-full rounded-xl border border-slate-200 bg-slate-50 px-3.5 py-2.5 text-sm text-slate-900 focus:border-blue-500 focus:bg-white focus:outline-none dark:border-slate-700 dark:bg-slate-800/80 dark:text-white"
+                />
+                <p className="mt-1 text-[11px] text-slate-500 dark:text-slate-400">
+                  Se muestra al guardia cuando entra o sale alguien del lote.
+                </p>
               </div>
 
               <div className="mt-6 flex items-center justify-end gap-2 pt-4 border-t border-slate-100 dark:border-slate-800">

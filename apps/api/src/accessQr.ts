@@ -11,6 +11,7 @@ import {
   visitPasses,
 } from "./db/schema.js";
 import { openViaLabel } from "./openContext.js";
+import { stampResidentInfo } from "./residentInfo.js";
 import {
   deletePersonOnSiteDevicesWait,
   enrollOk,
@@ -371,7 +372,7 @@ export async function openAccessQrFromScan(input: {
     return { ok: false, error: "No hay actuadores de QR en ese carril. Revisá el cableado." };
   }
   await incrementCredentialUse(cred.id);
-  const payload = {
+  const payload: Record<string, unknown> = {
     accessKind: "access_qr",
     dahuaUserId: cred.dahuaUserId,
     personName,
@@ -384,6 +385,7 @@ export async function openAccessQrFromScan(input: {
     openedVia: input.scanChannel === "app" ? "app" : "web",
     openedViaLabel: openViaLabel(input.scanChannel === "app" ? "app" : "web"),
   };
+  await stampResidentInfo(payload, cred.dahuaUserId).catch(() => undefined);
   await db.insert(events).values({
     id: eventId,
     siteId: input.site.id,

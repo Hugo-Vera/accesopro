@@ -6,6 +6,12 @@ import { CheckCircle2, AlertTriangle, X, DoorOpen } from "lucide-react";
 import { useEscapeKey } from "@/hooks/useEscapeKey";
 import { EventPhoto } from "@/components/ops/EventPhoto";
 import { useDash } from "@/components/DashboardProvider";
+import {
+  accessBadgeLabel,
+  accessStatusLine,
+  residentDetails,
+  residentHeadline,
+} from "@/components/ops/parseFacialEvent";
 
 export type FacialEventAlert = {
   id: string;
@@ -49,6 +55,15 @@ export type FacialEventAlert = {
   actuatorName?: string;
   /** Aprobado según la regla sin pulsar el relé. */
   noBarrier?: boolean;
+  /** Titular, familiar o personal del lote (padrón del barrio). */
+  residentRole?: "owner" | "family" | "service";
+  residentRoleLabel?: string;
+  lotLabel?: string;
+  titularName?: string;
+  titularPhone?: string;
+  residentPhone?: string;
+  residentSchedule?: string;
+  residentNotes?: string;
 };
 
 interface Props {
@@ -248,24 +263,8 @@ export function LiveFacialAlertToast({ alert, onDismiss, onOpenRelay }: Props) {
                   }}
                 >
                   {isApproved ? <CheckCircle2 size={12} /> : <AlertTriangle size={12} />}
-                  {isApproved ? "Acceso Aprobado" : "Acceso Denegado"}
+                  {accessBadgeLabel(shown, isApproved ? "approved" : "denied")}
                 </div>
-                <span
-                  style={{
-                    display: "inline-flex",
-                    alignItems: "center",
-                    padding: "4px 8px",
-                    borderRadius: 999,
-                    fontSize: 10,
-                    fontWeight: 800,
-                    letterSpacing: "0.04em",
-                    textTransform: "uppercase",
-                    background: shown.lane === "out" ? "#fde68a" : "#bae6fd",
-                    color: shown.lane === "out" ? "#92400e" : "#075985",
-                  }}
-                >
-                  {shown.lane === "out" ? "Salida" : "Ingreso"}
-                </span>
                 </div>
                 <button
                   type="button"
@@ -298,7 +297,11 @@ export function LiveFacialAlertToast({ alert, onDismiss, onOpenRelay }: Props) {
               <div style={{ marginTop: 10, fontSize: 17, fontWeight: 800, lineHeight: 1.15, wordBreak: "break-word" }}>
                 {shown.personName}
               </div>
-              {shown.visitKindLabel || shown.lotNumber ? (
+              {residentHeadline(shown) ? (
+                <div style={{ marginTop: 4, fontSize: 13, fontWeight: 700, color: isDark ? "#e2e8f0" : "#0f172a" }}>
+                  {residentHeadline(shown)}
+                </div>
+              ) : shown.visitKindLabel || shown.lotNumber ? (
                 <div style={{ marginTop: 4, fontSize: 13, fontWeight: 700, color: isDark ? "#e2e8f0" : "#0f172a" }}>
                   {[shown.visitKindLabel, shown.lotNumber ? `Lote ${shown.lotNumber}` : null, shown.plate]
                     .filter(Boolean)
@@ -321,23 +324,46 @@ export function LiveFacialAlertToast({ alert, onDismiss, onOpenRelay }: Props) {
                 {shown.method}
               </div>
               )}
+              {residentDetails(shown).length ? (
+                <div style={{ marginTop: 6, fontSize: 12, color: isDark ? "#cbd5e1" : "#334155", lineHeight: 1.4 }}>
+                  {residentDetails(shown).map((line) => (
+                    <div key={line}>{line}</div>
+                  ))}
+                </div>
+              ) : null}
+              {shown.residentNotes ? (
+                <div
+                  style={{
+                    marginTop: 6,
+                    padding: "5px 8px",
+                    borderRadius: 8,
+                    fontSize: 12,
+                    fontWeight: 600,
+                    lineHeight: 1.35,
+                    background: isDark ? "rgba(245,158,11,0.15)" : "#fef3c7",
+                    color: isDark ? "#fcd34d" : "#92400e",
+                  }}
+                >
+                  {shown.residentNotes}
+                </div>
+              ) : null}
               {!isApproved ? (
                 <div style={{ marginTop: 6, fontSize: 12, fontWeight: 700, color: isDark ? "#fda4af" : "#be123c", lineHeight: 1.35 }}>
                   {shown.reason || "Rostro no registrado"}
                 </div>
               ) : (
                 <div style={{ marginTop: 6, fontSize: 12, fontWeight: 600, color: isDark ? "#6ee7b7" : "#047857" }}>
-                  {shown.openedByName && (shown.isRemote || shown.kind === "visit")
-                    ? `Abrió ${shown.openedByName}${
-                        shown.openedViaLabel
-                          ? /app/i.test(shown.openedViaLabel)
-                            ? " desde la app"
-                            : " desde el dashboard"
-                          : ""
-                      }`
-                    : shown.isRemote
-                      ? "Relé abierto desde portería"
-                      : "Identidad validada"}
+                  {shown.kind === "visit"
+                    ? shown.openedByName
+                      ? `${shown.noBarrier ? "Registró" : "Habilitó"} ${shown.openedByName}${
+                          shown.openedViaLabel
+                            ? /app/i.test(shown.openedViaLabel)
+                              ? " desde la app"
+                              : " desde el dashboard"
+                            : ""
+                        }`
+                      : shown.method
+                    : accessStatusLine(shown)}
                 </div>
               )}
             </div>
@@ -363,7 +389,7 @@ export function LiveFacialAlertToast({ alert, onDismiss, onOpenRelay }: Props) {
                 }}
               >
                 <DoorOpen size={14} />
-                Apertura manual
+                {shown.lane === "out" ? "Habilitar salida" : "Habilitar ingreso"}
               </button>
             ) : null}
           </div>

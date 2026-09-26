@@ -12,6 +12,7 @@ import { copyEventPhoto, looksLikeJpeg, saveEventPhoto } from "./eventPhotos.js"
 import { markVisitStayByCard } from "./visitPass.js";
 import { findVisitPassByCard, holdVisitQr } from "./visitHold.js";
 import { findCredentialByPayload, incrementCredentialUse } from "./credentials.js";
+import { stampResidentInfo } from "./residentInfo.js";
 import { asiMethodKey } from "@accesopro/catalog";
 
 type AgentEnv = { Variables: { siteId: string } };
@@ -249,6 +250,7 @@ agentRoutes.post("/events", async (c) => {
     if (matchedCred && matchedCred.status === "active") {
       payload.accessKind = payload.accessKind || (qrString || qrCred ? "qr" : "card");
       payload.credentialId = matchedCred.id;
+      payload.dahuaUserId = matchedCred.dahuaUserId;
       payload.method =
         asiMethodKey(payload.methodCode ?? payload.Method, qrString ? "qr" : "card") === "unknown"
           ? qrString
@@ -483,6 +485,14 @@ agentRoutes.post("/events", async (c) => {
       for (const a of acts.filter((x) => x.triggerQr && matchesSentido(x, sentido))) {
         await fireActuator(site, a.id, "open");
       }
+    }
+  }
+
+  if (!payload.visitHold && payload.accessKind !== "visita") {
+    try {
+      await stampResidentInfo(payload, String(payload.dahuaUserId ?? payload.UserID ?? payload.userId ?? ""));
+    } catch {
+      /* el evento se guarda igual */
     }
   }
 

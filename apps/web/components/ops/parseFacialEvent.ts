@@ -106,20 +106,28 @@ export function parseFacialEvent(
   const visitKindRaw = str(p.visitKind);
   const visitKindText = visitKindRaw ? (visitKindRaw === "social" ? "Visita" : visitKindLabel(visitKindRaw)) : undefined;
   const hasQr = Boolean(qrHint || qrString);
+  const code = Number(p.laneCode ?? ev.laneCode ?? 0);
+  const stamped = String(p.sentido ?? ev.sentido ?? "").trim();
+  const lane: "in" | "out" = code === 2 || stamped === "out" ? "out" : "in";
+  const out = lane === "out";
   const personName = isVisit
     ? cleanPersonName(p.guestName) || cleanPersonName(p.personName) || "Visita"
     : cleanPersonName(p.guestName) ||
       cleanPersonName(p.personName) ||
       cleanPersonName(p.CardName) ||
       cleanPersonName(p.userName) ||
-      (openReason === "manual" ? "Apertura manual" : "") ||
-      (isRemote ? "Apertura remota" : "") ||
+      (openReason === "manual" ? (out ? "Salida manual" : "Ingreso manual") : "") ||
+      (isRemote ? (out ? "Salida por portería" : "Ingreso por portería") : "") ||
       (!isApproved && qrString ? "QR no autorizado" : "") ||
       (isApproved ? "No identificado" : "Rostro no reconocido");
   const opened = hhmm(p.approvedAt);
   const noBarrier = p.noBarrier === true;
   const visitBase = hasQr ? "QR visita" : visitKindText || "Visita";
-  const approvedWord = noBarrier ? "sin abrir barrera" : "abierto";
+  const approvedWord = noBarrier
+    ? `${out ? "salida" : "ingreso"} sin abrir barrera`
+    : out
+      ? "salida habilitada"
+      : "ingreso habilitado";
   const method = isVisit
     ? visitStatus === "approved"
       ? opened
@@ -129,11 +137,11 @@ export function parseFacialEvent(
         ? `${visitBase} · denegado`
         : `${visitBase} · espera aprobación`
     : openReason === "manual"
-      ? "Apertura manual"
+      ? "Accionado manualmente desde portería"
       : openReason === "access_qr"
         ? "Mi QR de acceso"
         : isRemote
-          ? "Apertura remota"
+          ? "Accionado desde portería"
           : !isApproved && qrString
             ? "Código QR"
             : asiMethodLabel(p.methodCode ?? p.Method, p.method);
@@ -151,9 +159,6 @@ export function parseFacialEvent(
       : qrString
         ? "QR no autorizado"
         : String(p.reason || "Rostro no registrado en el sistema");
-  const code = Number(p.laneCode ?? ev.laneCode ?? 0);
-  const stamped = String(p.sentido ?? ev.sentido ?? "").trim();
-  const lane: "in" | "out" = code === 2 || stamped === "out" ? "out" : "in";
   const lotNumber = p.lotNumber != null && String(p.lotNumber).trim() ? String(p.lotNumber) : undefined;
   const approvalId = p.approvalId != null ? String(p.approvalId) : undefined;
   const passId = p.visitPassId != null ? String(p.visitPassId) : p.passId != null ? String(p.passId) : undefined;
@@ -193,7 +198,84 @@ export function parseFacialEvent(
     openReason,
     actuatorName: str(p.actuatorName),
     noBarrier: noBarrier || undefined,
+    residentRole: isVisit ? undefined : residentRoleOf(p.residentRole),
+    residentRoleLabel: isVisit ? undefined : str(p.residentRoleLabel),
+    lotLabel: isVisit ? undefined : str(p.lotLabel),
+    titularName: isVisit ? undefined : str(p.titularName),
+    titularPhone: isVisit ? undefined : str(p.titularPhone),
+    residentPhone: isVisit ? undefined : str(p.residentPhone),
+    residentSchedule: isVisit ? undefined : str(p.residentSchedule),
+    residentNotes: isVisit ? undefined : str(p.residentNotes),
   };
+}
+
+function residentRoleOf(raw: unknown): FacialEventAlert["residentRole"] {
+  return raw === "owner" || raw === "family" || raw === "service" ? raw : undefined;
+}
+
+/** Cartel principal: el sentido va en el texto para no confundir ingreso con salida. */
+export function accessBadgeLabel(alert: FacialEventAlert, tone: "pending" | "approved" | "denied") {
+  const out = alert.lane === "out";
+  if (tone === "pending") return out ? "Salida · identificado" : "Ingreso · identificado";
+  if (tone === "approved") return out ? "Salida autorizada" : "Ingreso autorizado";
+  if (alert.kind === "visit") return out ? "Salida denegada" : "Visita denegada";
+  return out ? "Salida denegada" : "Ingreso denegado";
+}
+
+/** Línea de estado de un acceso aprobado que no es visita. */
+export function accessStatusLine(alert: FacialEventAlert) {
+  const out = alert.lane === "out";
+  const opener = alert.openedByName || alert.approvedByName;
+  const via = alert.openedViaLabel
+    ? /app/i.test(alert.openedViaLabel)
+      ? " desde la app"
+      : " desde el dashboard"
+    : " desde portería";
+  if (alert.isRemote || alert.openReason === "manual") {
+    const verb = out ? "Salida accionada" : "Ingreso accionado";
+    return opener ? `${verb} por ${opener}${via}` : `${verb} desde portería`;
+  }
+  if (alert.openReason === "access_qr" || alert.method === "Mi QR de acceso") {
+    const verb = out ? "Salida autorizada" : "Ingreso autorizado";
+    return opener ? `${verb} con Mi QR de acceso · ${opener}${via}` : `${verb} con Mi QR de acceso`;
+  }
+  return out ? "Salida autorizada · identidad validada" : "Ingreso autorizado · identidad validada";
+}
+
+/** «Propietario · Lote 12» para la línea bajo el nombre. */
+export function residentHeadline(alert: FacialEventAlert) {
+  if (!alert.residentRoleLabel && !alert.residentRole) return null;
+  return [
+    alert.residentRoleLabel,
+    alert.lotNumber ? `Lote ${alert.lotNumber}` : null,
+    alert.lotLabel,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+/** Datos breves del residente para el toast (el detalle usa `residentFacts`). */
+export function residentDetails(alert: FacialEventAlert): string[] {
+  const out: string[] = [];
+  if (alert.titularName) {
+    out.push(`Titular: ${[alert.titularName, alert.titularPhone].filter(Boolean).join(" · ")}`);
+  }
+  if (alert.residentPhone) out.push(`Teléfono: ${alert.residentPhone}`);
+  if (alert.residentSchedule) out.push(`Horario: ${alert.residentSchedule}`);
+  return out;
+}
+
+export function residentFacts(alert: FacialEventAlert): [string, string][] {
+  if (!alert.residentRoleLabel && !alert.residentRole) return [];
+  const out: [string, string][] = [];
+  if (alert.residentRoleLabel) out.push(["Rol", alert.residentRoleLabel]);
+  if (alert.lotNumber) out.push(["Lote", [`Lote ${alert.lotNumber}`, alert.lotLabel].filter(Boolean).join(" · ")]);
+  if (alert.titularName) out.push(["Titular", alert.titularName]);
+  if (alert.titularPhone) out.push(["Tel. titular", alert.titularPhone]);
+  if (alert.residentPhone) out.push(["Teléfono", alert.residentPhone]);
+  if (alert.residentSchedule) out.push(["Horario", alert.residentSchedule]);
+  if (alert.residentNotes) out.push(["Nota", alert.residentNotes]);
+  return out;
 }
 
 function str(raw: unknown): string | undefined {
