@@ -1,10 +1,10 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, notInArray } from "drizzle-orm";
 import { Hono } from "hono";
 import { db } from "./db/client.js";
 import { actuators, cameras, commands, dahuaDevices, events, plates, sites } from "./db/schema.js";
 import { nid, normalizePlate } from "./scope.js";
 import { actuatorsForDahuaDevice, actuatorsForSentido, resolveDeviceLane } from "./accessPoints.js";
-import { enqueue, fireActuator, waitCommand } from "./actuatorExec.js";
+import { FAST_COMMAND_ACTIONS, enqueue, fireActuator, waitCommand, waitOpenCommand } from "./actuatorExec.js";
 import { matchesSentido, sentidoOf } from "./engineBridge.js";
 import { broadcastRealtimeEvent } from "./eventStream.js";
 import { copyEventPhoto, looksLikeJpeg, saveEventPhoto } from "./eventPhotos.js";
@@ -102,12 +102,37 @@ agentRoutes.get("/config", async (c) => {
   });
 });
 
+/**
+ * lane=fast: solo aperturas (hilo propio del agent, no esperan detrás de un enrolamiento lento).
+ * lane=slow: el resto. Sin lane (agent viejo): todo, aperturas primero.
+ * Lo entregado pasa a `running` para que ningún hilo lo ejecute dos veces.
+ */
 agentRoutes.get("/commands", async (c) => {
   const siteId = c.get("siteId");
-  const rows = await db
+  const lane = c.req.query("lane");
+  const byLane =
+    lane === "fast"
+      ? inArray(commands.action, FAST_COMMAND_ACTIONS)
+      : lane === "slow"
+        ? notInArray(commands.action, FAST_COMMAND_ACTIONS)
+        : undefined;
+  const pending = await db
     .select()
     .from(commands)
-    .where(and(eq(commands.siteId, siteId), eq(commands.status, "pending")));
+    .where(and(eq(commands.siteId, siteId), eq(commands.status, "pending"), byLane))
+    .orderBy(asc(commands.createdAt));
+  const claimed = pending.length
+    ? await db
+        .update(commands)
+        .set({ status: "running" })
+        .where(and(inArray(commands.id, pending.map((r) => r.id)), eq(commands.status, "pending")))
+        .returning({ id: commands.id })
+    : [];
+  const ids = new Set(claimed.map((r) => r.id));
+  const fast = new Set(FAST_COMMAND_ACTIONS);
+  const rows = pending
+    .filter((r) => ids.has(r.id))
+    .sort((a, b) => Number(fast.has(b.action)) - Number(fast.has(a.action)));
   return c.json({
     commands: rows.map((r) => ({
       id: r.id,
@@ -338,7 +363,7 @@ agentRoutes.post("/events", async (c) => {
             }
           } else if (deviceId) {
             const cmd = await enqueue(site.id, "dahua_open", { deviceId, channel: 1 });
-            await waitCommand(cmd);
+            await waitOpenCommand(cmd);
           }
         } catch {
           /* el evento se guarda igual */

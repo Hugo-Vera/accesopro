@@ -5,7 +5,7 @@ import type { AuthUser } from "./auth.js";
 import { requireAuth } from "./auth.js";
 import { db } from "./db/client.js";
 import { accessPointActuators, accessPointCameras, accessPointDevices, actuators, cameras, commands, dahuaDevices, departments, events, plates } from "./db/schema.js";
-import { enqueue, fireActuator, waitCommand } from "./actuatorExec.js";
+import { enqueue, fireActuator, waitCommand, waitOpenCommand } from "./actuatorExec.js";
 import { isEnrollableDeviceType } from "./dahuaSite.js";
 import { seedDeviceRoster } from "./rosterReconcile.js";
 import { agentOnline, nid, normalizePlate, scopedSite, scopedSiteWithModule } from "./scope.js";
@@ -472,7 +472,8 @@ hardware.post("/dahua/:id/test", async (c) => {
   const agentAction = map[action];
   if (!agentAction) return c.json({ error: "Acción de prueba desconocida" }, 400);
   const cmd = await enqueue(scoped.site.id, agentAction, { deviceId: id, channel });
-  const done = await waitCommand(cmd, action === "snapshot" ? 40 : 25);
+  const done =
+    action === "open" ? await waitOpenCommand(cmd, 25) : await waitCommand(cmd, action === "snapshot" ? 40 : 25);
   const isOk = Boolean(done.ok && (done.result as { ok?: boolean } | null)?.ok !== false);
   const updateData: Record<string, unknown> = {
     lastStatus: isOk ? "online" : "offline",

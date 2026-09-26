@@ -156,6 +156,54 @@ fun isPastDate(iso: String): Boolean {
     return iso.take(10) < LocalDate.now(AR_ZONE).toString()
 }
 
+/** Edad en años desde AAAA-MM-DD o dd/MM/aaaa (nacimiento del DNI). */
+fun ageFrom(birth: String?): Int? {
+    val s = birth?.trim().orEmpty()
+    val born = runCatching { LocalDate.parse(s.take(10)) }.getOrNull()
+        ?: Regex("""^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$""").find(s)?.destructured?.let { (d, m, y) ->
+            runCatching { LocalDate.of(y.toInt(), m.toInt(), d.toInt()) }.getOrNull()
+        }
+        ?: return null
+    val years = java.time.Period.between(born, LocalDate.now(AR_ZONE)).years
+    return years.takeIf { it in 0..130 }
+}
+
+fun isMinorAge(age: Int?) = age != null && age < 18
+
+/** Servicio, contratista y delivery no ingresan con menores (ni siendo menores). */
+fun minorsAllowed(visitKind: String?) = visitKind.isNullOrBlank() || visitKind == "social"
+
+const val MINOR_KIND_TEXT = "Menor de edad: solo puede ingresar como visita"
+
+@Composable
+fun MinorBanner(age: Int, visitKind: String?) {
+    Surface(
+        color = MaterialTheme.colorScheme.errorContainer,
+        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(Icons.Default.Warning, contentDescription = null, tint = MaterialTheme.colorScheme.onErrorContainer)
+            Column {
+                Text(
+                    "Menor de edad · $age años",
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                )
+                Text(
+                    if (minorsAllowed(visitKind)) "Solo puede ingresar como visita." else "$MINOR_KIND_TEXT. Cambiá el tipo o denegá.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                )
+            }
+        }
+    }
+}
+
 val CameraIcon: ImageVector by lazy {
     ImageVector.Builder(
         name = "Camera",
@@ -216,9 +264,21 @@ fun ChoiceGrid(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun DateField(label: String, value: String, onChange: (String) -> Unit, enabled: Boolean = true) {
+fun DateField(
+    label: String,
+    value: String,
+    onChange: (String) -> Unit,
+    enabled: Boolean = true,
+    birth: Boolean = false,
+) {
     var open by remember { mutableStateOf(false) }
-    val expired = value.isNotBlank() && isPastDate(value)
+    val age = if (birth) ageFrom(value) else null
+    val expired = if (birth) isMinorAge(age) else value.isNotBlank() && isPastDate(value)
+    val suffix = when {
+        birth && age != null -> " · $age años${if (expired) " (menor de edad)" else ""}"
+        expired -> " (vencida)"
+        else -> ""
+    }
     OutlinedButton(
         onClick = { open = true },
         enabled = enabled,
@@ -232,7 +292,7 @@ fun DateField(label: String, value: String, onChange: (String) -> Unit, enabled:
         Icon(Icons.Default.DateRange, contentDescription = null, modifier = Modifier.size(18.dp))
         Spacer(Modifier.width(8.dp))
         Text(
-            if (value.isBlank()) label else "$label: ${fmtDate(value)}${if (expired) " (vencida)" else ""}",
+            if (value.isBlank()) label else "$label: ${fmtDate(value)}$suffix",
             color = if (expired) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
             modifier = Modifier.weight(1f),
         )

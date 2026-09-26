@@ -36,6 +36,8 @@ data class ApprovalItem(
     val needsPhoneAuth: Boolean,
     val ownerAuthorizedByName: String?,
     val emergencies: List<Emergency>,
+    val guestBirthDate: String? = null,
+    val guestAge: Int? = null,
     val qrHint: String? = null,
     val scanChannelLabel: String? = null,
     val scannedByName: String? = null,
@@ -553,6 +555,8 @@ class GuardApi(
             reason = o.optString("reason"),
             guestName = o.optString("guestName"),
             guestDni = o.optStringOrNull("guestDni"),
+            guestBirthDate = o.optStringOrNull("guestBirthDate"),
+            guestAge = if (o.isNull("guestAge")) null else o.optInt("guestAge"),
             patente = o.optStringOrNull("patente"),
             needsTrunk = o.optBoolean("needsTrunk"),
             needsArt = o.optBoolean("needsArt"),
@@ -723,6 +727,7 @@ class GuardApi(
         visitKind: String = "social",
         arrivalMode: String = "peatonal",
         patente: String = "",
+        guestBirthDate: String = "",
     ): CreateVisitResult =
         withContext(Dispatchers.IO) {
             val body = JSONObject()
@@ -731,6 +736,7 @@ class GuardApi(
                 .put("arrivalMode", arrivalMode)
             if (!guestName.isNullOrBlank()) body.put("guestName", guestName)
             if (!guestDni.isNullOrBlank()) body.put("guestDni", guestDni)
+            if (guestBirthDate.isNotBlank()) body.put("guestBirthDate", guestBirthDate)
             if (arrivalMode == "vehiculo" && patente.isNotBlank()) body.put("patente", patente.trim().uppercase())
             val json = post("/api/visitors/announce", body)
             CreateVisitResult(

@@ -1188,6 +1188,39 @@ export const MANUAL_CHAPTERS: ManualChapter[] = [
           },
         ],
       },
+      {
+        id: "ingreso-rapido-menores",
+        title: "Edad y menores de edad",
+        blocks: [
+          {
+            type: "ul",
+            items: [
+              "Nacimiento muestra la edad («23/09/2011 · 15 años»). Si es menor de 18 aparece «(menor de edad)» en rojo y la alerta «Menor de edad · N años»",
+              "Un menor solo puede ingresar como Visita: Servicio, Contratista y Delivery quedan ocultos y no se ofrece Registrar y dejar pasar; va a la ficha",
+              "El contador Menores (chicos que acompañan sin DNI) existe solo para Visita. Servicio técnico, contratista y delivery no ingresan con menores",
+              "El servidor aplica la misma regla: si se cambia el tipo a Servicio con un menor, no deja aprobar",
+            ],
+          },
+        ],
+      },
+      {
+        id: "ingreso-rapido-apertura",
+        title: "Aprobar y abrir: la barrera y la cola van juntas",
+        blocks: [
+          {
+            type: "ul",
+            items: [
+              "Aprobar y abrir manda el pulso por un carril rápido del agent que no espera a los enrolamientos del lector",
+              "Si la barrera abre, la ficha sale de la cola en el mismo momento",
+              "Si el agent no responde, el pulso se cancela: la barrera no abre más tarde y la ficha sigue pendiente con «No se abrió: el agent no respondió. Reintentá.»",
+            ],
+          },
+          {
+            type: "note",
+            text: "Probar: con el agent apagado, Aprobar y abrir debe dar error y no abrir al volver a prenderlo. Con el agent prendido, abre y la ficha desaparece de la cola.",
+          },
+        ],
+      },
     ],
   },
 ];

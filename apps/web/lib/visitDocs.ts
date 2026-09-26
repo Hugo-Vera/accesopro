@@ -132,6 +132,34 @@ export function fmtStamp(v: string | number | Date | null | undefined) {
   });
 }
 
+/** Edad en años desde AAAA-MM-DD o dd/mm/aaaa (nacimiento del DNI), en día argentino. */
+export function ageFrom(birth: string | null | undefined): number | null {
+  const s = String(birth || "").trim();
+  let y = 0;
+  let m = 0;
+  let d = 0;
+  const iso = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  const dmy = s.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
+  if (iso) [y, m, d] = [Number(iso[1]), Number(iso[2]), Number(iso[3])];
+  else if (dmy) [y, m, d] = [Number(dmy[3]), Number(dmy[2]), Number(dmy[1])];
+  else return null;
+  const [ty, tm, td] = todayAr().split("-").map(Number);
+  let years = ty - y;
+  if (tm < m || (tm === m && td < d)) years -= 1;
+  return years >= 0 && years <= 130 ? years : null;
+}
+
+export function isMinorAge(age: number | null | undefined) {
+  return age != null && age < 18;
+}
+
+/** Servicio, contratista y delivery no ingresan con menores (ni siendo menores). */
+export function minorsAllowed(visitKind: string | null | undefined) {
+  return !visitKind || visitKind === "social";
+}
+
+export const MINOR_KIND_TEXT = "Menor de edad: solo puede ingresar como visita";
+
 /** "Solicitar siguientes documentos": solo lo que aplica; el DNI no se repite si ya se leyó. */
 export function requiredDocsFor(visitKind: string | null | undefined, arrivalMode: string | null | undefined, dniRead: boolean) {
   const req = docRequirements(visitKind, arrivalMode);

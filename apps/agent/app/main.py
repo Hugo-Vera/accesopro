@@ -798,26 +798,40 @@ def _run_command(cmd: dict[str, Any]) -> dict[str, Any]:
     return {"ok": False, "error": f"Acción desconocida: {action}"}
 
 
+def _drain_commands(lane: str) -> None:
+    res = api_get(f"/agent/commands?lane={lane}")
+    cmds = res.get("commands") or []
+    for cmd in cmds:
+        try:
+            result = _run_command(cmd)
+            api_post(
+                f"/agent/commands/{cmd['id']}/result",
+                {"ok": bool(result.get("ok")), "result": result, "error": result.get("error")},
+            )
+        except Exception as exc:  # noqa: BLE001
+            api_post(
+                f"/agent/commands/{cmd['id']}/result",
+                {"ok": False, "error": str(exc)},
+            )
+
+
 def _commands_worker() -> None:
     while not _stop.is_set():
         try:
-            res = api_get("/agent/commands")
-            cmds = res.get("commands") or []
-            for cmd in cmds:
-                try:
-                    result = _run_command(cmd)
-                    api_post(
-                        f"/agent/commands/{cmd['id']}/result",
-                        {"ok": bool(result.get("ok")), "result": result, "error": result.get("error")},
-                    )
-                except Exception as exc:  # noqa: BLE001
-                    api_post(
-                        f"/agent/commands/{cmd['id']}/result",
-                        {"ok": False, "error": str(exc)},
-                    )
+            _drain_commands("slow")
         except Exception:  # noqa: BLE001
             pass
         time.sleep(0.35)
+
+
+# Aperturas en hilo propio: un enrolamiento lento en el ASI no puede demorar la barrera.
+def _open_commands_worker() -> None:
+    while not _stop.is_set():
+        try:
+            _drain_commands("fast")
+        except Exception:  # noqa: BLE001
+            pass
+        time.sleep(0.2)
 
 
 def _heartbeat_worker() -> None:
@@ -949,11 +963,13 @@ def _dahua_poller_worker() -> None:
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     t_cmd = threading.Thread(target=_commands_worker, daemon=True, name="CommandsWorker")
+    t_open = threading.Thread(target=_open_commands_worker, daemon=True, name="OpenCommandsWorker")
     t_hb = threading.Thread(target=_heartbeat_worker, daemon=True, name="HeartbeatWorker")
     t_poll = threading.Thread(target=_dahua_poller_worker, daemon=True, name="PollerWorker")
     t_stream = threading.Thread(target=_dahua_stream_worker, daemon=True, name="StreamWorker")
     t_photo = threading.Thread(target=_event_photo_worker, daemon=True, name="EventPhotoWorker")
     t_cmd.start()
+    t_open.start()
     t_hb.start()
     t_poll.start()
     t_stream.start()

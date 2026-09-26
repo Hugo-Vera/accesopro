@@ -175,6 +175,8 @@ private fun EntryFicha(
     var scanDni by remember { mutableStateOf(false) }
     var scanCompanion by remember { mutableStateOf(false) }
     var minorsCount by remember(item.id) { mutableStateOf(item.minorsCount) }
+    val guestAge = item.guestAge ?: ageFrom(item.guestBirthDate)
+    val guestMinor = isMinorAge(guestAge)
     var companions by remember(item.id) { mutableStateOf(item.companions.map { CompanionItem(it.name, it.dni) }) }
     var localError by remember { mutableStateOf<String?>(null) }
     var saving by remember { mutableStateOf(false) }
@@ -221,7 +223,7 @@ private fun EntryFicha(
             licUntil = if (req.license) licUntil else "",
             licNumber = if (req.license) licNumber else "",
             licPhoto = if (req.license) licPhoto else null,
-            minorsCount = minorsCount,
+            minorsCount = if (minorsAllowed(visitKind)) minorsCount else 0,
             companions = companions,
         )
         var fresh = a.saveFicha(item.id, input)
@@ -398,7 +400,11 @@ private fun EntryFicha(
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 SectionTitle("QUIÉN ES")
-                ChoiceGrid(VISIT_KINDS, visitKind, enabled = enabled) { visitKind = it }
+                ChoiceGrid(
+                    if (guestMinor) VISIT_KINDS.filter { minorsAllowed(it.first) } else VISIT_KINDS,
+                    visitKind,
+                    enabled = enabled,
+                ) { visitKind = it }
                 SectionTitle("CÓMO LLEGA")
                 ChoiceGrid(ARRIVAL_MODES, arrivalMode, enabled = enabled) { arrivalMode = it }
                 RequiredDocsList(visitKind, arrivalMode, dniRead = dni.isNotBlank())
@@ -532,7 +538,7 @@ private fun EntryFicha(
                                 dni.isBlank() -> "DNI pendiente"
                                 dniMatch == "ok" -> "DNI $dni · verificado"
                                 else -> "DNI $dni"
-                            },
+                            } + (guestAge?.let { " · $it años" } ?: ""),
                             style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
                             color = if (dni.isBlank()) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onPrimaryContainer,
                             modifier = Modifier.weight(1f),
@@ -599,6 +605,8 @@ private fun EntryFicha(
                     }
                 }
             }
+
+            if (guestMinor && guestAge != null) MinorBanner(guestAge, visitKind)
 
             HistoryCard(history, compact = true)
 
@@ -789,7 +797,7 @@ private fun EntryFicha(
             }
 
             FichaCard(Modifier.onGloballyPositioned { sectionY["summary"] = it.positionInParent().y.toInt() }) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (minorsAllowed(visitKind)) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     Column(Modifier.weight(1f)) {
                         Text("Menores", fontWeight = FontWeight.Bold)
                         Text(

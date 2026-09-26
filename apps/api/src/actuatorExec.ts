@@ -15,11 +15,14 @@ export async function enqueue(siteId: string, action: string, payload: unknown) 
   return id;
 }
 
+/** Acciones que el agent corre en su hilo rápido (`GET /agent/commands?lane=fast`). */
+export const FAST_COMMAND_ACTIONS = ["open", "dahua_open"];
+
 export async function waitCommand(id: string, attempts = 20) {
   for (let i = 0; i < attempts; i++) {
     await sleep(400);
     const row = await db.select().from(commands).where(eq(commands.id, id)).get();
-    if (!row || row.status === "pending") continue;
+    if (!row || row.status === "pending" || row.status === "running") continue;
     const result = row.result ? (JSON.parse(row.result) as unknown) : null;
     const err =
       row.status === "error" && result && typeof result === "object" && "error" in result
@@ -33,6 +36,26 @@ export async function waitCommand(id: string, attempts = 20) {
     };
   }
   return { ok: false, status: "timeout", error: "El agent no respondió a tiempo" };
+}
+
+/**
+ * Apertura: nunca dejar un pulso huérfano. Si el agent no lo tomó a tiempo se cancela (no abre más tarde
+ * con la ficha pendiente); si ya lo tomó, se da por enviado para cerrar la aprobación.
+ */
+export async function waitOpenCommand(id: string, attempts = 20) {
+  const done = await waitCommand(id, attempts);
+  if (done.status !== "timeout") return done;
+  const cancelled = await db
+    .update(commands)
+    .set({ status: "cancelled", result: JSON.stringify({ error: "Sin respuesta del agent: cancelado" }) })
+    .where(and(eq(commands.id, id), eq(commands.status, "pending")))
+    .returning({ id: commands.id });
+  if (cancelled.length) {
+    return { ok: false, status: "cancelled", error: "No se abrió: el agent no respondió. Reintentá." };
+  }
+  const row = await db.select().from(commands).where(eq(commands.id, id)).get();
+  if (row?.status === "running") return { ok: true, status: "sent", result: null, error: undefined };
+  return waitCommand(id, 1);
 }
 
 function sleep(ms: number) {
@@ -93,7 +116,7 @@ export async function fireActuator(
         name: actuator.name,
         channel: actuator.dahuaChannel,
       });
-      return waitCommand(cmd);
+      return waitOpenCommand(cmd);
     }
     return { ok: false, error: `Driver no soportado: ${actuator.driver}` };
   } catch (err) {

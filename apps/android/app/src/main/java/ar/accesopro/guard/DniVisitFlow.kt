@@ -195,9 +195,14 @@ fun NewVisitScreen(
         }
     }
 
+    val age = ageFrom(parsed.birthDate)
+    val minor = isMinorAge(age)
+    LaunchedEffect(minor, visitKind) {
+        if (minor && !minorsAllowed(visitKind)) visitKind = "social"
+    }
     val req = docRequirements(visitKind, arrivalMode)
     val needsDocs = req.art || req.vehicle
-    val direct = !needsDocs && history?.hasAlerts != true
+    val direct = !needsDocs && history?.hasAlerts != true && !minor
 
     BackHandler {
         if (editing && parsed.dni.isNotBlank()) editing = false else onBack()
@@ -228,6 +233,7 @@ fun NewVisitScreen(
                     visitKind = visitKind,
                     arrivalMode = arrivalMode,
                     patente = plate,
+                    guestBirthDate = parsed.birthDate,
                 )
             }.onSuccess { onDone(NewVisitOutcome(it, parsed.fullName(), lot.lotNumber, approved = false)) }
                 .onFailure { error = it.message }
@@ -331,7 +337,7 @@ fun NewVisitScreen(
                                 listOfNotNull(
                                     "DNI ${parsed.dni.ifBlank { "—" }}",
                                     parsed.gender.ifBlank { null },
-                                    parsed.birthDate.ifBlank { null }?.let { "nac. ${fmtDate(it)}" },
+                                    age?.let { "$it años" } ?: parsed.birthDate.ifBlank { null }?.let { "nac. ${fmtDate(it)}" },
                                 ).joinToString(" · "),
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onPrimaryContainer,
@@ -386,7 +392,7 @@ fun NewVisitScreen(
                                 FilterChip(selected = eGender == g, onClick = { eGender = if (eGender == g) "" else g }, label = { Text(g) })
                             }
                         }
-                        DateField("Nacimiento", eBirth, { eBirth = it })
+                        DateField("Nacimiento", eBirth, { eBirth = it }, birth = true)
                         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                             if (parsed.dni.isNotBlank()) {
                                 OutlinedButton(onClick = { editing = false }, shape = RoundedCornerShape(10.dp)) { Text("Cancelar") }
@@ -410,6 +416,8 @@ fun NewVisitScreen(
                     }
                 }
             }
+
+            if (minor && age != null) MinorBanner(age, visitKind)
 
             HistoryCard(history)
 
@@ -476,7 +484,11 @@ fun NewVisitScreen(
             }
 
             SectionTitle("QUIÉN ES")
-            ChoiceGrid(VISIT_KINDS, visitKind, enabled = !busy) { visitKind = it; typeTouched = true }
+            ChoiceGrid(
+                if (minor) VISIT_KINDS.filter { minorsAllowed(it.first) } else VISIT_KINDS,
+                visitKind,
+                enabled = !busy,
+            ) { visitKind = it; typeTouched = true }
             SectionTitle("CÓMO LLEGA")
             ChoiceGrid(ARRIVAL_MODES, arrivalMode, enabled = !busy) { arrivalMode = it; typeTouched = true }
             if (arrivalMode == "vehiculo") {

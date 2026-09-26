@@ -8,7 +8,17 @@ import { parseDniScan } from "@/lib/parseDni";
 import { DocumentScanPanel, type AcceptedDoc, visitorDocUrl } from "@/components/ops/DocumentScanPanel";
 import { Modal } from "@/components/ui/Modal";
 import { LocalQr, downloadQrPng } from "@/components/LocalQr";
-import { artLabelFor, docRequirements, isPastDay, isoDay, personInsuranceKindFor } from "@/lib/visitDocs";
+import {
+  MINOR_KIND_TEXT,
+  ageFrom,
+  artLabelFor,
+  docRequirements,
+  isMinorAge,
+  isPastDay,
+  isoDay,
+  minorsAllowed,
+  personInsuranceKindFor,
+} from "@/lib/visitDocs";
 import {
   Footprints,
   IdCard,
@@ -198,6 +208,11 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
   const req = docRequirements(visitType, arrivalMode);
   const needsArt = req.art;
   const artLabel = artLabelFor(visitType);
+  const guestAge = ageFrom(birthDate);
+  const guestMinor = isMinorAge(guestAge);
+  useEffect(() => {
+    if (guestMinor && !minorsAllowed(visitType)) setVisitType("social");
+  }, [guestMinor, visitType]);
   const lifeExpired = Boolean(lifeValidUntil && isPastDay(lifeValidUntil));
   const insExpired = Boolean(insuranceValidUntil && isPastDay(insuranceValidUntil));
   const licExpired = Boolean(licenseValidUntil && isPastDay(licenseValidUntil));
@@ -471,7 +486,7 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
       isVehicular,
       arrivalMode,
       companions: companions.filter((x) => x.name.trim()),
-      minorsCount,
+      minorsCount: minorsAllowed(visitType) ? minorsCount : 0,
       vehicle: isVehicular
         ? {
             plate: plate.toUpperCase().trim(),
@@ -730,6 +745,15 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
                     onChange={(e) => setBirthDate(e.target.value)}
                     className="w-full rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-900 shadow-xs focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-slate-700 dark:bg-slate-950 dark:text-white"
                   />
+                  {guestAge != null ? (
+                    <p
+                      className={`mt-1 text-[11px] font-semibold ${
+                        guestMinor ? "text-rose-700 dark:text-rose-300" : "text-slate-600 dark:text-slate-300"
+                      }`}
+                    >
+                      {guestAge} años{guestMinor ? ` · ${MINOR_KIND_TEXT}` : ""}
+                    </p>
+                  ) : null}
                 </div>
                 <div>
                   <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
@@ -806,7 +830,9 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
                     { key: "service", label: "Servicio / Técnico" },
                     { key: "contractor", label: "Obra / Contratista" },
                     { key: "delivery", label: "Delivery / Paquete" },
-                  ].map((t) => (
+                  ]
+                    .filter((t) => !guestMinor || minorsAllowed(t.key))
+                    .map((t) => (
                     <button
                       key={t.key}
                       type="button"
@@ -942,6 +968,7 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
                 </div>
               </div>
 
+              {minorsAllowed(visitType) ? (
               <div className="flex items-center justify-between gap-3 rounded-xl border border-slate-200 bg-white px-3 py-2 dark:border-slate-700 dark:bg-slate-950">
                 <div>
                   <p className="text-xs font-semibold text-slate-700 dark:text-slate-300">Menores</p>
@@ -968,6 +995,7 @@ export function VisitorCheckinModal({ tenantId, isOpen, onClose, onSuccess }: Pr
                   </button>
                 </div>
               </div>
+              ) : null}
               <div>
                 <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
                   Observaciones / Notas de Portería

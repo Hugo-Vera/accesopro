@@ -20,8 +20,12 @@ import {
   ARRIVAL_MODES,
   VISIT_KINDS,
   arrivalModeLabel,
+  ageFrom,
   artLabelFor,
   docRequirements,
+  isMinorAge,
+  minorsAllowed,
+  MINOR_KIND_TEXT,
   expiredLabel,
   fmtDay,
   fmtStamp,
@@ -197,6 +201,8 @@ export type GuardApprovalItem = {
   reason: string;
   guestName: string;
   guestDni: string | null;
+  guestBirthDate?: string | null;
+  guestAge?: number | null;
   patente: string | null;
   arrivalMode: string;
   needsTrunk: boolean;
@@ -439,7 +445,9 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
   const exitMode = Boolean(current && (current.sentido === "out" || current.reentry));
   const req = docRequirements(visitKind, arrivalMode);
   const expiredDocs = !exitMode ? current?.expiredDocs || [] : [];
-  const canApprove = canDecide && !passExpired && expiredDocs.length === 0;
+  const guestAge = current ? current.guestAge ?? ageFrom(current.guestBirthDate) : null;
+  const guestMinor = isMinorAge(guestAge);
+  const canApprove = canDecide && !passExpired && expiredDocs.length === 0 && !(guestMinor && !minorsAllowed(visitKind));
   const trunkSaved = current?.trunkIn;
   const artLabel = artLabelFor(visitKind);
   const statusLine = current && !exitMode ? entryStatusLine(current, passExpired) : null;
@@ -533,7 +541,7 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
     const out: Record<string, unknown> = {
       guestDni,
       guestName,
-      minorsCount: minorsDraft,
+      minorsCount: minorsAllowed(visitKind) ? minorsDraft : 0,
       companions: companionsDraft.filter((x) => x.name.trim()),
     };
     out.visitKind = visitKind;
@@ -865,6 +873,7 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
                   </h3>
                   <p className="text-sm font-semibold text-slate-700 dark:text-slate-200">
                     {guestDni ? `DNI ${guestDni}` : "DNI pendiente"}
+                    {guestAge != null ? ` · ${guestAge} años` : ""}
                     {dniMatch === "ok" ? (
                       <span className="ml-2 text-[11px] font-bold text-emerald-700 dark:text-emerald-400">Verificado con el plástico</span>
                     ) : dniMatch === "filled" ? (
@@ -995,7 +1004,7 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
                   <div>
                     <p className="mb-1 text-[10px] font-bold uppercase tracking-wider text-slate-500">Quién es</p>
                     <div className="grid grid-cols-2 gap-1.5">
-                      {VISIT_KINDS.map((k) => (
+                      {VISIT_KINDS.filter((k) => !guestMinor || minorsAllowed(k.id)).map((k) => (
                         <button
                           key={k.id}
                           type="button"
@@ -1041,6 +1050,16 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
                   >
                     Listo
                   </button>
+                </div>
+              ) : null}
+
+              {guestMinor ? (
+                <div className="flex gap-2 rounded-xl border border-rose-300 bg-rose-50 px-3 py-2 text-[12px] text-rose-900 dark:border-rose-800 dark:bg-rose-950/40 dark:text-rose-100">
+                  <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                  <div>
+                    <p className="font-bold">Menor de edad · {guestAge} años</p>
+                    <p>{minorsAllowed(visitKind) ? "Solo puede ingresar como visita." : `${MINOR_KIND_TEXT}. Cambiá el tipo o denegá.`}</p>
+                  </div>
                 </div>
               ) : null}
 
@@ -1293,6 +1312,7 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
               ) : null}
 
               <div id="ficha-summary" className="scroll-mt-2 space-y-2 rounded-lg border border-slate-200 p-2 dark:border-slate-700">
+                {minorsAllowed(visitKind) ? (
                 <div className="flex items-center justify-between gap-2">
                   <div>
                     <p className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-800 dark:text-slate-100">
@@ -1323,6 +1343,7 @@ export function GuardApprovalQueue({ tenantId, enabled }: Props) {
                     </button>
                   </div>
                 </div>
+                ) : null}
 
                 {canDecide ? (
                   <>

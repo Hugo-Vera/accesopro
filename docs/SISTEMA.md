@@ -127,6 +127,8 @@ Pensado para ~150 ingresos por hora en hora pico: 2–3 toques por persona.
 - **Constancias en la app**: ML Kit Document Scanner (recorte y perspectiva de Google Play Services); si el equipo no lo tiene, cae al escáner propio `DocScan.kt`.
 - **Fechas**: instantes (pase, último ingreso) en `America/Argentina/Buenos_Aires`; vencimientos de documentos son días de calendario sin corrimiento de zona.
 - La Ñ del PDF417 se lee en Latin-1 (app) y `parseDni.ts` repara el mojibake (`Ã‘` → Ñ).
+- **Edad y menores**: Nacimiento muestra la edad (`ageFrom` en `visitDocs.ts` / `FichaParts.kt`; la API manda `guestBirthDate` y `guestAge` en cada aprobación). Invitado **menor de 18**: alerta roja, solo puede ingresar como **Visita** (`social`), sin «Registrar y dejar pasar». El contador **Menores** (acompañantes sin DNI) existe solo para `social`: servicio, contratista y delivery no ingresan con menores. El servidor lo aplica en check-in, anuncio, cambio de tipo, contador y `decide` (`MINOR_KIND_ERROR` / `MINORS_KIND_ERROR` en `visitHold.ts`); el reingreso no se re-evalúa.
+- **Apertura sin colgarse**: `GET /agent/commands?lane=fast` entrega solo `open` / `dahua_open` al hilo `_open_commands_worker` del agent (0,2 s); `lane=slow` el resto (enrolamientos). Lo entregado pasa a `running`. `waitOpenCommand` (`actuatorExec.ts`): si vence y el comando sigue `pending` lo marca `cancelled` y devuelve «No se abrió: el agent no respondió. Reintentá.» (la barrera no abre después con la ficha pendiente); si ya está `running` lo da por enviado y la aprobación se cierra. El enrolamiento del pase en el check-in corre en segundo plano.
 
 ### Pantalla de salida (web `ExitFicha.tsx`, app `ExitFicha.kt`)
 

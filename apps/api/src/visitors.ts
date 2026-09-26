@@ -55,7 +55,10 @@ import {
   trunkPhotoKey,
   isVisitKind,
   personInsuranceKindFor,
+  MINOR_KIND_ERROR,
+  MINORS_KIND_ERROR,
 } from "./visitHold.js";
+import { isMinorBirthDate } from "./age.js";
 import { parseDniScan } from "./parseDni.js";
 import { readEventPhoto } from "./eventPhotos.js";
 import { getVisitAuthDefaultHours } from "./retention.js";
@@ -370,11 +373,12 @@ async function applyFichaBody(
       birthDate: body.birthDate,
     });
   }
-  await applyPassKindAndMode(pending.passId, {
+  const kindError = await applyPassKindAndMode(pending.passId, {
     visitKind: body.visitKind,
     arrivalMode: body.arrivalMode,
     patente: body.patente,
   });
+  if (kindError) return kindError;
   if (body.companions) await replaceCompanions(pending.passId, body.companions);
   if (body.insurance) {
     const r = await attachVehicleInsurance(scoped.tenantId, pending.passId, body.insurance);
@@ -389,7 +393,8 @@ async function applyFichaBody(
     if (!r.ok) return r.error;
   }
   if (typeof body.minorsCount === "number") {
-    await setApprovalMinorsCount({ siteId: scoped.site.id, approvalId: pending.id, count: body.minorsCount });
+    const r = await setApprovalMinorsCount({ siteId: scoped.site.id, approvalId: pending.id, count: body.minorsCount });
+    if (!r.ok) return r.error;
   }
   return null;
 }
@@ -972,6 +977,7 @@ visitorsApi.post("/visitors/announce", async (c) => {
     propertyId?: string;
     guestName?: string;
     guestDni?: string;
+    guestBirthDate?: string;
     visitKind?: string;
     arrivalMode?: string;
     patente?: string;
@@ -983,6 +989,7 @@ visitorsApi.post("/visitors/announce", async (c) => {
     guardUserId: c.get("user").id,
     guestName: body.guestName,
     guestDni: body.guestDni,
+    guestBirthDate: body.guestBirthDate,
     visitKind: body.visitKind,
     arrivalMode: body.arrivalMode,
     patente: body.patente,
@@ -1321,6 +1328,11 @@ visitorsApi.post("/visitors/checkin", async (c) => {
   if (!body.destination?.propertyId || !body.destination?.authorizedBy) {
     return c.json({ error: "Faltan datos de destino (Lote y Persona que autoriza)" }, 400);
   }
+  const kindRequested = body.destination.visitType === "event" ? "social" : body.destination.visitType || "social";
+  if (kindRequested !== "social") {
+    if (isMinorBirthDate(body.identity.birthDate)) return c.json({ error: MINOR_KIND_ERROR }, 400);
+    if ((body.minorsCount ?? 0) > 0) return c.json({ error: MINORS_KIND_ERROR }, 400);
+  }
 
   const tenantId = scoped.site.tenantId;
   const siteId = scoped.site.id;
@@ -1548,28 +1560,29 @@ visitorsApi.post("/visitors/checkin", async (c) => {
     maxUses: 0,
   });
 
-  let dahuaSynced = false;
-  try {
-    const results = await enrollPersonOnSiteDevicesWait(
-      siteId,
-      {
-        userId: dahuaUserId,
-        name: guestName,
-        cardNo: token,
-        userType: ASI_USER_TYPES.guest,
-        cardType: ASI_CARD_TYPES.guest,
-        photoBase64: undefined,
-        useTime: 0,
-      },
-      { fechaDesde: now, fechaHasta: defaultUntil },
-    );
-    dahuaSynced = results.some((r) => r.ok);
-    if (dahuaSynced) {
-      await db.update(visitPasses).set({ dahuaSynced: true, dahuaCardNo: token }).where(eq(visitPasses.id, passId));
-    }
-  } catch {
-    /* el check-in local no depende del lector */
-  }
+  // En segundo plano: el guardia aprueba y abre sin esperar a que el ASI termine de enrolar el pase.
+  const dahuaSynced = false;
+  void enrollPersonOnSiteDevicesWait(
+    siteId,
+    {
+      userId: dahuaUserId,
+      name: guestName,
+      cardNo: token,
+      userType: ASI_USER_TYPES.guest,
+      cardType: ASI_CARD_TYPES.guest,
+      photoBase64: undefined,
+      useTime: 0,
+    },
+    { fechaDesde: now, fechaHasta: defaultUntil },
+  )
+    .then(async (results) => {
+      if (results.some((r) => r.ok)) {
+        await db.update(visitPasses).set({ dahuaSynced: true, dahuaCardNo: token }).where(eq(visitPasses.id, passId));
+      }
+    })
+    .catch(() => {
+      /* el check-in local no depende del lector */
+    });
 
   const hold = await holdVisitQr({
     siteId,

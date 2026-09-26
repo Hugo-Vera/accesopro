@@ -24,7 +24,7 @@ import { actuatorsForDahuaDevice, actuatorsForSentido, laneCodeOf } from "./acce
 import { broadcastRealtimeEvent } from "./eventStream.js";
 import { nid, normalizePlate } from "./scope.js";
 import { parseVisitQrPayload } from "./visitPass.js";
-import { companionIsMinor, isMinorBirthDate } from "./age.js";
+import { companionIsMinor, isMinorBirthDate, yearsFromBirthDate } from "./age.js";
 import { createOwnerNotice, expireOwnerNotices } from "./ownerNotices.js";
 import { saveEventPhoto } from "./eventPhotos.js";
 import { verifyUserGuardCode } from "./users.js";
@@ -978,6 +978,10 @@ export async function decideGuardApproval(input: {
     if (windowNow === "expired" || windowNow === "too_early") {
       return { ok: false, error: "El pase está vencido o fuera de vigencia. Solo se puede denegar." };
     }
+    if (!isReentry && pass.visitKind !== "social") {
+      if ((row.minorsCount ?? 0) > 0) return { ok: false, error: MINORS_KIND_ERROR };
+      if (await passGuestIsMinor(pass)) return { ok: false, error: MINOR_KIND_ERROR };
+    }
   }
 
   const pr = await passPresence(pass);
@@ -1268,6 +1272,7 @@ export async function serializePassFicha(
     ? await db.select().from(visitRecords).where(eq(visitRecords.id, pass.visitRecordId)).get()
     : null;
   const companions = await listCompanions(pass.id);
+  const guestBirthDate = await guestBirthDateOf(pass, visitRecord?.personId);
   const awaitingOut = passIsInside(pass);
   const sentidoNow: "in" | "out" = row?.sentido === "out" || (!row && awaitingOut) ? "out" : "in";
   const reentry = row ? Boolean(row.reentry) && sentidoNow === "in" : pass.status === "temp_out";
@@ -1355,6 +1360,8 @@ export async function serializePassFicha(
     createdAt: row?.createdAt ?? pass.createdAt,
     guestName: pass.guestName,
     guestDni: pass.guestDni,
+    guestBirthDate,
+    guestAge: yearsFromBirthDate(guestBirthDate),
     qrHint: qrHintOf(pass.token, pass.dahuaCardNo),
     scanChannel: channel,
     scanChannelLabel: scanChannelLabel(channel, deviceName),
@@ -1513,6 +1520,31 @@ async function saveDocPhoto(siteId: string, key: string, base64?: string | null)
   } catch {
     return null;
   }
+}
+
+export const MINOR_KIND_ERROR = "Menor de edad: solo puede ingresar como visita";
+export const MINORS_KIND_ERROR = "Servicio, contratista y delivery no ingresan con menores";
+
+/** Nacimiento del invitado: ficha de identidad del registro o, si no hay, la del padrón por DNI. */
+async function guestBirthDateOf(pass: { siteId: string; guestDni: string | null }, personId?: string | null) {
+  if (personId) {
+    const p = await db
+      .select({ birthDate: visitorIdentities.birthDate })
+      .from(visitorIdentities)
+      .where(eq(visitorIdentities.id, personId))
+      .get();
+    if (p?.birthDate) return p.birthDate;
+  }
+  const tenantId = await tenantIdOfSite(pass.siteId);
+  if (!tenantId) return null;
+  return (await personByDni(tenantId, pass.guestDni))?.birthDate ?? null;
+}
+
+async function passGuestIsMinor(pass: typeof visitPasses.$inferSelect) {
+  const rec = pass.visitRecordId
+    ? await db.select({ personId: visitRecords.personId }).from(visitRecords).where(eq(visitRecords.id, pass.visitRecordId)).get()
+    : null;
+  return isMinorBirthDate(await guestBirthDateOf(pass, rec?.personId));
 }
 
 async function personByDni(tenantId: string, dniRaw: string | null | undefined) {
@@ -1892,11 +1924,14 @@ export async function attachLicenseToPass(
 export async function applyPassKindAndMode(
   passId: string,
   input: { visitKind?: unknown; arrivalMode?: unknown; patente?: string | null },
-) {
+): Promise<string | null> {
   const pass = await db.select().from(visitPasses).where(eq(visitPasses.id, passId)).get();
-  if (!pass) return;
+  if (!pass) return null;
   const patch: Partial<typeof visitPasses.$inferInsert> = {};
-  if (isVisitKind(input.visitKind) && input.visitKind !== pass.visitKind) patch.visitKind = input.visitKind;
+  if (isVisitKind(input.visitKind) && input.visitKind !== pass.visitKind) {
+    if (input.visitKind !== "social" && (await passGuestIsMinor(pass))) return MINOR_KIND_ERROR;
+    patch.visitKind = input.visitKind;
+  }
   if (isArrivalMode(input.arrivalMode) && input.arrivalMode !== pass.arrivalMode) {
     patch.arrivalMode = input.arrivalMode;
     if (input.arrivalMode !== "vehiculo") {
@@ -1909,8 +1944,14 @@ export async function applyPassKindAndMode(
   }
   const plate = normalizePlate(input.patente || "");
   if (plate && (patch.arrivalMode ?? pass.arrivalMode) === "vehiculo" && plate !== pass.patente) patch.patente = plate;
-  if (!Object.keys(patch).length) return;
+  if (!Object.keys(patch).length) return null;
   await db.update(visitPasses).set(patch).where(eq(visitPasses.id, passId));
+  if (patch.visitKind && patch.visitKind !== "social") {
+    await db
+      .update(guardApprovals)
+      .set({ minorsCount: 0 })
+      .where(and(eq(guardApprovals.passId, passId), eq(guardApprovals.status, "pending"), eq(guardApprovals.sentido, "in")));
+  }
   if (patch.arrivalMode && patch.arrivalMode !== "vehiculo") {
     await db
       .delete(visitTrunkChecks)
@@ -1932,6 +1973,7 @@ export async function applyPassKindAndMode(
       await db.update(visitRecords).set(recPatch).where(eq(visitRecords.id, pass.visitRecordId));
     }
   }
+  return null;
 }
 
 /** Seguro o licencia vencidos: el auto queda afuera y se re-evalúa como ingreso a pie. */
@@ -2092,10 +2134,15 @@ export async function announceWalkIn(input: {
   guardUserId: string;
   guestName?: string;
   guestDni?: string;
+  guestBirthDate?: string;
   visitKind?: string;
   arrivalMode?: string;
   patente?: string;
 }): Promise<{ ok: true; passId: string; approvalId: string } | { ok: false; error: string }> {
+  if (isVisitKind(input.visitKind) && input.visitKind !== "social") {
+    const birth = input.guestBirthDate || (await personByDni(input.site.tenantId, input.guestDni))?.birthDate;
+    if (isMinorBirthDate(birth)) return { ok: false, error: MINOR_KIND_ERROR };
+  }
   const property = await db
     .select()
     .from(properties)
@@ -2329,6 +2376,10 @@ export async function setApprovalMinorsCount(input: {
     .get();
   if (!row || row.status !== "pending") return { ok: false as const, error: "No hay una solicitud pendiente" };
   const n = Math.max(0, Math.min(20, Math.round(Number(input.count) || 0)));
+  if (n > 0 && row.sentido === "in" && !row.reentry) {
+    const pass = await db.select({ visitKind: visitPasses.visitKind }).from(visitPasses).where(eq(visitPasses.id, row.passId)).get();
+    if (pass && pass.visitKind !== "social") return { ok: false as const, error: MINORS_KIND_ERROR };
+  }
   await db
     .update(guardApprovals)
     .set({ minorsCount: n, exitMinorsCount: n })
