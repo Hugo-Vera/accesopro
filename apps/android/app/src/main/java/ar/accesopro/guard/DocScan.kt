@@ -395,15 +395,16 @@ fun DocScanScreen(
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
                 )
             }
-            Button(
+            FilledIconButton(
                 onClick = { shoot() },
                 enabled = granted && imageCapture != null && !capturing,
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.height(52.dp),
+                modifier = Modifier.size(56.dp),
             ) {
-                Icon(CameraIcon, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(8.dp))
-                Text(if (capturing) "Procesando…" else "Capturar", fontWeight = FontWeight.Bold)
+                if (capturing) {
+                    CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
+                } else {
+                    Icon(CameraIcon, contentDescription = "Capturar", modifier = Modifier.size(24.dp))
+                }
             }
         }
     }

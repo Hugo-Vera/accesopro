@@ -49,6 +49,14 @@ import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.text.SimpleDateFormat
+import java.time.Instant
+import java.time.LocalDate
+import java.time.LocalDateTime
+import java.time.OffsetDateTime
+import java.time.ZoneId
+import java.time.ZoneOffset
+import java.time.ZonedDateTime
+import java.time.format.DateTimeFormatter
 import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
@@ -107,7 +115,22 @@ fun expiredLabel(key: String) = when (key) {
     else -> "$key vencido"
 }
 
-/** AAAA-MM-DD a dd/mm/aaaa. */
+/** Hora de portería: el celular puede tener otra zona configurada, el barrio está en Argentina. */
+val AR_ZONE: ZoneId = ZoneId.of("America/Argentina/Buenos_Aires")
+
+/** ISO con Z u offset, epoch ms o "yyyy-MM-dd HH:mm:ss" (UTC, SQLite). */
+fun parseInstant(raw: String?): Instant? {
+    val s = raw?.trim()
+    if (s.isNullOrEmpty() || s == "null") return null
+    s.toLongOrNull()?.let { return Instant.ofEpochMilli(it) }
+    runCatching { return Instant.parse(s) }
+    runCatching { return OffsetDateTime.parse(s).toInstant() }
+    return runCatching { LocalDateTime.parse(s.replace(' ', 'T').take(19)).toInstant(ZoneOffset.UTC) }.getOrNull()
+}
+
+fun isoMillis(raw: String?): Long? = parseInstant(raw)?.toEpochMilli()
+
+/** Fecha-calendario de documentos (AAAA-MM-DD, guardada a medianoche UTC) a dd/mm/aaaa, sin corrimiento de zona. */
 fun fmtDate(iso: String?): String {
     if (iso.isNullOrBlank()) return "—"
     val d = iso.take(10)
@@ -115,19 +138,22 @@ fun fmtDate(iso: String?): String {
     return if (parts.size == 3) "${parts[2]}/${parts[1]}/${parts[0]}" else d
 }
 
+/** Instante (pase, ingreso, QR) en hora argentina: dd/MM HH:mm, con año si no es el actual. */
 fun fmtDateTime(iso: String?): String {
-    if (iso.isNullOrBlank()) return "—"
-    return runCatching {
-        val src = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }
-        val date = src.parse(iso.take(19)) ?: return fmtDate(iso)
-        SimpleDateFormat("dd/MM HH:mm", Locale.getDefault()).format(date)
-    }.getOrElse { fmtDate(iso) }
+    val t = parseInstant(iso) ?: return if (iso.isNullOrBlank()) "—" else fmtDate(iso)
+    val z = t.atZone(AR_ZONE)
+    val pattern = if (z.year == ZonedDateTime.now(AR_ZONE).year) "dd/MM HH:mm" else "dd/MM/yyyy HH:mm"
+    return DateTimeFormatter.ofPattern(pattern, Locale.forLanguageTag("es-AR")).format(z)
+}
+
+fun fmtTime(iso: String?): String {
+    val t = parseInstant(iso) ?: return "—"
+    return DateTimeFormatter.ofPattern("HH:mm").format(t.atZone(AR_ZONE))
 }
 
 fun isPastDate(iso: String): Boolean {
     if (iso.length < 10) return false
-    val today = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date())
-    return iso.take(10) < today
+    return iso.take(10) < LocalDate.now(AR_ZONE).toString()
 }
 
 val CameraIcon: ImageVector by lazy {
@@ -318,42 +344,77 @@ fun DocPhotoButton(
     onShoot: () -> Unit,
     onClear: () -> Unit,
 ) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        OutlinedButton(
-            onClick = onShoot,
-            enabled = enabled,
-            modifier = Modifier.fillMaxWidth().height(48.dp),
-            shape = RoundedCornerShape(12.dp),
-        ) {
-            Icon(CameraIcon, contentDescription = null, modifier = Modifier.size(18.dp))
-            Spacer(Modifier.width(8.dp))
-            Text(
-                when {
-                    photo != null -> "Repetir foto: $label"
-                    onServer -> "$label cargada · Reemplazar"
-                    else -> "Fotografiar $label"
-                },
-            )
+    val img = remember(photo) { photo?.let { base64ToImage(it) } }
+    var zoom by remember { mutableStateOf(false) }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier.fillMaxWidth(),
+    ) {
+        FilledTonalIconButton(onClick = onShoot, enabled = enabled, modifier = Modifier.size(40.dp)) {
+            Icon(CameraIcon, contentDescription = "Fotografiar $label", modifier = Modifier.size(20.dp))
         }
-        val img = remember(photo) { photo?.let { base64ToImage(it) } }
+        Text(
+            when {
+                photo != null -> "Foto de $label lista"
+                onServer -> "$label cargada · tocá la cámara para reemplazar"
+                else -> "Foto de $label"
+            },
+            style = MaterialTheme.typography.bodyMedium,
+            color = if (photo != null || onServer) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f),
+        )
         if (img != null) {
             Box {
                 Image(
                     bitmap = img,
                     contentDescription = label,
-                    contentScale = ContentScale.Fit,
+                    contentScale = ContentScale.Crop,
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .heightIn(max = 220.dp)
-                        .clip(RoundedCornerShape(10.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant),
+                        .size(56.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(MaterialTheme.colorScheme.surfaceVariant)
+                        .clickable { zoom = true },
                 )
-                IconButton(onClick = onClear, modifier = Modifier.align(Alignment.TopEnd)) {
-                    Icon(Icons.Default.Close, contentDescription = "Quitar foto")
+                IconButton(
+                    onClick = onClear,
+                    enabled = enabled,
+                    modifier = Modifier.align(Alignment.TopEnd).size(22.dp),
+                ) {
+                    Surface(shape = RoundedCornerShape(11.dp), color = Color.Black.copy(alpha = 0.55f)) {
+                        Icon(Icons.Default.Close, contentDescription = "Quitar foto", tint = Color.White, modifier = Modifier.size(16.dp))
+                    }
                 }
             }
         }
     }
+    if (zoom && img != null) {
+        Dialog(onDismissRequest = { zoom = false }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+            Surface(color = Color.Black, modifier = Modifier.fillMaxSize().clickable { zoom = false }) {
+                Image(bitmap = img, contentDescription = label, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
+            }
+        }
+    }
+}
+
+/** Visor de escaneo: cuatro esquinas y la línea de lectura. */
+val ScanIcon: ImageVector by lazy {
+    ImageVector.Builder(
+        name = "Scan",
+        defaultWidth = 24.dp,
+        defaultHeight = 24.dp,
+        viewportWidth = 24f,
+        viewportHeight = 24f,
+    ).addPath(
+        pathData = addPathNodes(
+            "M3,3h6v2H5v4H3V3z" +
+                "M15,3h6v6h-2V5h-4V3z" +
+                "M3,15h2v4h4v2H3V15z" +
+                "M19,15h2v6h-6v-2h4V15z" +
+                "M3,11h18v2H3V11z",
+        ),
+        fill = SolidColor(Color.Black),
+    ).build()
 }
 
 /** Documento ya guardado de una visita anterior: "Usar" lo vincula sin volver a cargarlo. */

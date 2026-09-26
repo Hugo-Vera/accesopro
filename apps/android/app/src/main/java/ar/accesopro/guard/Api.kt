@@ -125,7 +125,14 @@ data class IdentityHistory(
     val lastVisit: LastVisit?,
     val art: DocInfo?,
     val license: DocInfo?,
-)
+    val visitCount: Int = 0,
+    val overstays: Int = 0,
+    val denials: Int = 0,
+    val goodsDenied: Int = 0,
+    val lastComment: String? = null,
+) {
+    val hasAlerts: Boolean get() = blacklisted || overstays > 0 || denials > 0 || goodsDenied > 0
+}
 
 /** Datos de la ficha que se guardan con "Guardar y siguiente". Campos vacíos no se mandan. */
 data class FichaInput(
@@ -433,17 +440,24 @@ class GuardApi(
         json.optJSONObject("item")?.let { parseItem(it) }
     }
 
-    suspend fun searchIdentity(dni: String): IdentityHistory? = withContext(Dispatchers.IO) {
+    suspend fun searchIdentity(dni: String, excludePassId: String? = null): IdentityHistory? = withContext(Dispatchers.IO) {
         val clean = dni.filter { it.isDigit() }
         if (clean.length < 7) return@withContext null
-        val json = get("/api/visitors/search-identity?dni=$clean")
+        val q = if (excludePassId.isNullOrBlank()) "" else "&excludePassId=$excludePassId"
+        val json = get("/api/visitors/search-identity?dni=$clean$q")
         if (!json.optBoolean("found")) {
             return@withContext IdentityHistory(false, false, null, null, null)
         }
         val lv = json.optJSONObject("lastVisit")
+        val flags = json.optJSONObject("flags") ?: JSONObject()
         IdentityHistory(
             found = true,
             blacklisted = json.optBoolean("blacklisted"),
+            visitCount = json.optInt("visitCount"),
+            overstays = flags.optInt("overstays"),
+            denials = flags.optInt("denials"),
+            goodsDenied = flags.optInt("goodsDenied"),
+            lastComment = json.optStringOrNull("lastComment"),
             lastVisit = lv?.let {
                 LastVisit(
                     visitType = it.optString("visitType", "social"),

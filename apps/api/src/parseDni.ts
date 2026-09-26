@@ -23,13 +23,23 @@ function genderCode(raw: string) {
   return g === "M" || g === "F" || g === "X" ? g : "";
 }
 
+/** El PDF417 del DNI viene en Latin-1: si un lector lo decodificó como UTF-8, la Ñ llega como U+FFFD o mojibake. */
+function fixNameEncoding(raw: string) {
+  return raw
+    .replace(/Ã\u0091|Ã‘/g, "Ñ")
+    .replace(/Ã±/g, "ñ")
+    .replace(/[\uFFFD]/g, "Ñ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function fromAtFields(text: string): ParsedDniScan | null {
   const parts = text.split("@").map((p) => p.trim());
   while (parts.length && parts[0] === "") parts.shift();
   if (parts.length < 5) return null;
   const dni = parts.find((c) => /^\d{7,8}$/.test(c)) || "";
-  const lastName = parts[1] || "";
-  const firstName = parts[2] || "";
+  const lastName = fixNameEncoding(parts[1] || "");
+  const firstName = fixNameEncoding(parts[2] || "");
   if (!dni && !lastName) return null;
   const tramite = /^\d{7,8}$/.test(parts[0] || "") && parts[0] === dni ? "" : parts[0] || "";
   return {

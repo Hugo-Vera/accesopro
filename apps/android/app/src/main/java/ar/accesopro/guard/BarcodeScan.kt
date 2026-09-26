@@ -36,7 +36,30 @@ import com.google.mlkit.vision.barcode.BarcodeScannerOptions
 import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.barcode.common.Barcode
 import com.google.mlkit.vision.common.InputImage
+import java.nio.ByteBuffer
+import java.nio.charset.CharacterCodingException
+import java.nio.charset.CodingErrorAction
 import java.util.concurrent.atomic.AtomicBoolean
+
+/** El PDF417 del DNI viene en Latin-1: ML Kit a veces lo lee como UTF-8 y pierde la Ñ (NUÑEZ -> NUEZ). */
+private fun barcodeText(bar: Barcode): String? {
+    val raw = bar.rawValue
+    val bytes = bar.rawBytes ?: return raw
+    if (bytes.none { it.toInt() and 0x80 != 0 }) return raw
+    val validUtf8 = try {
+        Charsets.UTF_8.newDecoder()
+            .onMalformedInput(CodingErrorAction.REPORT)
+            .onUnmappableCharacter(CodingErrorAction.REPORT)
+            .decode(ByteBuffer.wrap(bytes))
+        true
+    } catch (_: CharacterCodingException) {
+        false
+    }
+    if (validUtf8 && raw != null && !raw.contains('\uFFFD')) return raw
+    val latin = String(bytes, Charsets.ISO_8859_1).trimEnd('\u0000')
+    if (raw.isNullOrBlank()) return latin
+    return if (raw.contains('@') == latin.contains('@')) latin else raw
+}
 
 @Composable
 fun BarcodeScanScreen(
@@ -55,7 +78,15 @@ fun BarcodeScanScreen(
     }
     val done = remember { AtomicBoolean(false) }
     var camera by remember { mutableStateOf<Camera?>(null) }
+    var provider by remember { mutableStateOf<ProcessCameraProvider?>(null) }
     var torchOn by remember { mutableStateOf(false) }
+    // Sin unbindAll la cámara queda atada al lifecycle de la actividad y el flash sigue prendido.
+    val release = {
+        runCatching { camera?.cameraControl?.enableTorch(false) }
+        torchOn = false
+        runCatching { provider?.unbindAll() }
+        camera = null
+    }
 
     Box(Modifier.fillMaxSize().background(Color.Black)) {
         if (granted) {
@@ -67,7 +98,8 @@ fun BarcodeScanScreen(
                     }
                     val providerFuture = ProcessCameraProvider.getInstance(context)
                     providerFuture.addListener({
-                        val provider = providerFuture.get()
+                        val cameraProvider = providerFuture.get()
+                        provider = cameraProvider
                         val preview = Preview.Builder().build().also {
                             it.surfaceProvider = previewView.surfaceProvider
                         }
@@ -88,17 +120,19 @@ fun BarcodeScanScreen(
                             val image = InputImage.fromMediaImage(media, imageProxy.imageInfo.rotationDegrees)
                             scanner.process(image)
                                 .addOnSuccessListener { bars ->
-                                    val text = bars.firstOrNull { !it.rawValue.isNullOrBlank() }?.rawValue
+                                    val text = bars.firstNotNullOfOrNull { b -> barcodeText(b)?.takeIf { it.isNotBlank() } }
                                     if (!text.isNullOrBlank() && done.compareAndSet(false, true)) {
-                                        runCatching { camera?.cameraControl?.enableTorch(false) }
+                                        analysis.clearAnalyzer()
+                                        release()
                                         onResult(text)
                                     }
                                 }
                                 .addOnCompleteListener { imageProxy.close() }
                         }
+                        if (done.get()) return@addListener
                         try {
-                            provider.unbindAll()
-                            val cam = provider.bindToLifecycle(lifecycle, CameraSelector.DEFAULT_BACK_CAMERA, preview, analysis)
+                            cameraProvider.unbindAll()
+                            val cam = cameraProvider.bindToLifecycle(lifecycle, CameraSelector.DEFAULT_BACK_CAMERA, preview, analysis)
                             camera = cam
                         } catch (_: Exception) {
                             /* sin cámara */
@@ -237,7 +271,8 @@ fun BarcodeScanScreen(
 
         DisposableEffect(Unit) {
             onDispose {
-                camera?.cameraControl?.enableTorch(false)
+                done.set(true)
+                release()
             }
         }
     }

@@ -1,4 +1,4 @@
-import { and, desc, eq } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, ne } from "drizzle-orm";
 import { Hono } from "hono";
 import { db } from "./db/client.js";
 import {
@@ -14,6 +14,7 @@ import {
   guardApprovals,
   users,
   events,
+  ownerNotices,
 } from "./db/schema.js";
 import { nid, normalizePlate, scopedSiteWithModule } from "./scope.js";
 import { laneCodeOf } from "./accessPoints.js";
@@ -70,6 +71,90 @@ function stayMsOf(inAt: Date | number | null | undefined, outAt: Date | number |
   const b = tsMs(outAt);
   if (a == null || b == null || b < a) return null;
   return b - a;
+}
+
+const ENTERED_STATUSES = new Set(["in_site", "awaiting_exit", "temp_out", "completed"]);
+
+/** Antecedentes del DNI en este predio: ingresos concretados y marcas para alertar al guardia. */
+async function visitHistoryByDni(siteId: string, dni: string, excludePassId: string | null) {
+  const allPasses = await db
+    .select()
+    .from(visitPasses)
+    .where(and(eq(visitPasses.siteId, siteId), eq(visitPasses.guestDni, dni)))
+    .orderBy(desc(visitPasses.createdAt))
+    .limit(300)
+    .all();
+  const excluded = excludePassId ? allPasses.find((p) => p.id === excludePassId) : undefined;
+  const passes = allPasses.filter((p) => p.id !== excludePassId);
+  const approvals = passes.length
+    ? await db
+        .select()
+        .from(guardApprovals)
+        .where(inArray(guardApprovals.passId, passes.map((p) => p.id)))
+        .all()
+    : [];
+  const passById = new Map(passes.map((p) => [p.id, p]));
+  const enteredAt = new Map<string, number>();
+  for (const a of approvals) {
+    if (a.sentido !== "in" || a.status !== "approved") continue;
+    const t = tsMs(a.decidedAt) ?? tsMs(a.createdAt);
+    if (t == null) continue;
+    const prev = enteredAt.get(a.passId);
+    if (prev == null || t < prev) enteredAt.set(a.passId, t);
+  }
+  for (const p of passes) {
+    if (enteredAt.has(p.id)) continue;
+    const t = tsMs(p.scannedInAt);
+    if (t != null) enteredAt.set(p.id, t);
+    else if (ENTERED_STATUSES.has(p.status)) enteredAt.set(p.id, tsMs(p.createdAt) ?? 0);
+  }
+  let lastPass: (typeof passes)[number] | null = null;
+  let lastAt: number | null = null;
+  for (const [passId, t] of enteredAt) {
+    if (lastAt == null || t > lastAt) {
+      lastAt = t;
+      lastPass = passById.get(passId) ?? null;
+    }
+  }
+  const overstays = approvals.filter((a) => {
+    if (a.sentido !== "out" || a.status !== "approved") return false;
+    const until = tsMs(passById.get(a.passId)?.validUntil);
+    const at = tsMs(a.decidedAt);
+    return until != null && at != null && at > until;
+  }).length;
+  const denials = approvals.filter((a) => a.sentido === "in" && a.status === "denied").length;
+  const approvalIds = approvals.map((a) => a.id);
+  const goodsDenied = approvalIds.length
+    ? (
+        await db
+          .select({ id: ownerNotices.id })
+          .from(ownerNotices)
+          .where(
+            and(
+              inArray(ownerNotices.approvalId, approvalIds),
+              eq(ownerNotices.kind, "goods"),
+              eq(ownerNotices.status, "denied")
+            )
+          )
+          .all()
+      ).length
+    : 0;
+  const lastComment =
+    approvals
+      .filter((a) => a.comment?.trim())
+      .sort((a, b) => (tsMs(b.decidedAt ?? b.createdAt) ?? 0) - (tsMs(a.decidedAt ?? a.createdAt) ?? 0))[0]
+      ?.comment?.trim() ?? null;
+  return {
+    passCount: passes.length,
+    visitCount: enteredAt.size,
+    lastPass,
+    lastAt,
+    overstays,
+    denials,
+    goodsDenied,
+    lastComment,
+    excludedRecordId: excluded?.visitRecordId ?? null,
+  };
 }
 
 type VisitorsEnv = { Variables: { user: AuthUser } };
@@ -413,7 +498,18 @@ visitorsApi.get("/visitors/search-identity", async (c) => {
   if ("error" in scoped) return scoped.error;
 
   const dni = normalizeDni(c.req.query("dni") ?? "");
-  if (!dni) return c.json({ found: false, identity: null, license: null, personInsurance: null, lastVisit: null });
+  const excludePassId = c.req.query("excludePassId")?.trim() || null;
+  const empty = {
+    found: false,
+    identity: null,
+    license: null,
+    personInsurance: null,
+    lastVisit: null,
+    visitCount: 0,
+    flags: { blacklisted: false, overstays: 0, denials: 0, goodsDenied: 0 },
+    lastComment: null,
+  };
+  if (!dni) return c.json(empty);
 
   const identity = await db
     .select()
@@ -426,67 +522,86 @@ visitorsApi.get("/visitors/search-identity", async (c) => {
     )
     .get();
 
-  if (!identity) return c.json({ found: false, identity: null, license: null, personInsurance: null, lastVisit: null });
+  const history = await visitHistoryByDni(scoped.site.id, dni, excludePassId);
+  if (!identity && !history.visitCount && !history.passCount) return c.json(empty);
 
-  // Buscar licencia asociada más reciente
-  const license = await db
-    .select()
-    .from(driverLicenses)
-    .where(
-      and(
-        eq(driverLicenses.tenantId, scoped.site.tenantId),
-        eq(driverLicenses.personId, identity.id)
-      )
-    )
-    .orderBy(desc(driverLicenses.validUntil))
-    .limit(1)
-    .get();
+  const license = identity
+    ? await db
+        .select()
+        .from(driverLicenses)
+        .where(
+          and(
+            eq(driverLicenses.tenantId, scoped.site.tenantId),
+            eq(driverLicenses.personId, identity.id)
+          )
+        )
+        .orderBy(desc(driverLicenses.validUntil))
+        .limit(1)
+        .get()
+    : undefined;
 
-  const personInsurance = await db
-    .select()
-    .from(personInsurances)
-    .where(
-      and(eq(personInsurances.tenantId, scoped.site.tenantId), eq(personInsurances.personId, identity.id))
-    )
-    .orderBy(desc(personInsurances.validUntil))
-    .limit(1)
-    .get();
+  const personInsurance = identity
+    ? await db
+        .select()
+        .from(personInsurances)
+        .where(
+          and(eq(personInsurances.tenantId, scoped.site.tenantId), eq(personInsurances.personId, identity.id))
+        )
+        .orderBy(desc(personInsurances.validUntil))
+        .limit(1)
+        .get()
+    : undefined;
 
-  const lastRecord = await db
-    .select()
-    .from(visitRecords)
-    .where(and(eq(visitRecords.tenantId, scoped.site.tenantId), eq(visitRecords.personId, identity.id)))
-    .orderBy(desc(visitRecords.createdAt))
-    .get();
-  const lastPass = await db
-    .select()
-    .from(visitPasses)
-    .where(and(eq(visitPasses.siteId, scoped.site.id), eq(visitPasses.guestDni, dni)))
-    .orderBy(desc(visitPasses.createdAt))
-    .get();
-  const lastPropertyId = lastPass?.propertyId ?? lastRecord?.propertyId ?? null;
+  const lastRecord = identity
+    ? await db
+        .select()
+        .from(visitRecords)
+        .where(
+          and(
+            eq(visitRecords.tenantId, scoped.site.tenantId),
+            eq(visitRecords.personId, identity.id),
+            isNotNull(visitRecords.scannedInAt),
+            history.excludedRecordId ? ne(visitRecords.id, history.excludedRecordId) : undefined
+          )
+        )
+        .orderBy(desc(visitRecords.scannedInAt))
+        .get()
+    : undefined;
+  const lastPass = history.lastPass;
+  const recordAt = tsMs(lastRecord?.scannedInAt);
+  const useRecord = recordAt != null && (history.lastAt == null || recordAt > history.lastAt);
+  const lastPropertyId = useRecord ? lastRecord?.propertyId ?? null : lastPass?.propertyId ?? null;
   const lastProperty = lastPropertyId
     ? await db.select().from(properties).where(eq(properties.id, lastPropertyId)).get()
     : null;
-  const lastAt = lastPass?.createdAt ?? lastRecord?.createdAt ?? null;
+  const lastAt = useRecord ? recordAt : history.lastAt;
   const nowMs = Date.now();
   const isExpired = (v: Date | number | null | undefined) => {
     const t = tsMs(v);
     return t != null && t > 0 && t < nowMs;
   };
+  const blacklisted = Boolean(identity?.blacklisted);
 
   return c.json({
     found: true,
-    identity,
-    blacklisted: Boolean(identity.blacklisted),
+    identity: identity ?? null,
+    blacklisted,
+    visitCount: Math.max(history.visitCount, lastRecord ? 1 : 0),
+    flags: {
+      blacklisted,
+      overstays: history.overstays,
+      denials: history.denials,
+      goodsDenied: history.goodsDenied,
+    },
+    lastComment: history.lastComment,
     lastVisit: lastAt
       ? {
-          visitType: lastPass?.visitKind ?? lastRecord?.visitType ?? "social",
-          arrivalMode: lastPass?.arrivalMode ?? null,
-          patente: lastPass?.patente ?? null,
+          visitType: useRecord ? lastRecord?.visitType ?? "social" : lastPass?.visitKind ?? "social",
+          arrivalMode: useRecord ? null : lastPass?.arrivalMode ?? null,
+          patente: useRecord ? null : lastPass?.patente ?? null,
           propertyId: lastPropertyId,
           lotNumber: lastProperty?.lotNumber ?? null,
-          at: lastAt,
+          at: new Date(lastAt).toISOString(),
         }
       : null,
     license: license

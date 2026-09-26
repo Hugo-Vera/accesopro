@@ -89,10 +89,10 @@ private fun qrBitmap(payload: String, size: Int = 512): Bitmap? {
 
 /** Tras el check-in: el visitante le saca foto al QR con su celular y lo presenta en el lector. */
 @Composable
-private fun VisitQrDialog(payload: String, guestName: String, onDismiss: () -> Unit) {
+private fun VisitQrDialog(payload: String, guestName: String, approved: Boolean, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("QR de la visita", fontWeight = FontWeight.Bold) },
+        title = { Text(if (approved) "Visita aprobada" else "QR de la visita", fontWeight = FontWeight.Bold) },
         text = {
             Column(
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -100,7 +100,8 @@ private fun VisitQrDialog(payload: String, guestName: String, onDismiss: () -> U
                 modifier = Modifier.fillMaxWidth(),
             ) {
                 Text(
-                    "Mostrale la pantalla al visitante para que le saque una foto. Con ese QR se identifica en el lector de entrada y de salida; vos aprobás.",
+                    if (approved) "La barrera se abrió. Si quiere, que le saque foto al QR: con eso o con el DNI se identifica en la salida."
+                    else "Mostrale la pantalla al visitante para que le saque una foto. Con ese QR se identifica en el lector de entrada y de salida; vos aprobás.",
                     style = MaterialTheme.typography.bodyMedium,
                 )
                 Surface(color = Color.White, shape = RoundedCornerShape(12.dp)) {
@@ -110,8 +111,61 @@ private fun VisitQrDialog(payload: String, guestName: String, onDismiss: () -> U
             }
         },
         confirmButton = {
-            Button(onClick = onDismiss, shape = RoundedCornerShape(12.dp)) { Text("Listo, ir a la ficha") }
+            Button(onClick = onDismiss, shape = RoundedCornerShape(12.dp)) { Text(if (approved) "Listo" else "Listo, ir a la ficha") }
         },
+    )
+}
+
+/** Carga manual cuando el QR o el PDF417 no se leen: con el DNI se busca el pase; si no hay, sigue como visita nueva. */
+@Composable
+private fun ManualEntryDialog(onDismiss: () -> Unit, onSubmit: (ParsedDni) -> Unit) {
+    var dni by remember { mutableStateOf("") }
+    var lastName by remember { mutableStateOf("") }
+    var firstName by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Carga manual", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp),
+            ) {
+                Text(
+                    "Si el QR o el DNI no se leen. Con el DNI buscamos si tiene pase; si no, se carga como visita nueva.",
+                    style = MaterialTheme.typography.bodyMedium,
+                )
+                OutlinedTextField(
+                    value = dni,
+                    onValueChange = { dni = it.filter { ch -> ch.isDigit() }.take(9) },
+                    label = { Text("DNI") },
+                    singleLine = true,
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword, imeAction = ImeAction.Next),
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = lastName,
+                    onValueChange = { lastName = it.uppercase() },
+                    label = { Text("Apellido") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                OutlinedTextField(
+                    value = firstName,
+                    onValueChange = { firstName = it.uppercase() },
+                    label = { Text("Nombres") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth(),
+                )
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onSubmit(ParsedDni(dni, firstName.trim(), lastName.trim(), "", "", "")) },
+                enabled = dni.length >= 7,
+                shape = RoundedCornerShape(12.dp),
+            ) { Text("Buscar") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancelar") } },
     )
 }
 
@@ -236,11 +290,13 @@ fun GuardApp(prefs: android.content.SharedPreferences) {
     var census by remember { mutableStateOf<CensusSnapshot?>(null) }
     var scanOpen by remember { mutableStateOf(false) }
     var pendingScan by remember { mutableStateOf<String?>(null) }
+    var pendingManual by remember { mutableStateOf<ParsedDni?>(null) }
+    var manualOpen by remember { mutableStateOf(false) }
     var pendingParsedDni by remember { mutableStateOf<ParsedDni?>(null) }
-    var dniVisitMode by remember { mutableStateOf<DniVisitMode?>(null) }
     var pendingScanRaw by remember { mutableStateOf<String?>(null) }
-    var dniHistory by remember { mutableStateOf<IdentityHistory?>(null) }
     var visitQr by remember { mutableStateOf<Pair<String, String>?>(null) }
+    var visitQrApproved by remember { mutableStateOf(false) }
+    var notice by remember { mutableStateOf<String?>(null) }
     var mainTab by remember { mutableStateOf("cola") }
     var capabilities by remember {
         mutableStateOf(prefs.getStringSet("capabilities", emptySet())?.toList() ?: emptyList())
@@ -330,8 +386,7 @@ fun GuardApp(prefs: android.content.SharedPreferences) {
     // Las pantallas hijas registran su BackHandler después y tienen prioridad (pasos internos).
     val backAction: (() -> Unit)? = when {
         scanOpen -> { { scanOpen = false } }
-        pendingScan != null -> { { pendingScan = null } }
-        pendingParsedDni != null && dniVisitMode != null -> { { dniVisitMode = null; error = null } }
+        pendingScan != null || pendingManual != null -> { { pendingScan = null; pendingManual = null } }
         pendingParsedDni != null -> { { pendingParsedDni = null; pendingScanRaw = null; error = null } }
         role != "resident" && selected != null -> { { selected = null; error = null } }
         role != "resident" && mainTab != "cola" -> { { mainTab = "cola" } }
@@ -340,7 +395,22 @@ fun GuardApp(prefs: android.content.SharedPreferences) {
     BackHandler(enabled = backAction != null) { backAction?.invoke() }
 
     visitQr?.let { (payload, guest) ->
-        VisitQrDialog(payload = payload, guestName = guest, onDismiss = { visitQr = null })
+        VisitQrDialog(payload = payload, guestName = guest, approved = visitQrApproved, onDismiss = { visitQr = null })
+    }
+    if (manualOpen) {
+        ManualEntryDialog(
+            onDismiss = { manualOpen = false },
+            onSubmit = { manual ->
+                manualOpen = false
+                pendingManual = manual
+            },
+        )
+    }
+    LaunchedEffect(notice) {
+        if (notice != null) {
+            delay(5000)
+            notice = null
+        }
     }
 
     val current = selected
@@ -355,13 +425,14 @@ fun GuardApp(prefs: android.content.SharedPreferences) {
         )
         return
     }
-    val pendingRaw = pendingScan
+    val manualNow = pendingManual
+    val pendingRaw = pendingScan ?: manualNow?.dni
     if (pendingRaw != null) {
-        LaunchedEffect(pendingRaw) {
+        LaunchedEffect(pendingRaw, manualNow) {
             isLoading = true
             error = null
             runCatching {
-                val parsed = runCatching { api.parseDni(pendingRaw) }.getOrNull()
+                val parsed = manualNow ?: runCatching { api.parseDni(pendingRaw) }.getOrNull()
                 when (val result = api.scanQr(pendingRaw)) {
                     is ScanQrResult.Visit -> {
                         items = api.listApprovals()
@@ -374,7 +445,7 @@ fun GuardApp(prefs: android.content.SharedPreferences) {
                     is ScanQrResult.Denied -> {
                         if (parsed != null) {
                             pendingParsedDni = parsed
-                            pendingScanRaw = pendingRaw
+                            pendingScanRaw = if (manualNow == null) pendingRaw else null
                             error = null
                         } else {
                             error = result.message
@@ -383,59 +454,43 @@ fun GuardApp(prefs: android.content.SharedPreferences) {
                 }
             }.onFailure { error = it.message }
             pendingScan = null
+            pendingManual = null
             isLoading = false
         }
-        IdentifyingScanScreen(onCancel = { pendingScan = null })
+        IdentifyingScanScreen(onCancel = { pendingScan = null; pendingManual = null })
         return
     }
     val parsedPending = pendingParsedDni
-    val lotMode = dniVisitMode
-    LaunchedEffect(parsedPending?.dni) {
-        dniHistory = null
-        val dni = parsedPending?.dni ?: return@LaunchedEffect
-        dniHistory = runCatching { api.searchIdentity(dni) }.getOrNull()
-    }
-    if (parsedPending != null && lotMode != null) {
-        LotPickerScreen(
-            mode = lotMode,
-            parsed = parsedPending,
+    if (parsedPending != null) {
+        NewVisitScreen(
+            initial = parsedPending,
             api = api,
             rawPdf417 = pendingScanRaw,
-            history = dniHistory,
-            error = error,
-            onDone = { result ->
+            onDone = { outcome ->
+                val result = outcome.result
+                visitQrApproved = outcome.approved
                 if (!result.qrPayload.isNullOrBlank()) {
-                    visitQr = result.qrPayload to parsedPending.fullName()
+                    visitQr = result.qrPayload to outcome.guestName
                 }
+                pendingParsedDni = null
+                pendingScanRaw = null
+                error = null
                 scope.launch {
                     isLoading = true
                     runCatching {
                         items = api.listApprovals()
-                        selected = items.find { it.id == result.approvalId }
-                            ?: items.find { it.passId == result.passId }
-                            ?: items.firstOrNull()
-                        pendingParsedDni = null
-                        dniVisitMode = null
-                        pendingScanRaw = null
-                        error = null
+                        if (outcome.approved) {
+                            notice = "Pasó ${outcome.guestName} · lote ${outcome.lotNumber}"
+                        } else {
+                            selected = items.find { it.id == result.approvalId }
+                                ?: items.find { it.passId == result.passId }
+                            error = outcome.message
+                        }
                     }.onFailure { error = it.message }
                     isLoading = false
                 }
             },
-            onBack = { dniVisitMode = null; error = null },
-            onError = { error = it },
-        )
-        return
-    }
-    if (parsedPending != null) {
-        DniIdentityScreen(
-            parsed = parsedPending,
-            busy = isLoading,
-            error = error,
-            history = dniHistory,
-            onAnnounce = { dniVisitMode = DniVisitMode.Announce },
-            onCheckin = { dniVisitMode = DniVisitMode.Checkin },
-            onCancel = {
+            onBack = {
                 pendingParsedDni = null
                 pendingScanRaw = null
                 error = null
@@ -512,10 +567,10 @@ fun GuardApp(prefs: android.content.SharedPreferences) {
                 },
                 actions = {
                     FilledTonalIconButton(
-                        onClick = { scanOpen = true },
+                        onClick = { manualOpen = true },
                         modifier = Modifier.padding(end = 4.dp),
                     ) {
-                        Icon(Icons.Default.Add, contentDescription = "Escanear QR")
+                        Icon(Icons.Default.Add, contentDescription = "Carga manual")
                     }
                     IconButton(
                         onClick = {
@@ -528,6 +583,15 @@ fun GuardApp(prefs: android.content.SharedPreferences) {
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = MaterialTheme.colorScheme.surface),
             )
+        },
+        floatingActionButton = {
+            LargeFloatingActionButton(
+                onClick = { scanOpen = true },
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary,
+            ) {
+                Icon(ScanIcon, contentDescription = "Escanear QR o DNI", modifier = Modifier.size(40.dp))
+            }
         },
         bottomBar = {
             GuardNavBar(
@@ -608,6 +672,22 @@ fun GuardApp(prefs: android.content.SharedPreferences) {
                 .padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
+            notice?.let { msg ->
+                Surface(
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    Row(
+                        modifier = Modifier.padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        Icon(Icons.Default.CheckCircle, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimaryContainer)
+                        Text(msg, fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onPrimaryContainer)
+                    }
+                }
+            }
             if (error != null) {
                 Surface(
                     color = MaterialTheme.colorScheme.errorContainer,
@@ -666,7 +746,7 @@ fun GuardApp(prefs: android.content.SharedPreferences) {
                             shape = RoundedCornerShape(12.dp),
                             modifier = Modifier.height(48.dp)
                         ) {
-                            Icon(Icons.Default.Add, contentDescription = null)
+                            Icon(ScanIcon, contentDescription = null)
                             Spacer(Modifier.width(8.dp))
                             Text("Escanear QR o DNI", style = MaterialTheme.typography.labelLarge)
                         }
@@ -675,6 +755,7 @@ fun GuardApp(prefs: android.content.SharedPreferences) {
             } else {
                 LazyColumn(
                     verticalArrangement = Arrangement.spacedBy(12.dp),
+                    contentPadding = PaddingValues(bottom = 112.dp),
                     modifier = Modifier.weight(1f)
                 ) {
                     items(items, key = { it.id }) { row ->
@@ -1200,7 +1281,7 @@ fun ResidentHome(
                                     .padding(12.dp),
                             )
                             Text(
-                                accessQr?.validUntil?.let { "Vence $it" } ?: "Sin vencimiento",
+                                accessQr?.validUntil?.let { "Vence ${fmtDateTime(it)}" } ?: "Sin vencimiento",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )

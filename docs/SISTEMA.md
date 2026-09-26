@@ -112,6 +112,22 @@ QR preautorizado (portal WAN): el titular crea un `visit_passes` (nombre obligat
 
 Egreso: baúl si hay vehículo. Bien no registrado: foto + aviso al lote; la barrera no abre hasta que el titular autoriza. Menor de más: hay que pedir traslado al lote de procedencia.
 
+### Ingreso rápido (app `DniVisitFlow.kt` / `ApprovalDetail.kt`, web `GuardApprovalQueue.tsx`)
+
+Pensado para ~150 ingresos por hora en hora pico: 2–3 toques por persona.
+
+1. **Escanear** (botón flotante grande de la app) o **+** (carga manual: DNI, apellido, nombres). Si el DNI tiene pase, se abre esa ficha. Si no, **Nueva visita**.
+2. **Nueva visita** (una pantalla): identidad leída (lápiz para corregir), **antecedentes** del DNI, lote (precargado del último ingreso, «Cambiar»), Quién es / Cómo llega, patente si hay vehículo, lista «Solicitar siguientes documentos» (sin DNI: ya se leyó) y quién autoriza (Titular / Familiar / Administración o texto).
+   - Si solo hace falta el DNI y no hay alertas: **Registrar y dejar pasar** = `POST /api/visitors/checkin` + `decide approved` → abre la barrera y vuelve a la cola con el aviso «Pasó X · lote N».
+   - Si faltan documentos o hay alertas: **Registrar y abrir ficha**. Sin autorización: **Anunciar al lote** (120 s).
+3. **Ficha de ingreso** (un solo scroll, sin pasos): cabecera con el nombre grande, DNI y chip Tipo · Medio editable; antecedentes; documentos a pedir; secciones Vehículo (patente, seguro, licencia, baúl) y ART solo si aplican; menores, acompañantes y nota. Barra fija abajo: «Falta: …» (cada faltante lleva a su sección), **Denegar** y **Aprobar y abrir**.
+
+- **Antecedentes**: `GET /api/visitors/search-identity?dni=…&excludePassId=…` devuelve `visitCount`, `lastVisit` (fecha en hora argentina, lote, tipo, patente), `lastComment` y `flags` (`blacklisted`, `overstays` = salidas aprobadas después de `validUntil`, `denials`, `goodsDenied`). Ámbar si ya vino; rojo si hay marcas. Con alertas no se ofrece «Registrar y dejar pasar».
+- **Licencia**: el número se precarga con el DNI (en Argentina coinciden), solo dígitos y teclado numérico.
+- **Constancias en la app**: ML Kit Document Scanner (recorte y perspectiva de Google Play Services); si el equipo no lo tiene, cae al escáner propio `DocScan.kt`.
+- **Fechas**: instantes (pase, último ingreso) en `America/Argentina/Buenos_Aires`; vencimientos de documentos son días de calendario sin corrimiento de zona.
+- La Ñ del PDF417 se lee en Latin-1 (app) y `parseDni.ts` repara el mojibake (`Ã‘` → Ñ).
+
 ### Pantalla de salida (web `ExitFicha.tsx`, app `ExitFicha.kt`)
 
 Una sola pantalla, sin pasos. Lo cargado al entrar es **solo lectura** (no hay campos editables, escáner de DNI ni botones Menor / Escanear QR).
@@ -151,20 +167,20 @@ Fuente: `docRequirements(visitKind, arrivalMode)` en `apps/api/src/visitHold.ts`
 | Servicio / técnico | DNI + ART o seguro de vida (vence + constancia) | lo anterior + ART |
 | Contratista | DNI + ART (vence + constancia) | lo anterior + ART |
 
-- El guardia elige **tipo** y **cómo llega** en la ficha (paso «Tipo de ingreso») o al leer el DNI en la app. Cambiar a un medio sin vehículo borra patente, seguro, licencia y la revisión del baúl de ingreso.
+- El guardia elige **tipo** y **cómo llega** en el chip de la cabecera de la ficha o en **Nueva visita** de la app. Cambiar a un medio sin vehículo borra patente, seguro, licencia y la revisión del baúl de ingreso.
 - **Vencido no pasa**, sin excepción del titular ni autorización verbal. Seguro o licencia vencidos: **Pasar a peatonal** (`POST /api/visitors/approvals/:id/pedestrian`) y se sigue como ingreso caminando. ART vencida: solo denegar. `POST …/expired-exception` responde 410.
 - La autorización verbal cubre la espera del titular, no los documentos.
 - Medios: solo **A pie** y **Vehículo**. `plataforma` (remís) se dejó de ofrecer porque la persona igual entra caminando; la API lo sigue aceptando en pases viejos y lo trata como peatonal.
 - Fotos de constancias (seguro, licencia, ART): web (`DocumentScanPanel`) y app (`DocScan.kt`) muestran el recuadro verde cuando ven la hoja y **capturan solas** cuando queda quieta ~1 s; el botón Capturar sigue como respaldo. La API recorta al guardar.
 - **En archivo**: si la persona (por DNI) o la patente ya tienen ART, licencia o seguro cargados, la ficha los ofrece con «Usar» (`reuseId`). No se duplican filas con los mismos datos.
 - En la salida no se vuelven a pedir documentos: solo baúl, bienes y menores.
-- Faltantes que devuelve la API: `dni`, `patente`, `seguro_vehiculo`, `seguro_foto`, `licencia`, `licencia_foto`, `art`, `art_constancia`, `baul` y los vencidos `seguro_vehiculo_vencido`, `licencia_vencida`, `art_vencido`. Web y app los traducen a texto y saltan al paso.
+- Faltantes que devuelve la API: `dni`, `patente`, `seguro_vehiculo`, `seguro_foto`, `licencia`, `licencia_foto`, `art`, `art_constancia`, `baul` y los vencidos `seguro_vehiculo_vencido`, `licencia_vencida`, `art_vencido`. Web y app los traducen a texto y hacen scroll a la sección.
 
 ### Revisión del baúl
 
 Tabla `visit_trunk_checks` (una fila por pase y sentido `in` / `out`): descripción + hasta 6 fotos (`data/evidence/<site>/trunk-<id>.jpg`).
 
-- Ingreso con vehículo: el paso Vehículo pide descripción o al menos una foto (faltante `baul`).
+- Ingreso con vehículo: la sección Vehículo pide descripción o al menos una foto (faltante `baul`).
 - Salida: la pantalla muestra **Baúl al ingreso** (texto + galería) y el guardia tilda **Coincide con el ingreso** (`trunk_checked`); la foto de salida es opcional. En el reingreso con vehículo el baúl es obligatorio (fila nueva con `round` + 1).
 - API: `POST /api/visitors/approvals/:id/trunk` (`description`, `addPhotosBase64[]`, `removePhotoIds[]`), `GET /api/visitors/trunk/:checkId/photos/:photoId`. La ficha trae `trunkIn` / `trunkOut` con `photoUrls`.
 

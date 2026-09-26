@@ -27,24 +27,11 @@ import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
-import java.text.SimpleDateFormat
-import java.util.Locale
-import java.util.TimeZone
-
-private fun isoMillis(iso: String?): Long? {
-    if (iso.isNullOrBlank()) return null
-    iso.toLongOrNull()?.let { return it }
-    return runCatching {
-        SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.US)
-            .apply { timeZone = TimeZone.getTimeZone("UTC") }
-            .parse(iso.take(19))?.time
-    }.getOrNull()
-}
 
 private fun enteredLabel(iso: String?): String? {
     val t = isoMillis(iso) ?: return null
     val mins = ((System.currentTimeMillis() - t) / 60_000).coerceAtLeast(0)
-    val hhmm = SimpleDateFormat("HH:mm", Locale.getDefault()).format(java.util.Date(t))
+    val hhmm = fmtTime(iso)
     val ago = if (mins < 60) "$mins min" else "${mins / 60} h ${mins % 60} min"
     return "entró $hhmm (hace $ago)"
 }

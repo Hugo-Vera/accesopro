@@ -1121,4 +1121,73 @@ export const MANUAL_CHAPTERS: ManualChapter[] = [
       },
     ],
   },
+  {
+    id: "ingreso-rapido",
+    title: "Ingreso rápido en portería (app + web)",
+    updated: "26/09/2026",
+    summary:
+      "Pensado para 150 ingresos por hora: escanear, una pantalla Nueva visita y, si solo hace falta el DNI, Registrar y dejar pasar. La ficha de ingreso es un solo scroll con la barra Aprobar y abrir siempre a la vista.",
+    sections: [
+      {
+        id: "ingreso-rapido-app",
+        title: "App: de la cola a la barrera",
+        blocks: [
+          {
+            type: "ul",
+            items: [
+              "Botón flotante grande Escanear (abajo a la derecha): QR de visita, Mi QR o DNI",
+              "Botón + arriba: carga manual (DNI, apellido, nombres) cuando el plástico no se lee",
+              "DNI con pase abierto: abre esa ficha. DNI sin pase: pantalla Nueva visita",
+              "Nueva visita: identidad (lápiz para corregir), antecedentes, lote (el del último ingreso si ya vino, «Cambiar»), Quién es / Cómo llega, patente si viene en vehículo, quién autoriza (Titular, Familiar, Administración o texto)",
+              "«Solicitar siguientes documentos»: solo lo que falta pedir; el DNI no aparece porque ya se leyó",
+              "Solo DNI y sin alertas: Registrar y dejar pasar. Abre la barrera y vuelve a la cola con el aviso «Pasó X · lote N»",
+              "Faltan documentos o hay alertas: Registrar y abrir ficha. Sin nadie que autorice: Anunciar al lote (120 s)",
+            ],
+          },
+          {
+            type: "note",
+            text: "Girar el teléfono no pierde lo cargado ni corta la cámara. Al leer el código, la linterna se apaga sola.",
+          },
+        ],
+      },
+      {
+        id: "ingreso-rapido-ficha",
+        title: "Ficha de ingreso (un solo scroll)",
+        blocks: [
+          {
+            type: "ul",
+            items: [
+              "Cabecera: nombre grande, DNI y chip Tipo · Medio; tocando el chip se cambia y la lista de documentos se actualiza",
+              "Lápiz para corregir nombre o DNI; Verificar DNI abre el lector (cámara o pistola)",
+              "Vehículo (patente, seguro, licencia, baúl) y ART aparecen solo si aplican al tipo elegido",
+              "Licencia: el número se precarga con el DNI, solo dígitos",
+              "Constancias en la app: escáner de documentos de Google (recorta y endereza). Si el equipo no lo tiene, usa el escáner propio",
+              "Barra fija abajo: «Falta: …» (tocar un faltante lleva a su sección), Denegar y Aprobar y abrir",
+            ],
+          },
+        ],
+      },
+      {
+        id: "ingreso-rapido-antecedentes",
+        title: "Antecedentes del DNI",
+        blocks: [
+          {
+            type: "table",
+            headers: ["Qué muestra", "Cuándo"],
+            rows: [
+              ["Ya vino N veces · último ingreso fecha y hora, lote, tipo, patente", "El DNI tiene pases anteriores en el barrio (tarjeta ámbar)"],
+              ["Ingreso denegado N veces", "Hubo ingresos denegados (tarjeta roja)"],
+              ["Se pasó del horario N veces", "Salió después del vencimiento del pase (tarjeta roja)"],
+              ["Intentó sacar un bien sin autorización", "El lote rechazó un bien en una salida (tarjeta roja)"],
+              ["Tiene impedimento de ingreso", "Está en la lista negra del barrio (tarjeta roja)"],
+            ],
+          },
+          {
+            type: "note",
+            text: "Con la tarjeta en rojo no se ofrece Registrar y dejar pasar: hay que abrir la ficha y decidir. Las fechas y horas se muestran en hora argentina.",
+          },
+        ],
+      },
+    ],
+  },
 ];

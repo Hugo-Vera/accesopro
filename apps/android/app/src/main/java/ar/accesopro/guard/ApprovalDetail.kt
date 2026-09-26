@@ -1,4 +1,4 @@
-package ar.accesopro.guard
+﻿package ar.accesopro.guard
 
 import android.content.Intent
 import android.net.Uri
@@ -12,7 +12,6 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AccountBox
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.CheckCircle
@@ -25,25 +24,27 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 
 @Composable
-internal fun FichaCard(content: @Composable ColumnScope.() -> Unit) {
+internal fun FichaCard(modifier: Modifier = Modifier, content: @Composable ColumnScope.() -> Unit) {
     Card(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = modifier.fillMaxWidth(),
         shape = RoundedCornerShape(12.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.6f)),
     ) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
             content = content,
         )
     }
@@ -115,6 +116,15 @@ private fun entryStatusLine(item: ApprovalItem): Pair<String, String>? {
     return who?.let { "slate" to "Autorizó: $it" }
 }
 
+/** Sección de la ficha a la que lleva cada faltante (la ficha es un solo scroll). */
+private fun sectionOf(target: String) = when (target) {
+    "identity" -> "identity"
+    "vehicle" -> "vehicle"
+    "art" -> "art"
+    else -> "summary"
+}
+
+/** Ficha de ingreso en un solo scroll: solo las secciones que pide el tipo de ingreso y una barra fija para aprobar. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun EntryFicha(
@@ -133,21 +143,11 @@ private fun EntryFicha(
     var dni by remember(item.id) { mutableStateOf(item.guestDni ?: "") }
     var guestName by remember(item.id) { mutableStateOf(item.guestName) }
     var dniMatch by remember { mutableStateOf("") }
+    var editIdentity by remember(item.id) { mutableStateOf(false) }
     var visitKind by remember(item.id) { mutableStateOf(item.visitKind.ifBlank { "social" }) }
     var arrivalMode by remember(item.id) { mutableStateOf(if (item.arrivalMode == "vehiculo") "vehiculo" else "peatonal") }
+    var typeSheet by remember { mutableStateOf(false) }
     val req = docRequirements(visitKind, arrivalMode)
-    val pages = remember(req) {
-        buildList {
-            add("identity")
-            add("type")
-            if (req.vehicle) add("vehicle")
-            if (req.art) add("art")
-            add("summary")
-        }
-    }
-    var pageKey by remember(item.id) { mutableStateOf("identity") }
-    val page = pages.indexOf(pageKey).let { if (it < 0) 0 else it }
-    val curKey = pages[page]
 
     var plate by remember(item.id) { mutableStateOf(item.patente ?: "") }
     var company by remember(item.id) { mutableStateOf("") }
@@ -157,7 +157,8 @@ private fun EntryFicha(
     var insForm by remember(item.id) { mutableStateOf(false) }
     var vehPhoto by remember(item.id) { mutableStateOf<String?>(null) }
     var licUntil by remember(item.id) { mutableStateOf("") }
-    var licNumber by remember(item.id) { mutableStateOf("") }
+    var licNumber by remember(item.id) { mutableStateOf(item.guestDni?.filter { it.isDigit() } ?: "") }
+    var licTouched by remember(item.id) { mutableStateOf(false) }
     var licReuse by remember(item.id) { mutableStateOf<String?>(null) }
     var licForm by remember(item.id) { mutableStateOf(false) }
     var licPhoto by remember(item.id) { mutableStateOf<String?>(null) }
@@ -177,13 +178,26 @@ private fun EntryFicha(
     var companions by remember(item.id) { mutableStateOf(item.companions.map { CompanionItem(it.name, it.dni) }) }
     var localError by remember { mutableStateOf<String?>(null) }
     var saving by remember { mutableStateOf(false) }
+    var history by remember(item.id) { mutableStateOf<IdentityHistory?>(null) }
     val scope = rememberCoroutineScope()
+    val scroll = rememberScrollState()
+    val sectionY = remember(item.id) { mutableStateMapOf<String, Int>() }
     var docScan by remember { mutableStateOf<String?>(null) }
-    val shootVeh = { docScan = "veh" }
-    val shootLic = { docScan = "lic" }
-    val shootArt = { docScan = "art" }
+    var docKind by remember { mutableStateOf("veh") }
     val enabled = !busy && !saving
     val artLabel = artLabelFor(visitKind)
+
+    LaunchedEffect(dni) {
+        val clean = dni.filter { it.isDigit() }
+        if (!licTouched) licNumber = clean
+        if (clean.length < 7 || api == null) return@LaunchedEffect
+        history = runCatching { api.searchIdentity(clean, item.passId) }.getOrNull()
+    }
+
+    fun goTo(section: String) {
+        val y = sectionY[section] ?: return
+        scope.launch { scroll.animateScrollTo((y - 24).coerceAtLeast(0)) }
+    }
 
     suspend fun persist(): ApprovalItem? {
         val a = api ?: return null
@@ -233,20 +247,19 @@ private fun EntryFicha(
             if (e.missing.isNotEmpty()) {
                 val infos = e.missing.map { missingInfo(it, "in") }
                 localError = "${e.message}: ${infos.joinToString(", ") { it.first }}"
-                infos.map { it.second }.firstOrNull { it in pages }?.let { pageKey = it }
+                infos.firstOrNull()?.let { goTo(sectionOf(it.second)) }
                 return
             }
         }
         localError = e.message ?: "No se pudo guardar"
     }
 
-    fun saveAndGo(target: String?) {
+    /** Guarda en segundo plano (foto nueva, cambio de tipo). Si falla, los datos quedan y viajan al aprobar. */
+    fun autosave() {
+        if (api == null) return
         scope.launch {
             saving = true
-            localError = null
             runCatching { persist() }
-                .onSuccess { if (target != null) pageKey = target }
-                .onFailure { showApiError(it) }
             saving = false
         }
     }
@@ -275,18 +288,35 @@ private fun EntryFicha(
                     arrivalMode = "peatonal"
                     plate = ""
                     fresh?.let(onItemUpdated)
-                    pageKey = if (docRequirements(visitKind, "peatonal").art) "art" else "summary"
                 }
                 .onFailure { showApiError(it) }
             saving = false
         }
     }
 
+    val scanner = rememberDocumentScanner(
+        onPhoto = { b64 ->
+            when (docKind) {
+                "veh" -> vehPhoto = b64
+                "lic" -> licPhoto = b64
+                else -> artPhoto = b64
+            }
+            autosave()
+        },
+        onUnavailable = { docScan = docKind },
+        onError = { localError = it },
+    )
+    val shoot: (String) -> Unit = { kind ->
+        docKind = kind
+        scanner()
+    }
+
     BackHandler {
         when {
             scanDni -> scanDni = false
             scanCompanion -> scanCompanion = false
-            page > 0 -> pageKey = pages[page - 1]
+            typeSheet -> typeSheet = false
+            editIdentity -> editIdentity = false
             else -> onBack()
         }
     }
@@ -305,6 +335,7 @@ private fun EntryFicha(
                     else -> artPhoto = b64
                 }
                 docScan = null
+                autosave()
             },
             onClose = { docScan = null },
             onError = { localError = it },
@@ -330,6 +361,7 @@ private fun EntryFicha(
                             if (name.isNotBlank()) guestName = name
                             dniMatch = "filled"
                         }
+                        editIdentity = false
                     }
                 }
             },
@@ -355,26 +387,48 @@ private fun EntryFicha(
         return
     }
 
+    if (typeSheet) {
+        ModalBottomSheet(onDismissRequest = { typeSheet = false; autosave() }) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+                    .navigationBarsPadding(),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                SectionTitle("QUIÉN ES")
+                ChoiceGrid(VISIT_KINDS, visitKind, enabled = enabled) { visitKind = it }
+                SectionTitle("CÓMO LLEGA")
+                ChoiceGrid(ARRIVAL_MODES, arrivalMode, enabled = enabled) { arrivalMode = it }
+                RequiredDocsList(visitKind, arrivalMode, dniRead = dni.isNotBlank())
+                Button(
+                    onClick = { typeSheet = false; autosave() },
+                    modifier = Modifier.fillMaxWidth().height(48.dp),
+                    shape = RoundedCornerShape(12.dp),
+                ) { Text("Listo") }
+            }
+        }
+    }
+
     val status = entryStatusLine(item)
+    val shown = error ?: localError
+    val blockReason = when {
+        item.expiredDocs.isNotEmpty() -> item.expiredDocs.joinToString(" · ") { expiredLabel(it) }
+        item.missing.isNotEmpty() -> item.missing.joinToString(" · ") { missingInfo(it, "in").first }
+        else -> null
+    }
 
     Scaffold(
         containerColor = MaterialTheme.colorScheme.background,
         topBar = {
             TopAppBar(
                 title = {
-                    Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text(
-                            text = item.guestName,
-                            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
-                            maxLines = 1,
-                        )
-                        Text(
-                            text = "ENTRADA · Lote ${item.lotNumber ?: "—"} · ${item.ownerName.ifBlank { "Sin titular" }}",
-                            style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            maxLines = 1,
-                        )
-                    }
+                    Text(
+                        "Ingreso · Lote ${item.lotNumber ?: "—"}",
+                        style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                        maxLines = 1,
+                    )
                 },
                 navigationIcon = {
                     IconButton(onClick = onBack) { Icon(Icons.Default.ArrowBack, contentDescription = "Volver") }
@@ -389,10 +443,9 @@ private fun EntryFicha(
                     modifier = Modifier
                         .fillMaxWidth()
                         .navigationBarsPadding()
-                        .padding(horizontal = 16.dp, vertical = 14.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    val shown = error ?: localError
                     if (shown != null) {
                         Banner(
                             title = null,
@@ -401,70 +454,42 @@ private fun EntryFicha(
                             onContainer = MaterialTheme.colorScheme.onErrorContainer,
                             icon = Icons.Default.Warning,
                         )
+                    } else if (blockReason != null) {
+                        Text(
+                            "Falta: $blockReason",
+                            style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.SemiBold),
+                            color = MaterialTheme.colorScheme.error,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.clickable {
+                                item.missing.firstOrNull()?.let { goTo(sectionOf(missingInfo(it, "in").second)) }
+                            },
+                        )
                     }
-                    Text(
-                        "Paso ${page + 1} de ${pages.size}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    if (curKey != "summary") {
-                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-                            if (page > 0) {
-                                OutlinedButton(
-                                    onClick = { pageKey = pages[page - 1] },
-                                    enabled = enabled,
-                                    modifier = Modifier.weight(1f).height(50.dp),
-                                    shape = RoundedCornerShape(12.dp),
-                                ) { Text("Anterior") }
-                            }
-                            Button(
-                                onClick = { saveAndGo(pages[(page + 1).coerceAtMost(pages.lastIndex)]) },
-                                enabled = enabled,
-                                modifier = Modifier.weight(1f).height(50.dp),
-                                shape = RoundedCornerShape(12.dp),
-                            ) {
-                                if (saving) {
-                                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = MaterialTheme.colorScheme.onPrimary)
-                                } else {
-                                    Text("Guardar y siguiente")
-                                }
-                            }
-                        }
-                    } else {
+                    Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
                         OutlinedButton(
-                            onClick = { pageKey = pages[(page - 1).coerceAtLeast(0)] },
+                            onClick = { decide("denied") },
                             enabled = enabled,
-                            modifier = Modifier.fillMaxWidth().height(46.dp),
+                            modifier = Modifier.weight(1f).height(52.dp),
                             shape = RoundedCornerShape(12.dp),
-                        ) { Text("Anterior", style = MaterialTheme.typography.labelLarge) }
-                        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), modifier = Modifier.fillMaxWidth()) {
-                            OutlinedButton(
-                                onClick = { decide("denied") },
-                                enabled = enabled,
-                                modifier = Modifier.weight(1f).height(50.dp),
-                                shape = RoundedCornerShape(12.dp),
-                                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
-                            ) {
-                                Icon(Icons.Default.Close, contentDescription = null)
+                            colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+                        ) {
+                            Icon(Icons.Default.Close, contentDescription = null)
+                            Spacer(Modifier.width(6.dp))
+                            Text("Denegar", style = MaterialTheme.typography.labelLarge)
+                        }
+                        Button(
+                            onClick = { decide("approved") },
+                            enabled = enabled && item.expiredDocs.isEmpty(),
+                            modifier = Modifier.weight(1.5f).height(52.dp),
+                            shape = RoundedCornerShape(12.dp),
+                        ) {
+                            if (busy || saving) {
+                                CircularProgressIndicator(Modifier.size(20.dp), color = MaterialTheme.colorScheme.onPrimary, strokeWidth = 2.dp)
+                            } else {
+                                Icon(Icons.Default.CheckCircle, contentDescription = null)
                                 Spacer(Modifier.width(6.dp))
-                                Text("Denegar", style = MaterialTheme.typography.labelLarge)
-                            }
-                            val blocked = item.expiredDocs.isNotEmpty()
-                            Button(
-                                onClick = { decide("approved") },
-                                enabled = enabled && !blocked,
-                                modifier = Modifier.weight(1f).height(50.dp),
-                                shape = RoundedCornerShape(12.dp),
-                            ) {
-                                if (busy || saving) {
-                                    CircularProgressIndicator(Modifier.size(20.dp), color = MaterialTheme.colorScheme.onPrimary, strokeWidth = 2.dp)
-                                    Spacer(Modifier.width(8.dp))
-                                    Text("Abriendo…")
-                                } else {
-                                    Icon(Icons.Default.CheckCircle, contentDescription = null)
-                                    Spacer(Modifier.width(6.dp))
-                                    Text("Aprobar y abrir", style = MaterialTheme.typography.labelLarge)
-                                }
+                                Text("Aprobar y abrir", style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold))
                             }
                         }
                     }
@@ -476,26 +501,111 @@ private fun EntryFicha(
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(scroll)
                 .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
+            // Cabecera: nombre bien visible, DNI y tipo de ingreso (tocando el chip se cambia).
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .onGloballyPositioned { sectionY["identity"] = it.positionInParent().y.toInt() },
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer),
+            ) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            guestName.ifBlank { "Sin nombre" },
+                            style = MaterialTheme.typography.headlineSmall.copy(fontWeight = FontWeight.Bold),
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier.weight(1f),
+                        )
+                        IconButton(onClick = { editIdentity = !editIdentity }, enabled = enabled) {
+                            Icon(Icons.Default.Edit, contentDescription = "Editar identidad", tint = MaterialTheme.colorScheme.onPrimaryContainer)
+                        }
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Icon(Icons.Default.AccountBox, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimaryContainer, modifier = Modifier.size(18.dp))
+                        Text(
+                            when {
+                                dni.isBlank() -> "DNI pendiente"
+                                dniMatch == "ok" -> "DNI $dni · verificado"
+                                else -> "DNI $dni"
+                            },
+                            style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.SemiBold),
+                            color = if (dni.isBlank()) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TextButton(onClick = { scanDni = true }, enabled = enabled) {
+                            Text(if (dni.isBlank()) "Escanear DNI" else "Verificar")
+                        }
+                    }
+                    Text(
+                        "${item.ownerName.ifBlank { "Sin titular" }}${item.patente?.let { " · $it" } ?: ""}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer,
+                    )
+                    AssistChip(
+                        onClick = { typeSheet = true },
+                        enabled = enabled,
+                        label = { Text("${visitKindLabel(visitKind)} · ${arrivalModeLabel(arrivalMode)}", fontWeight = FontWeight.Bold) },
+                        trailingIcon = { Icon(Icons.Default.Edit, contentDescription = "Cambiar tipo de ingreso", modifier = Modifier.size(16.dp)) },
+                        colors = AssistChipDefaults.assistChipColors(containerColor = MaterialTheme.colorScheme.surface),
+                    )
+                    if (editIdentity || dni.isBlank()) {
+                        OutlinedTextField(
+                            value = guestName,
+                            onValueChange = { guestName = it },
+                            label = { Text("Nombre y apellido") },
+                            singleLine = true,
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedContainerColor = MaterialTheme.colorScheme.surface,
+                                unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+                            ),
+                        )
+                        OutlinedTextField(
+                            value = dni,
+                            onValueChange = { dni = it.filter { ch -> ch.isDigit() }.take(9) },
+                            label = { Text("DNI") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                            colors = OutlinedTextFieldDefaults.colors(
+                                focusedContainerColor = MaterialTheme.colorScheme.surface,
+                                unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+                            ),
+                        )
+                        if (editIdentity) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                OutlinedButton(
+                                    onClick = {
+                                        guestName = item.guestName
+                                        dni = item.guestDni ?: ""
+                                        editIdentity = false
+                                    },
+                                    shape = RoundedCornerShape(10.dp),
+                                ) { Text("Cancelar") }
+                                Button(
+                                    onClick = { editIdentity = false; autosave() },
+                                    enabled = enabled && guestName.isNotBlank(),
+                                    shape = RoundedCornerShape(10.dp),
+                                ) { Text("Guardar") }
+                            }
+                        }
+                    }
+                }
+            }
+
+            HistoryCard(history, compact = true)
+
             status?.let { (tone, text) ->
                 when (tone) {
-                    "red" -> Banner(
-                        title = null,
-                        text = text,
-                        container = MaterialTheme.colorScheme.errorContainer,
-                        onContainer = MaterialTheme.colorScheme.onErrorContainer,
-                        icon = Icons.Default.Warning,
-                    )
-                    "amber" -> Banner(
-                        title = null,
-                        text = text,
-                        container = MaterialTheme.colorScheme.tertiaryContainer,
-                        onContainer = MaterialTheme.colorScheme.onTertiaryContainer,
-                        icon = Icons.Default.Info,
-                    )
+                    "red" -> Banner(null, text, MaterialTheme.colorScheme.errorContainer, MaterialTheme.colorScheme.onErrorContainer, Icons.Default.Warning)
+                    "amber" -> Banner(null, text, MaterialTheme.colorScheme.tertiaryContainer, MaterialTheme.colorScheme.onTertiaryContainer, Icons.Default.Info)
                     else -> Text(
                         text,
                         style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
@@ -507,7 +617,7 @@ private fun EntryFicha(
                 Banner(
                     title = "Documento vencido: no puede ingresar",
                     text = item.expiredDocs.joinToString(" · ") { expiredLabel(it) } +
-                        if (item.canSwitchToPedestrian) ". Puede estacionar afuera y entrar a pie: se le toman los datos como ingreso caminando."
+                        if (item.canSwitchToPedestrian) ". Puede estacionar afuera y entrar a pie."
                         else ". Solo se puede denegar.",
                     container = MaterialTheme.colorScheme.errorContainer,
                     onContainer = MaterialTheme.colorScheme.onErrorContainer,
@@ -520,238 +630,139 @@ private fun EntryFicha(
                     }
                 }
             }
-            if (item.missing.isNotEmpty()) {
-                Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Icon(Icons.Default.Info, contentDescription = null, modifier = Modifier.size(20.dp))
-                            Text("Falta completar", fontWeight = FontWeight.Bold)
+            if (item.needsPhoneAuth) {
+                FichaCard {
+                    SectionTitle("AUTORIZACIÓN POR TELÉFONO")
+                    item.ownerPhone?.let { phone ->
+                        OutlinedButton(
+                            onClick = { ctx.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$phone"))) },
+                            modifier = Modifier.fillMaxWidth().height(44.dp),
+                            shape = RoundedCornerShape(12.dp),
+                        ) {
+                            Icon(Icons.Default.Call, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("Llamar al lote (${item.ownerName})")
                         }
-                        item.missing.forEach { key ->
-                            val (label, target) = missingInfo(key, "in")
-                            Text(
-                                "· $label",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = if (target in pages) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-                                modifier = Modifier.clickable(enabled = target in pages) { pageKey = target },
-                            )
-                        }
+                    }
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        OutlinedTextField(
+                            value = guardCode,
+                            onValueChange = { guardCode = it.filter { ch -> ch.isDigit() }.take(8) },
+                            label = { Text("Código de guardia") },
+                            modifier = Modifier.weight(1f),
+                            shape = RoundedCornerShape(12.dp),
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                            visualTransformation = PasswordVisualTransformation(),
+                        )
+                        Button(
+                            onClick = { onPhoneAuth(guardCode) },
+                            enabled = !busy && guardCode.length >= 4,
+                            shape = RoundedCornerShape(12.dp),
+                        ) { Text("Confirmar") }
                     }
                 }
             }
-            when (curKey) {
-                "identity" -> FichaCard {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        SectionTitle("IDENTIDAD")
-                        FilledTonalButton(
-                            onClick = { scanDni = true },
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
-                            shape = RoundedCornerShape(10.dp),
-                        ) {
-                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(Modifier.width(6.dp))
-                            Text("Escanear DNI", style = MaterialTheme.typography.labelLarge)
-                        }
-                    }
-                    if (dniMatch.isEmpty()) {
-                        Text(
-                            "Escaneá el DNI para confirmar.",
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
+
+            if (req.vehicle) {
+                FichaCard(Modifier.onGloballyPositioned { sectionY["vehicle"] = it.positionInParent().y.toInt() }) {
+                    SectionTitle("VEHÍCULO")
                     OutlinedTextField(
-                        value = guestName,
-                        onValueChange = { guestName = it },
-                        label = { Text("Nombre y apellido") },
+                        value = plate,
+                        onValueChange = { plate = it.uppercase().filter { ch -> ch.isLetterOrDigit() }.take(10) },
+                        label = { Text("Patente") },
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp),
                     )
-                    OutlinedTextField(
-                        value = dni,
-                        onValueChange = { dni = it },
-                        label = { Text("DNI") },
-                        leadingIcon = { Icon(Icons.Default.AccountBox, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
-                        singleLine = true,
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(12.dp),
-                    )
-                    if (dniMatch == "ok") {
-                        Text("El DNI coincide con el precargado.", color = MaterialTheme.colorScheme.primary)
-                    } else if (dniMatch == "filled") {
-                        Text("Se cargaron nombre y DNI desde el plástico.", color = MaterialTheme.colorScheme.tertiary)
-                    }
-                    HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
-                    SectionTitle("ACOMPAÑANTES Y MENORES")
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text("Menores", fontWeight = FontWeight.Bold)
-                            Text(
-                                "Solo la cantidad, sin nombre ni DNI.",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
+                    SectionTitle("SEGURO DEL AUTO")
+                    val linkedIns = item.insurance
+                    val fileIns = item.onFile.insurance
+                    if (linkedIns != null && !insForm) {
+                        DocLinkedRow("Seguro", linkedIns, onReplace = { insForm = true }, enabled = enabled)
+                        if (!linkedIns.hasDocument) {
+                            DocPhotoButton("tarjeta del seguro", vehPhoto, false, enabled, { shoot("veh") }) { vehPhoto = null }
                         }
-                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            OutlinedButton(onClick = { minorsCount = (minorsCount - 1).coerceAtLeast(0) }, enabled = enabled) { Text("−") }
-                            Text("$minorsCount", style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold))
-                            OutlinedButton(onClick = { minorsCount = (minorsCount + 1).coerceAtMost(20) }, enabled = enabled) { Text("+") }
-                        }
-                    }
-                    OutlinedButton(
-                        onClick = { scanCompanion = true },
-                        modifier = Modifier.fillMaxWidth().height(46.dp),
-                        shape = RoundedCornerShape(12.dp),
-                    ) {
-                        Icon(Icons.Default.Person, contentDescription = null)
-                        Spacer(Modifier.width(8.dp))
-                        Text("Acompañante (escanear DNI)")
-                    }
-                    if (companions.isNotEmpty()) {
-                        Text(
-                            companions.joinToString { c -> listOfNotNull(c.name.ifBlank { null }, c.dni).joinToString(" · ") },
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    } else if (fileIns != null && !insForm) {
+                        DocOnFileCard(
+                            "seguro${fileIns.plate?.let { " de $it" } ?: ""}",
+                            fileIns,
+                            using = insReuse == fileIns.id,
+                            enabled = enabled,
+                            onUse = { insReuse = fileIns.id },
+                            onNew = { insForm = true; insReuse = null },
                         )
-                    }
-                }
-
-                "type" -> FichaCard {
-                    SectionTitle("TIPO DE INGRESO")
-                    ChoiceGrid(VISIT_KINDS, visitKind, enabled = enabled) { visitKind = it }
-                    SectionTitle("CÓMO LLEGA")
-                    ChoiceGrid(ARRIVAL_MODES, arrivalMode, enabled = enabled) { arrivalMode = it }
-                    if (req.vehicle) {
-                        OutlinedTextField(
-                            value = plate,
-                            onValueChange = { plate = it.uppercase().take(10) },
-                            label = { Text("Patente") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(12.dp),
-                        )
-                    }
-                    Surface(color = MaterialTheme.colorScheme.surfaceVariant, shape = RoundedCornerShape(12.dp), modifier = Modifier.fillMaxWidth()) {
-                        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                            Text("Se pide:", fontWeight = FontWeight.Bold)
-                            Text("DNI")
-                            if (req.vehicle) Text("Patente, seguro del auto con foto y licencia con vencimiento y foto")
-                            if (req.art) Text("$artLabel con vencimiento y constancia")
-                            if (req.trunk) Text("Revisión de baúl: descripción o fotos")
-                        }
-                    }
-                }
-
-                "vehicle" -> {
-                    FichaCard {
-                        SectionTitle("VEHÍCULO")
-                        OutlinedTextField(
-                            value = plate,
-                            onValueChange = { plate = it.uppercase().take(10) },
-                            label = { Text("Patente") },
-                            singleLine = true,
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(12.dp),
-                        )
-                        SectionTitle("SEGURO DEL AUTO")
-                        val linkedIns = item.insurance
-                        val fileIns = item.onFile.insurance
-                        if (linkedIns != null && !insForm) {
-                            DocLinkedRow("Seguro", linkedIns, onReplace = { insForm = true }, enabled = enabled)
-                            if (!linkedIns.hasDocument) {
-                                DocPhotoButton("tarjeta del seguro", vehPhoto, false, enabled, shootVeh) { vehPhoto = null }
-                            }
-                        } else if (fileIns != null && !insForm) {
-                            DocOnFileCard(
-                                "seguro${fileIns.plate?.let { " de $it" } ?: ""}",
-                                fileIns,
-                                using = insReuse == fileIns.id,
-                                enabled = enabled,
-                                onUse = { insReuse = fileIns.id },
-                                onNew = { insForm = true; insReuse = null },
-                            )
-                        } else {
-                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
-                                OutlinedTextField(
-                                    value = company,
-                                    onValueChange = { company = it },
-                                    label = { Text("Aseguradora") },
-                                    singleLine = true,
-                                    modifier = Modifier.weight(1f),
-                                    shape = RoundedCornerShape(12.dp),
-                                )
-                                OutlinedTextField(
-                                    value = policy,
-                                    onValueChange = { policy = it },
-                                    label = { Text("N° de póliza") },
-                                    singleLine = true,
-                                    modifier = Modifier.weight(1f),
-                                    shape = RoundedCornerShape(12.dp),
-                                )
-                            }
-                            DateField("Vence el seguro", until, { until = it }, enabled)
-                            DocPhotoButton("tarjeta del seguro", vehPhoto, false, enabled, shootVeh) { vehPhoto = null }
-                        }
-
-                        SectionTitle("LICENCIA DE CONDUCIR")
-                        val linkedLic = item.license
-                        val fileLic = item.onFile.license
-                        if (linkedLic != null && !licForm) {
-                            DocLinkedRow("Licencia", linkedLic, onReplace = { licForm = true }, enabled = enabled)
-                            if (!linkedLic.hasDocument) {
-                                DocPhotoButton("licencia", licPhoto, false, enabled, shootLic) { licPhoto = null }
-                            }
-                        } else if (fileLic != null && !licForm) {
-                            DocOnFileCard(
-                                "licencia",
-                                fileLic,
-                                using = licReuse == fileLic.id,
-                                enabled = enabled,
-                                onUse = { licReuse = fileLic.id },
-                                onNew = { licForm = true; licReuse = null },
-                            )
-                        } else {
+                    } else {
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
                             OutlinedTextField(
-                                value = licNumber,
-                                onValueChange = { licNumber = it },
-                                label = { Text("N° de licencia") },
+                                value = company,
+                                onValueChange = { company = it },
+                                label = { Text("Aseguradora") },
                                 singleLine = true,
-                                modifier = Modifier.fillMaxWidth(),
+                                modifier = Modifier.weight(1f),
                                 shape = RoundedCornerShape(12.dp),
                             )
-                            DateField("Vence la licencia", licUntil, { licUntil = it }, enabled)
-                            DocPhotoButton("licencia", licPhoto, false, enabled, shootLic) { licPhoto = null }
+                            OutlinedTextField(
+                                value = policy,
+                                onValueChange = { policy = it },
+                                label = { Text("N° de póliza") },
+                                singleLine = true,
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(12.dp),
+                            )
                         }
+                        DateField("Vence el seguro", until, { until = it }, enabled)
+                        DocPhotoButton("tarjeta del seguro", vehPhoto, false, enabled, { shoot("veh") }) { vehPhoto = null }
                     }
-                    FichaCard {
-                        SectionTitle("REVISIÓN DE BAÚL")
-                        Text(
-                            "Describí qué lleva y sacá una o varias fotos de respaldo. En la salida se comparan.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                        TrunkEditor(api, item.trunkIn, trunkInDraft, "Contenido del baúl", enabled) { localError = it }
-                    }
-                }
 
-                "art" -> FichaCard {
+                    SectionTitle("LICENCIA DE CONDUCIR")
+                    val linkedLic = item.license
+                    val fileLic = item.onFile.license
+                    if (linkedLic != null && !licForm) {
+                        DocLinkedRow("Licencia", linkedLic, onReplace = { licForm = true }, enabled = enabled)
+                        if (!linkedLic.hasDocument) {
+                            DocPhotoButton("licencia", licPhoto, false, enabled, { shoot("lic") }) { licPhoto = null }
+                        }
+                    } else if (fileLic != null && !licForm) {
+                        DocOnFileCard(
+                            "licencia",
+                            fileLic,
+                            using = licReuse == fileLic.id,
+                            enabled = enabled,
+                            onUse = { licReuse = fileLic.id },
+                            onNew = { licForm = true; licReuse = null },
+                        )
+                    } else {
+                        OutlinedTextField(
+                            value = licNumber,
+                            onValueChange = {
+                                licNumber = it.filter { ch -> ch.isDigit() }.take(12)
+                                licTouched = true
+                            },
+                            label = { Text("N° de licencia") },
+                            singleLine = true,
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(12.dp),
+                        )
+                        DateField("Vence la licencia", licUntil, { licUntil = it }, enabled)
+                        DocPhotoButton("licencia", licPhoto, false, enabled, { shoot("lic") }) { licPhoto = null }
+                    }
+                    HorizontalDivider()
+                    SectionTitle("BAÚL")
+                    TrunkEditor(api, item.trunkIn, trunkInDraft, "Qué lleva en el baúl", enabled) { localError = it }
+                }
+            }
+
+            if (req.art) {
+                FichaCard(Modifier.onGloballyPositioned { sectionY["art"] = it.positionInParent().y.toInt() }) {
                     SectionTitle(artLabel.uppercase())
                     val linkedArt = item.personInsurance
                     val fileArt = item.onFile.art
                     if (linkedArt != null && !artForm) {
                         DocLinkedRow(artLabel, linkedArt, onReplace = { artForm = true }, enabled = enabled)
                         if (!linkedArt.hasDocument) {
-                            DocPhotoButton("constancia", artPhoto, false, enabled, shootArt) { artPhoto = null }
+                            DocPhotoButton("constancia", artPhoto, false, enabled, { shoot("art") }) { artPhoto = null }
                         }
                     } else if (fileArt != null && !artForm) {
                         DocOnFileCard(
@@ -772,108 +783,72 @@ private fun EntryFicha(
                             shape = RoundedCornerShape(12.dp),
                         )
                         DateField("Vence", artUntil, { artUntil = it }, enabled)
-                        DocPhotoButton("constancia", artPhoto, false, enabled, shootArt) { artPhoto = null }
+                        DocPhotoButton("constancia", artPhoto, false, enabled, { shoot("art") }) { artPhoto = null }
                     }
                 }
+            }
 
-                else -> {
-                    FichaCard {
-                        SectionTitle("RESUMEN")
-                        Text("Nombre: ${item.guestName}")
-                        Text(if (item.guestDni.isNullOrBlank()) "DNI pendiente" else "DNI ${item.guestDni}")
-                        Text("Ingreso: ${visitKindLabel(visitKind)} · ${arrivalModeLabel(arrivalMode)}")
-                        if (req.vehicle) {
-                            Text("Patente ${item.patente ?: plate.ifBlank { "—" }}")
-                            Text("Seguro: ${item.insurance?.let { "${it.company ?: ""} · vence ${fmtDate(it.validUntil)}" } ?: "sin cargar"}")
-                            Text("Licencia: ${item.license?.let { "vence ${fmtDate(it.validUntil)}" } ?: "sin cargar"}")
-                            Text(
-                                "Baúl: ${item.trunkIn?.let { t -> "${t.photoUrls.size} foto(s)${t.description?.let { " · $it" } ?: ""}" } ?: "sin revisar"}",
-                            )
-                        }
-                        if (req.art) {
-                            Text("$artLabel: ${item.personInsurance?.let { "vence ${fmtDate(it.validUntil)}" } ?: "sin cargar"}")
-                        }
-                        if (minorsCount > 0) Text("Menores: $minorsCount")
-                        if (companions.isNotEmpty()) Text("Acompañantes: ${companions.joinToString { it.name }}")
-                        if (item.phoneAuthVia == "guard_code" && !item.ownerAuthorizedByName.isNullOrBlank()) {
-                            Text("Código de guardia: ${item.ownerAuthorizedByName}")
-                        }
-                    }
-                    if (item.ownerPhone != null || item.emergencies.isNotEmpty() || item.ownerAuthorizedByName != null) {
-                        FichaCard {
-                            item.ownerAuthorizedByName?.let { who ->
-                                Surface(shape = RoundedCornerShape(10.dp), color = MaterialTheme.colorScheme.tertiaryContainer, modifier = Modifier.fillMaxWidth()) {
-                                    Text(
-                                        "Autorizó el lote: $who",
-                                        style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Bold),
-                                        color = MaterialTheme.colorScheme.onTertiaryContainer,
-                                        modifier = Modifier.padding(12.dp),
-                                    )
-                                }
-                            }
-                            SectionTitle("CONTACTOS Y COMUNICACIÓN")
-                            item.ownerPhone?.let { phone ->
-                                Button(
-                                    onClick = { ctx.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$phone"))) },
-                                    modifier = Modifier.fillMaxWidth().height(48.dp),
-                                    shape = RoundedCornerShape(12.dp),
-                                    colors = ButtonDefaults.buttonColors(
-                                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                                        contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
-                                    ),
-                                ) {
-                                    Icon(Icons.Default.Call, contentDescription = null)
-                                    Spacer(Modifier.width(8.dp))
-                                    Text("Llamar al lote (${item.ownerName})", style = MaterialTheme.typography.labelLarge)
-                                }
-                            }
-                            item.emergencies.forEach { e ->
-                                OutlinedButton(
-                                    onClick = { ctx.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:${e.phone}"))) },
-                                    modifier = Modifier.fillMaxWidth().height(46.dp),
-                                    shape = RoundedCornerShape(12.dp),
-                                ) {
-                                    Icon(Icons.Default.Call, contentDescription = null, modifier = Modifier.size(18.dp))
-                                    Spacer(Modifier.width(8.dp))
-                                    Text("${e.label}: ${e.phone}", style = MaterialTheme.typography.labelLarge)
-                                }
-                            }
-                        }
-                    }
-                    if (item.needsPhoneAuth) {
-                        FichaCard {
-                            SectionTitle("AUTORIZACIÓN POR LLAMADA TELEFÓNICA")
-                            Text(
-                                "Si el titular autorizó por teléfono, ingresá tu código de guardia para confirmar.",
-                                style = MaterialTheme.typography.bodyMedium,
-                            )
-                            OutlinedTextField(
-                                value = guardCode,
-                                onValueChange = { guardCode = it.filter { ch -> ch.isDigit() }.take(8) },
-                                label = { Text("Código de guardia") },
-                                modifier = Modifier.fillMaxWidth(),
-                                shape = RoundedCornerShape(12.dp),
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
-                                visualTransformation = PasswordVisualTransformation(),
-                            )
-                            Button(
-                                onClick = { onPhoneAuth(guardCode) },
-                                enabled = !busy && guardCode.length >= 4,
-                                modifier = Modifier.fillMaxWidth().height(46.dp),
-                                shape = RoundedCornerShape(12.dp),
-                            ) { Text("Confirmar autorización de llamada", style = MaterialTheme.typography.labelLarge) }
-                        }
-                    }
-                    FichaCard {
-                        SectionTitle("OBSERVACIONES Y NOTAS")
-                        OutlinedTextField(
-                            value = comment,
-                            onValueChange = { comment = it },
-                            label = { Text("Notas de la guardia o incidencias") },
-                            leadingIcon = { Icon(Icons.Default.Edit, contentDescription = null, tint = MaterialTheme.colorScheme.primary) },
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(12.dp),
+            FichaCard(Modifier.onGloballyPositioned { sectionY["summary"] = it.positionInParent().y.toInt() }) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Column(Modifier.weight(1f)) {
+                        Text("Menores", fontWeight = FontWeight.Bold)
+                        Text(
+                            "Solo la cantidad",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                    }
+                    OutlinedButton(onClick = { minorsCount = (minorsCount - 1).coerceAtLeast(0) }, enabled = enabled) { Text("−") }
+                    Text("$minorsCount", style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold))
+                    OutlinedButton(onClick = { minorsCount = (minorsCount + 1).coerceAtMost(20) }, enabled = enabled) { Text("+") }
+                }
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Text(
+                        if (companions.isEmpty()) "Sin acompañantes"
+                        else companions.joinToString { c -> listOfNotNull(c.name.ifBlank { null }, c.dni).joinToString(" · ") },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.weight(1f),
+                    )
+                    FilledTonalButton(
+                        onClick = { scanCompanion = true },
+                        enabled = enabled,
+                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                        shape = RoundedCornerShape(10.dp),
+                    ) {
+                        Icon(Icons.Default.Person, contentDescription = null, modifier = Modifier.size(18.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Acompañante")
+                    }
+                }
+                OutlinedTextField(
+                    value = comment,
+                    onValueChange = { comment = it },
+                    label = { Text("Notas de la guardia") },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(12.dp),
+                )
+            }
+
+            if (!item.needsPhoneAuth && (item.ownerPhone != null || item.emergencies.isNotEmpty())) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                ) {
+                    item.ownerPhone?.let { phone ->
+                        OutlinedButton(
+                            onClick = { ctx.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:$phone"))) },
+                            shape = RoundedCornerShape(12.dp),
+                        ) {
+                            Icon(Icons.Default.Call, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text("Llamar al lote")
+                        }
+                    }
+                    item.emergencies.take(2).forEach { e ->
+                        TextButton(onClick = { ctx.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse("tel:${e.phone}"))) }) {
+                            Text(e.label, maxLines = 1)
+                        }
                     }
                 }
             }

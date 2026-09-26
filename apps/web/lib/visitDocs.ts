@@ -105,9 +105,43 @@ export function fmtDay(v: string | number | Date | null | undefined) {
   return `${d}/${m}/${y}`;
 }
 
+/** Portería trabaja en hora argentina aunque el navegador esté en otra zona. */
+export const AR_TZ = "America/Argentina/Buenos_Aires";
+
+export function todayAr() {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: AR_TZ, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+}
+
 export function isPastDay(iso: string) {
   if (iso.length < 10) return false;
-  return iso < new Date().toISOString().slice(0, 10);
+  return iso < todayAr();
+}
+
+/** Instante (pase, ingreso) en hora argentina: dd/mm hh:mm. */
+export function fmtStamp(v: string | number | Date | null | undefined) {
+  if (v == null || v === "") return "—";
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleString("es-AR", {
+    timeZone: AR_TZ,
+    day: "2-digit",
+    month: "2-digit",
+    year: d.getFullYear() === new Date().getFullYear() ? undefined : "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+/** "Solicitar siguientes documentos": solo lo que aplica; el DNI no se repite si ya se leyó. */
+export function requiredDocsFor(visitKind: string | null | undefined, arrivalMode: string | null | undefined, dniRead: boolean) {
+  const req = docRequirements(visitKind, arrivalMode);
+  const docs: string[] = [];
+  if (!dniRead) docs.push("DNI");
+  if (req.art) docs.push(artLabelFor(visitKind));
+  if (req.license) docs.push("Licencia");
+  if (req.vehicle) docs.push("Seguro del vehículo");
+  if (req.trunk) docs.push("Revisión de baúl");
+  return docs;
 }
 
 /** Achica una foto de cámara/archivo a JPEG para no mandar 8 MB por la red. */
